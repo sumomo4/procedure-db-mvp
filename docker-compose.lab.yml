@@ -1,0 +1,16 @@
+﻿services:
+  lab-db:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: mvp_lab
+      POSTGRES_USER: lab_user
+      POSTGRES_PASSWORD: lab_password
+    volumes:
+      - lab-db-data:/var/lib/postgresql/data
+      - ./apps/lab/db/init:/docker-entrypoint-initdb.d
+      - ./logs/lab/db:/var/log/postgresql
+
+volumes:
+  lab-db-data:

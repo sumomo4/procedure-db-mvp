@@ -1,0 +1,27 @@
+﻿services:
+  standard-web:
+    build:
+      context: ./apps/standard/frontend
+    ports:
+      - "3000:80"
+    env_file:
+      - ./infra/env/standard.env.example
+    volumes:
+      - ./storage/standard:/app/storage
+      - ./logs/standard:/app/logs
+
+  standard-db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: mvp_standard
+      POSTGRES_USER: standard_user
+      POSTGRES_PASSWORD: standard_password
+    volumes:
+      - standard-db-data:/var/lib/postgresql/data
+      - ./apps/standard/db/init:/docker-entrypoint-initdb.d
+      - ./logs/standard/db:/var/log/postgresql
+
+volumes:
+  standard-db-data:
