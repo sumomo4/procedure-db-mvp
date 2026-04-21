@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 type Status = "Draft" | "approval" | "archive";
 
@@ -21,6 +21,36 @@ type DocumentRow = {
   version: string;
   updatedAt: string;
 };
+
+type ApiResult = "success" | "error";
+
+type HealthData = {
+  service: string;
+  environment: string;
+  status: "ok";
+};
+
+type DatabaseHealthData = {
+  database: string;
+  host: string;
+  port: number;
+  status: "ok";
+};
+
+type ApiResponse<TData> = {
+  result: ApiResult;
+  data: TData | null;
+  message: string;
+};
+
+type HealthCheckState = {
+  status: "checking" | "available" | "unavailable";
+  primary: string;
+  secondary: string;
+  message: string;
+};
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 const modules: ModuleRow[] = [
   { id: "MOD-001", name: "初期点検手順", category: "点検", owner: "開発担当A", updatedAt: "2026-04-10", status: "Draft", version: "0.2" },
@@ -178,6 +208,7 @@ function LoginPage() {
 function HomePage() {
   return (
     <Page title="HOME" description="画面遷移図の入口として、主要メニューと現在の作業状況を確認します。">
+      <ApiHealthPanel />
       <section className="dashboard-grid" aria-label="主要操作">
         <ActionCard title="モジュール" body="検索、一覧確認、Excelファイル登録を行います。" to="/modules/search" action="検索へ" icon="⌕" />
         <ActionCard title="原本" body="モジュールを組み合わせて原本の作成、更新、参照を行います。" to="/documents/create" action="作成へ" icon="✎" />
@@ -194,6 +225,184 @@ function HomePage() {
         </div>
       </section>
     </Page>
+  );
+}
+
+function ApiHealthPanel() {
+  const [apiHealthState, setApiHealthState] = useState<HealthCheckState>({
+    status: "checking",
+    primary: "-",
+    secondary: "-",
+    message: "API疎通を確認中です。",
+  });
+  const [databaseHealthState, setDatabaseHealthState] = useState<HealthCheckState>({
+    status: "checking",
+    primary: "-",
+    secondary: "-",
+    message: "DB疎通を確認中です。",
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchHealth(): Promise<void> {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/health`, {
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          setApiHealthState({
+            status: "unavailable",
+            primary: "-",
+            secondary: "-",
+            message: `API応答エラー: HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        const responseBody = (await response.json()) as ApiResponse<HealthData>;
+        if (responseBody.result !== "success" || responseBody.data === null) {
+          setApiHealthState({
+            status: "unavailable",
+            primary: "-",
+            secondary: "-",
+            message: responseBody.message || "API疎通確認に失敗しました。",
+          });
+          return;
+        }
+
+        setApiHealthState({
+          status: "available",
+          primary: responseBody.data.service,
+          secondary: responseBody.data.environment,
+          message: responseBody.message,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setApiHealthState({
+          status: "unavailable",
+          primary: "-",
+          secondary: "-",
+          message: "APIに接続できません。",
+        });
+      }
+    }
+
+    async function fetchDatabaseHealth(): Promise<void> {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/health/db`, {
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          setDatabaseHealthState({
+            status: "unavailable",
+            primary: "-",
+            secondary: "-",
+            message: `DB応答エラー: HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        const responseBody = (await response.json()) as ApiResponse<DatabaseHealthData>;
+        if (responseBody.result !== "success" || responseBody.data === null) {
+          setDatabaseHealthState({
+            status: "unavailable",
+            primary: "-",
+            secondary: "-",
+            message: responseBody.message || "DB疎通確認に失敗しました。",
+          });
+          return;
+        }
+
+        setDatabaseHealthState({
+          status: "available",
+          primary: responseBody.data.database,
+          secondary: `${responseBody.data.host}:${responseBody.data.port}`,
+          message: responseBody.message,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setDatabaseHealthState({
+          status: "unavailable",
+          primary: "-",
+          secondary: "-",
+          message: "DB疎通APIに接続できません。",
+        });
+      }
+    }
+
+    void fetchHealth();
+    void fetchDatabaseHealth();
+
+    return () => {
+      abortController.abort();
+    };
+  }, []);
+
+  const labelMap: Record<HealthCheckState["status"], string> = {
+    checking: "確認中",
+    available: "接続OK",
+    unavailable: "未接続",
+  };
+
+  return (
+    <section className="api-health" aria-label="APIとDBの疎通状態">
+      <HealthStatusRow
+        label="API疎通"
+        state={apiHealthState}
+        statusLabel={labelMap[apiHealthState.status]}
+        primaryLabel="サービス"
+        secondaryLabel="環境"
+      />
+      <HealthStatusRow
+        label="DB疎通"
+        state={databaseHealthState}
+        statusLabel={labelMap[databaseHealthState.status]}
+        primaryLabel="DB"
+        secondaryLabel="接続先"
+      />
+    </section>
+  );
+}
+
+function HealthStatusRow({
+  label,
+  state,
+  statusLabel,
+  primaryLabel,
+  secondaryLabel,
+}: {
+  label: string;
+  state: HealthCheckState;
+  statusLabel: string;
+  primaryLabel: string;
+  secondaryLabel: string;
+}) {
+  return (
+    <div className="health-row">
+      <div className={`api-health-indicator ${state.status}`} aria-hidden="true" />
+      <div>
+        <span>{label}</span>
+        <strong>{statusLabel}</strong>
+      </div>
+      <div>
+        <span>{primaryLabel}</span>
+        <strong>{state.primary}</strong>
+      </div>
+      <div>
+        <span>{secondaryLabel}</span>
+        <strong>{state.secondary}</strong>
+      </div>
+      <p>{state.message}</p>
+    </div>
   );
 }
 

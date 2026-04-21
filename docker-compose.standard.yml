@@ -1,4 +1,4 @@
-﻿services:
+services:
   standard-web:
     build:
       context: ./apps/standard/frontend
@@ -6,9 +6,37 @@
       - "3000:80"
     env_file:
       - ./infra/env/standard.env.example
+    depends_on:
+      standard-api:
+        condition: service_started
     volumes:
       - ./storage/standard:/app/storage
       - ./logs/standard:/app/logs
+
+  standard-api:
+    build:
+      context: ./apps/standard/backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./infra/env/standard.env.example
+    depends_on:
+      standard-db:
+        condition: service_healthy
+    volumes:
+      - ./storage/standard:/app/storage
+      - ./logs/standard:/app/logs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   standard-db:
     image: postgres:16-alpine
@@ -22,6 +50,11 @@
       - standard-db-data:/var/lib/postgresql/data
       - ./apps/standard/db/init:/docker-entrypoint-initdb.d
       - ./logs/standard/db:/var/log/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U standard_user -d mvp_standard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   standard-db-data:
