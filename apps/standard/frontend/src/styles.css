@@ -313,6 +313,61 @@ nav {
   gap: 18px;
 }
 
+.api-health {
+  display: grid;
+  padding: 16px 18px;
+  border: 1px solid #d6cdbc;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(67, 54, 35, 0.08);
+}
+
+.health-row {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(130px, auto)) minmax(220px, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 12px 0;
+}
+
+.health-row + .health-row {
+  border-top: 1px solid #edf0f1;
+}
+
+.api-health-indicator {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #d7a84f;
+}
+
+.api-health-indicator.available {
+  background: #2e8b57;
+}
+
+.api-health-indicator.unavailable {
+  background: #b84d3a;
+}
+
+.api-health span {
+  display: block;
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.api-health strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.api-health p {
+  margin: 0;
+  color: #56636c;
+  line-height: 1.6;
+}
+
 .action-card {
   min-height: 224px;
   padding: 22px;
@@ -528,6 +583,7 @@ th {
   }
 
   .dashboard-grid,
+  .health-row,
   .search-form,
   .form-grid,
   .facts {

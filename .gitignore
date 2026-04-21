@@ -8,4 +8,5 @@ vite-dev.err.log
 __pycache__/
 .venv/
 .pytest_cache/
+pytest-cache-files-*/
 .DS_Store
