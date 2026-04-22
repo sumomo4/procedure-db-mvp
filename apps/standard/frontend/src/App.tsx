@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 
 type Status = "Draft" | "approval" | "archive";
 
@@ -1861,12 +1861,17 @@ function IndentedExcelText({
   indentLevel: 0 | 1 | 2 | 3 | 4;
 }) {
   return (
-    <div className={`excel-indent indent-level-${indentLevel}`}>
-      <span className="excel-indent-slot" aria-hidden="true" />
-      <span className="excel-indent-slot" aria-hidden="true" />
-      <span className="excel-indent-slot" aria-hidden="true" />
-      <span className="excel-indent-slot" aria-hidden="true" />
-      <span>{text ?? ""}</span>
+    <div
+      className={`excel-indent indent-level-${indentLevel}`}
+      style={{ "--indent-offset": `${indentLevel * 18}px` } as CSSProperties}
+    >
+      <span className="excel-indent-guides" aria-hidden="true">
+        <span className="excel-indent-slot" />
+        <span className="excel-indent-slot" />
+        <span className="excel-indent-slot" />
+        <span className="excel-indent-slot" />
+      </span>
+      <span className="excel-indent-text">{text ?? ""}</span>
     </div>
   );
 }

@@ -987,13 +987,26 @@ th {
 }
 
 .excel-indent {
+  position: relative;
+  min-height: 1.55em;
+}
+
+.excel-indent-guides {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 72px;
   display: grid;
-  grid-template-columns: 18px 18px 18px 18px minmax(0, 1fr);
-  align-items: start;
+  grid-template-columns: repeat(4, 18px);
+  pointer-events: none;
 }
 
 .excel-indent-slot {
-  min-height: 1px;
+  min-height: 100%;
+}
+
+.excel-indent-text {
+  display: block;
+  padding-left: var(--indent-offset, 0px);
 }
 
 .excel-indent.indent-level-0 .excel-indent-slot {
