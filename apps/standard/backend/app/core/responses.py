@@ -83,6 +83,50 @@ class RouterFoundationData(BaseModel):
     planned_endpoints: list[RouterEndpointData]
 
 
+class ModuleListItemData(BaseModel):
+    """Module list item response payload.
+
+    Attributes:
+        module_id: Internal module identifier.
+        module_key: Human-readable unique module key.
+        module_name: Module display name.
+        description: Optional module description.
+        module_version_id: Internal module version identifier.
+        version_no: Module version number.
+        status: Current module version status.
+        status_label: User-facing status label.
+        row_count: Number of rows in the module version.
+        first_work_text: First non-empty work text in module rows.
+        source_xlsx_path: Source Excel path used during import.
+        created_by: User who created the module version.
+        updated_at: Last update date string.
+    """
+
+    module_id: int
+    module_key: str
+    module_name: str
+    description: str | None
+    module_version_id: int
+    version_no: int
+    status: Literal["draft", "published", "archived"]
+    status_label: str
+    row_count: int
+    first_work_text: str | None
+    source_xlsx_path: str | None
+    created_by: str | None
+    updated_at: str
+
+
+class ModuleListData(BaseModel):
+    """Module list response payload.
+
+    Attributes:
+        items: Module list items.
+    """
+
+    items: list[ModuleListItemData]
+
+
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:
     """Build a successful API response.
 
