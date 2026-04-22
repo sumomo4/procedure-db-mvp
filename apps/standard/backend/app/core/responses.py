@@ -252,6 +252,7 @@ class SourceDocModuleItemData(BaseModel):
     module_version_no: int
     module_status: Literal["draft", "published", "archived"]
     module_status_label: str
+    rows: list[ModuleRowData]
 
 
 class SourceDocDetailData(BaseModel):
@@ -272,6 +273,58 @@ class SourceDocDetailData(BaseModel):
     created_at: str
     updated_at: str
     items: list[SourceDocModuleItemData]
+
+
+class ApprovalTransitionData(BaseModel):
+    """Allowed approval transition for a target."""
+
+    to_status: Literal["draft", "published", "archived"]
+    to_status_label: str
+    action_label: str
+
+
+class ApprovalStatusListItemData(BaseModel):
+    """Approval status list item response payload."""
+
+    target_id: int
+    target_key: str
+    target_name: str
+    target_type: Literal["source-doc"]
+    version_no: int
+    status: Literal["draft", "published", "archived"]
+    status_label: str
+    next_action: str
+    module_count: int
+    enabled_module_count: int
+    created_by: str | None
+    updated_at: str
+
+
+class ApprovalStatusListData(BaseModel):
+    """Approval status list response payload."""
+
+    items: list[ApprovalStatusListItemData]
+
+
+class ApprovalStatusDetailData(BaseModel):
+    """Approval status detail response payload."""
+
+    target_id: int
+    target_key: str
+    target_name: str
+    target_type: Literal["source-doc"]
+    version_no: int
+    status: Literal["draft", "published", "archived"]
+    status_label: str
+    next_action: str
+    module_count: int
+    enabled_module_count: int
+    module_names: list[str]
+    description: str | None
+    change_note: str | None
+    created_by: str | None
+    updated_at: str
+    allowed_transitions: list[ApprovalTransitionData]
 
 
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:

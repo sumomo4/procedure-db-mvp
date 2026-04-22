@@ -6,6 +6,7 @@ from typing import Any
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    ModuleRowData,
     SourceDocDetailData,
     SourceDocListData,
     SourceDocListItemData,
@@ -225,6 +226,38 @@ def get_source_doc_detail(
         ORDER BY bi.item_order;
     """
 
+    module_rows_query = """
+        WITH selected_version AS (
+            SELECT
+                bv.blueprint_version_id
+            FROM proc.blueprint_versions bv
+            WHERE bv.blueprint_id = %(source_doc_id)s
+            ORDER BY bv.version_no DESC
+            LIMIT 1
+        )
+        SELECT
+            bi.blueprint_item_id,
+            r.module_row_id,
+            r.row_order,
+            r.row_type,
+            r.major_no,
+            r.middle_no,
+            r.minor_no,
+            r.tech_doc_text,
+            r.work_text,
+            r.check_text_default,
+            r.time_text,
+            r.window_template_default,
+            r.p_template_default,
+            r.command_template_default
+        FROM selected_version sv
+        JOIN proc.blueprint_items bi
+            ON bi.blueprint_version_id = sv.blueprint_version_id
+        JOIN proc.module_rows r
+            ON r.module_version_id = bi.module_version_id
+        ORDER BY bi.item_order, r.row_order;
+    """
+
     try:
         with psycopg.connect(
             settings.database_url,
@@ -233,6 +266,8 @@ def get_source_doc_detail(
             with connection.cursor() as cursor:
                 cursor.execute(query, {"source_doc_id": str(source_doc_id)})
                 rows = cursor.fetchall()
+                cursor.execute(module_rows_query, {"source_doc_id": str(source_doc_id)})
+                module_row_rows = cursor.fetchall()
     except Exception as exception:
         raise DatabaseConnectionError("Source document detail query failed.") from exception
 
@@ -240,6 +275,29 @@ def get_source_doc_detail(
         return None
 
     first_row = rows[0]
+    rows_by_blueprint_item_id: dict[int, list[ModuleRowData]] = {}
+
+    for row in module_row_rows:
+        blueprint_item_id = row[0]
+        rows_by_blueprint_item_id.setdefault(blueprint_item_id, []).append(
+            ModuleRowData(
+                module_row_id=row[1],
+                row_order=row[2],
+                row_type=row[3],
+                major_no=row[4],
+                middle_no=row[5],
+                minor_no=row[6],
+                tech_doc_text=row[7],
+                work_text=row[8],
+                expected_result=row[9],
+                time_text=row[10],
+                window_text=row[11],
+                p_text=row[12],
+                command_text=row[13],
+                note=row[7],
+            )
+        )
+
     items = [
         SourceDocModuleItemData(
             blueprint_item_id=row[11],
@@ -252,6 +310,7 @@ def get_source_doc_detail(
             module_version_no=row[18],
             module_status=row[19],
             module_status_label=MODULE_STATUS_LABELS.get(row[19], row[19]),
+            rows=rows_by_blueprint_item_id.get(row[11], []),
         )
         for row in rows
         if row[11] is not None

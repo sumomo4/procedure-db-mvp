@@ -7,6 +7,7 @@ import pytest
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    ModuleRowData,
     SourceDocDetailData,
     SourceDocListData,
     SourceDocListItemData,
@@ -163,6 +164,24 @@ def test_read_source_doc_detail_returns_success_response(
                     module_version_no=1,
                     module_status="draft",
                     module_status_label="作成中",
+                    rows=[
+                        ModuleRowData(
+                            module_row_id=1000,
+                            row_order=1,
+                            row_type="step",
+                            major_no="1",
+                            middle_no="1",
+                            minor_no="1",
+                            tech_doc_text="Tech doc",
+                            work_text="Check before work.",
+                            expected_result="Ready.",
+                            time_text="※",
+                            window_text=None,
+                            p_text="TT",
+                            command_text="show status",
+                            note="Tech doc",
+                        )
+                    ],
                 ),
                 SourceDocModuleItemData(
                     blueprint_item_id=101,
@@ -175,6 +194,7 @@ def test_read_source_doc_detail_returns_success_response(
                     module_version_no=1,
                     module_status="published",
                     module_status_label="承認済み",
+                    rows=[],
                 ),
             ],
         )
@@ -213,6 +233,24 @@ def test_read_source_doc_detail_returns_success_response(
                     "module_version_no": 1,
                     "module_status": "draft",
                     "module_status_label": "作成中",
+                    "rows": [
+                        {
+                            "module_row_id": 1000,
+                            "row_order": 1,
+                            "row_type": "step",
+                            "major_no": "1",
+                            "middle_no": "1",
+                            "minor_no": "1",
+                            "tech_doc_text": "Tech doc",
+                            "work_text": "Check before work.",
+                            "expected_result": "Ready.",
+                            "time_text": "※",
+                            "window_text": None,
+                            "p_text": "TT",
+                            "command_text": "show status",
+                            "note": "Tech doc",
+                        }
+                    ],
                 },
                 {
                     "blueprint_item_id": 101,
@@ -225,6 +263,7 @@ def test_read_source_doc_detail_returns_success_response(
                     "module_version_no": 1,
                     "module_status": "published",
                     "module_status_label": "承認済み",
+                    "rows": [],
                 },
             ],
         },

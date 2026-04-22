@@ -675,6 +675,43 @@ th {
   overflow-wrap: anywhere;
 }
 
+.approval-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.approval-detail-grid h2 {
+  margin-bottom: 12px;
+}
+
+.approval-transition-list,
+.approval-module-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.approval-transition-card {
+  min-width: 160px;
+  padding: 14px 16px;
+  border: 1px solid #c9d1d3;
+  border-radius: 8px;
+  background: #ffffff;
+  display: grid;
+  gap: 6px;
+}
+
+.approval-transition-card strong {
+  color: #172026;
+}
+
+.approval-transition-card span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .excel-preview {
   display: grid;
   gap: 10px;
@@ -838,6 +875,54 @@ th {
   line-height: 1.7;
 }
 
+.source-doc-module-block {
+  display: grid;
+  gap: 10px;
+  --module-accent: #7fa8bb;
+  padding: 10px;
+  border: 1px solid #b9c7cd;
+  border-left: 6px solid var(--module-accent);
+  background: #f8fbfc;
+}
+
+.source-doc-module-block:nth-of-type(3n + 2) {
+  --module-accent: #89a881;
+}
+
+.source-doc-module-block:nth-of-type(3n) {
+  --module-accent: #b49a79;
+}
+
+.source-doc-module-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid #9aa6ac;
+  background: #ffffff;
+}
+
+.source-doc-module-header span {
+  display: block;
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.source-doc-module-header strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.source-doc-module-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
 @media (max-width: 900px) {
   .app-shell,
   .login-panel,
@@ -855,7 +940,8 @@ th {
   .list-status,
   .search-form,
   .form-grid,
-  .facts {
+  .facts,
+  .approval-detail-grid {
     grid-template-columns: 1fr;
   }
 
