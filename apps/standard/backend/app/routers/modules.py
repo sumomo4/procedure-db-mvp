@@ -8,13 +8,14 @@ from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ApiResponse,
+    ModuleCreateRequest,
     ModuleDetailData,
     ModuleListData,
     RouterEndpointData,
     RouterFoundationData,
     success_response,
 )
-from app.db.modules import VALID_MODULE_STATUSES, get_module_detail, list_modules
+from app.db.modules import VALID_MODULE_STATUSES, create_module, get_module_detail, list_modules
 from app.routers.health import get_app_settings
 
 
@@ -118,3 +119,26 @@ def read_module_detail(
         )
 
     return success_response(data, "Module detail is available.")
+
+
+@router.post("", response_model=ApiResponse[ModuleDetailData], status_code=status.HTTP_201_CREATED)
+def create_module_resource(
+    payload: ModuleCreateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleDetailData]:
+    """Create a module, its first version, and module rows."""
+
+    try:
+        data = create_module(settings, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "Module was created.")

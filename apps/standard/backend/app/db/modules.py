@@ -1,11 +1,18 @@
-﻿"""Database access helpers for module resources."""
+"""Database access helpers for module resources."""
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.core.responses import ModuleDetailData, ModuleListData, ModuleListItemData, ModuleRowData
+from app.core.responses import (
+    ModuleCreateRequest,
+    ModuleDetailData,
+    ModuleListData,
+    ModuleListItemData,
+    ModuleRowData,
+)
 
 
 MODULE_STATUS_LABELS = {
@@ -17,14 +24,7 @@ VALID_MODULE_STATUSES = frozenset(MODULE_STATUS_LABELS)
 
 
 def _format_updated_at(value: Any) -> str:
-    """Format DB updated_at value for API responses.
-
-    Args:
-        value: Value returned from PostgreSQL.
-
-    Returns:
-        Date string suitable for list displays.
-    """
+    """Format DB updated_at value for API responses."""
 
     if isinstance(value, datetime):
         return value.date().isoformat()
@@ -37,15 +37,7 @@ def _build_module_list_query(
     keyword: str | None,
     status_filter: str | None,
 ) -> tuple[str, dict[str, str]]:
-    """Build the module list query and parameters.
-
-    Args:
-        keyword: Optional search keyword.
-        status_filter: Optional module version status.
-
-    Returns:
-        SQL query and named parameters.
-    """
+    """Build the module list query and parameters."""
 
     conditions: list[str] = []
     parameters: dict[str, str] = {}
@@ -123,88 +115,10 @@ def _build_module_list_query(
     return query, parameters
 
 
-def list_modules(
-    settings: AppSettings,
-    keyword: str | None = None,
-    status_filter: str | None = None,
-) -> ModuleListData:
-    """Read modules from PostgreSQL.
+def _build_module_detail_query() -> str:
+    """Build the module detail query."""
 
-    Args:
-        settings: Application settings that contain PostgreSQL connection values.
-        keyword: Optional search keyword.
-        status_filter: Optional status filter. Use ``all`` to disable filtering.
-
-    Returns:
-        Module list payload.
-
-    Raises:
-        DatabaseConnectionError: If the PostgreSQL driver is missing or the
-            module query fails.
-    """
-
-    try:
-        import psycopg
-    except ModuleNotFoundError as exception:
-        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
-
-    query, parameters = _build_module_list_query(keyword, status_filter)
-
-    try:
-        with psycopg.connect(
-            settings.database_url,
-            connect_timeout=settings.db_connect_timeout_seconds,
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(query, parameters)
-                rows = cursor.fetchall()
-    except Exception as exception:
-        raise DatabaseConnectionError("Module list query failed.") from exception
-
-    items = [
-        ModuleListItemData(
-            module_id=row[0],
-            module_key=row[1],
-            module_name=row[2],
-            description=row[3],
-            module_version_id=row[4],
-            version_no=row[5],
-            status=row[6],
-            status_label=MODULE_STATUS_LABELS.get(row[6], row[6]),
-            row_count=row[7],
-            first_work_text=row[8] or None,
-            source_xlsx_path=row[9],
-            created_by=row[10],
-            updated_at=_format_updated_at(row[11]),
-        )
-        for row in rows
-    ]
-
-    return ModuleListData(items=items)
-
-
-def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData | None:
-    """Read the latest module version and rows from PostgreSQL.
-
-    Args:
-        settings: Application settings that contain PostgreSQL connection values.
-        module_id: Target module identifier.
-
-    Returns:
-        Module detail payload when found. ``None`` when the module has no
-        version data or does not exist.
-
-    Raises:
-        DatabaseConnectionError: If the PostgreSQL driver is missing or the
-            module detail query fails.
-    """
-
-    try:
-        import psycopg
-    except ModuleNotFoundError as exception:
-        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
-
-    query = """
+    return """
         WITH selected_version AS (
             SELECT
                 mv.module_version_id,
@@ -255,16 +169,17 @@ def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData
         ORDER BY r.row_order;
     """
 
-    try:
-        with psycopg.connect(
-            settings.database_url,
-            connect_timeout=settings.db_connect_timeout_seconds,
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(query, {"module_id": str(module_id)})
-                rows = cursor.fetchall()
-    except Exception as exception:
-        raise DatabaseConnectionError("Module detail query failed.") from exception
+
+def _fetch_module_detail_rows(connection: Any, module_id: int) -> list[tuple[Any, ...]]:
+    """Fetch raw rows used to build a module detail payload."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(_build_module_detail_query(), {"module_id": str(module_id)})
+        return cursor.fetchall()
+
+
+def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData | None:
+    """Convert raw module detail rows to response data."""
 
     if not rows:
         return None
@@ -308,3 +223,268 @@ def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData
         updated_at=_format_updated_at(first_row[10]),
         rows=module_rows,
     )
+
+
+def _normalize_module_key(module_key: str | None) -> str | None:
+    """Normalize module key text."""
+
+    if module_key is None:
+        return None
+
+    normalized_key = module_key.strip().upper()
+    if not normalized_key:
+        raise ValueError("module_key must not be blank.")
+    return normalized_key
+
+
+def _validate_module_create_request(payload: ModuleCreateRequest) -> None:
+    """Validate create payload with business rules."""
+
+    if not payload.module_name.strip():
+        raise ValueError("module_name must not be blank.")
+
+    row_orders = [row.row_order for row in payload.rows]
+    if len(row_orders) != len(set(row_orders)):
+        raise ValueError("row_order must be unique within rows.")
+
+
+def _generate_next_module_key(cursor: Any) -> str:
+    """Generate the next sequential module key."""
+
+    cursor.execute(
+        """
+        SELECT COALESCE(
+            MAX((regexp_match(module_key, '^MOD-(\\d+)$'))[1]::int),
+            0
+        )
+        FROM proc.modules
+        WHERE module_key ~ '^MOD-\\d+$';
+        """,
+        {},
+    )
+    row = cursor.fetchone()
+    next_no = int(row[0]) + 1 if row and row[0] is not None else 1
+    return f"MOD-{next_no:03d}"
+
+
+def list_modules(
+    settings: AppSettings,
+    keyword: str | None = None,
+    status_filter: str | None = None,
+) -> ModuleListData:
+    """Read modules from PostgreSQL."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    query, parameters = _build_module_list_query(keyword, status_filter)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, parameters)
+                rows = cursor.fetchall()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module list query failed.") from exception
+
+    items = [
+        ModuleListItemData(
+            module_id=row[0],
+            module_key=row[1],
+            module_name=row[2],
+            description=row[3],
+            module_version_id=row[4],
+            version_no=row[5],
+            status=row[6],
+            status_label=MODULE_STATUS_LABELS.get(row[6], row[6]),
+            row_count=row[7],
+            first_work_text=row[8] or None,
+            source_xlsx_path=row[9],
+            created_by=row[10],
+            updated_at=_format_updated_at(row[11]),
+        )
+        for row in rows
+    ]
+
+    return ModuleListData(items=items)
+
+
+def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData | None:
+    """Read the latest module version and rows from PostgreSQL."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            rows = _fetch_module_detail_rows(connection, module_id)
+    except Exception as exception:
+        raise DatabaseConnectionError("Module detail query failed.") from exception
+
+    return _map_module_detail_rows(rows)
+
+
+def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> ModuleDetailData:
+    """Create a module, its initial version, and module rows."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    _validate_module_create_request(payload)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            module_id: int | None = None
+
+            with connection.cursor() as cursor:
+                normalized_module_key = _normalize_module_key(payload.module_key)
+                if normalized_module_key is None:
+                    normalized_module_key = _generate_next_module_key(cursor)
+                else:
+                    cursor.execute(
+                        "SELECT 1 FROM proc.modules WHERE module_key = %(module_key)s;",
+                        {"module_key": normalized_module_key},
+                    )
+                    if cursor.fetchone() is not None:
+                        raise ValueError("module_key already exists.")
+
+                cursor.execute(
+                    """
+                    INSERT INTO proc.modules (module_key, name, description)
+                    VALUES (%(module_key)s, %(module_name)s, %(description)s)
+                    RETURNING module_id, module_key;
+                    """,
+                    {
+                        "module_key": normalized_module_key,
+                        "module_name": payload.module_name.strip(),
+                        "description": payload.description,
+                    },
+                )
+                inserted_module = cursor.fetchone()
+                if inserted_module is None:
+                    raise DatabaseConnectionError("Module create failed.")
+
+                module_id = int(inserted_module[0])
+
+                cursor.execute(
+                    """
+                    INSERT INTO proc.module_versions (
+                        module_id,
+                        version_no,
+                        status,
+                        change_note,
+                        source_xlsx_path,
+                        source_sha256,
+                        created_by
+                    )
+                    VALUES (
+                        %(module_id)s,
+                        1,
+                        'draft',
+                        %(change_note)s,
+                        %(source_xlsx_path)s,
+                        %(source_sha256)s,
+                        %(created_by)s
+                    )
+                    RETURNING module_version_id;
+                    """,
+                    {
+                        "module_id": module_id,
+                        "change_note": payload.change_note,
+                        "source_xlsx_path": payload.source_xlsx_path,
+                        "source_sha256": payload.source_sha256,
+                        "created_by": payload.created_by,
+                    },
+                )
+                inserted_version = cursor.fetchone()
+                if inserted_version is None:
+                    raise DatabaseConnectionError("Module create failed.")
+                module_version_id = int(inserted_version[0])
+
+                for row in sorted(payload.rows, key=lambda item: item.row_order):
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.module_rows (
+                            module_version_id,
+                            row_order,
+                            row_type,
+                            major_no,
+                            middle_no,
+                            minor_no,
+                            tech_doc_text,
+                            work_text,
+                            indent_level,
+                            check_text_default,
+                            time_text,
+                            window_template_default,
+                            p_template_default,
+                            command_template_default
+                        )
+                        VALUES (
+                            %(module_version_id)s,
+                            %(row_order)s,
+                            %(row_type)s,
+                            %(major_no)s,
+                            %(middle_no)s,
+                            %(minor_no)s,
+                            %(tech_doc_text)s,
+                            %(work_text)s,
+                            %(indent_level)s,
+                            %(expected_result)s,
+                            %(time_text)s,
+                            %(window_text)s,
+                            %(p_text)s,
+                            %(command_text)s
+                        )
+                        RETURNING module_row_id;
+                        """,
+                        {
+                            "module_version_id": module_version_id,
+                            "row_order": row.row_order,
+                            "row_type": row.row_type,
+                            "major_no": row.major_no,
+                            "middle_no": row.middle_no,
+                            "minor_no": row.minor_no,
+                            "tech_doc_text": row.tech_doc_text,
+                            "work_text": row.work_text,
+                            "indent_level": row.indent_level,
+                            "expected_result": row.expected_result,
+                            "time_text": row.time_text,
+                            "window_text": row.window_text,
+                            "p_text": row.p_text,
+                            "command_text": row.command_text,
+                        },
+                    )
+                    cursor.fetchone()
+
+            if module_id is None:
+                raise DatabaseConnectionError("Module create failed.")
+
+            detail_rows = _fetch_module_detail_rows(connection, module_id)
+            connection.commit()
+    except ValueError:
+        raise
+    except DatabaseConnectionError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("Module create failed.") from exception
+
+    detail = _map_module_detail_rows(detail_rows)
+    if detail is None:
+        raise DatabaseConnectionError("Module create failed.")
+    return detail

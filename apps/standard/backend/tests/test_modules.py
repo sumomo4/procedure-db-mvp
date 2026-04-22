@@ -254,3 +254,186 @@ def test_read_module_detail_returns_error_response(
         "data": None,
         "message": "Module detail query failed.",
     }
+
+
+def test_create_module_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module create API should create a module and return detail data."""
+
+    def fake_create_module(settings: AppSettings, payload: object) -> ModuleDetailData:
+        assert settings.app_env == "test"
+        assert payload.module_name == "Created module"
+        assert len(payload.rows) == 2
+        return ModuleDetailData(
+            module_id=4,
+            module_key="MOD-004",
+            module_name="Created module",
+            description="Created from API",
+            module_version_id=40,
+            version_no=1,
+            status="draft",
+            status_label="作成中",
+            row_count=2,
+            source_xlsx_path="imports/MOD-004.xlsx",
+            created_by="codex",
+            created_at="2026-04-22",
+            updated_at="2026-04-22",
+            rows=[
+                ModuleRowData(
+                    module_row_id=400,
+                    row_order=1,
+                    row_type="header",
+                    major_no=None,
+                    middle_no=None,
+                    minor_no=None,
+                    tech_doc_text="Header note",
+                    work_text="Preparation",
+                    indent_level=0,
+                    expected_result=None,
+                    time_text=None,
+                    window_text=None,
+                    p_text=None,
+                    command_text=None,
+                    note=None,
+                ),
+                ModuleRowData(
+                    module_row_id=401,
+                    row_order=2,
+                    row_type="step",
+                    major_no="1",
+                    middle_no="1",
+                    minor_no="1",
+                    tech_doc_text="Tech doc",
+                    work_text="Run command",
+                    indent_level=1,
+                    expected_result="Succeeded",
+                    time_text="5分",
+                    window_text="console",
+                    p_text=">",
+                    command_text="show version",
+                    note=None,
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(modules, "create_module", fake_create_module)
+
+    response = client.post(
+        "/api/v1/modules",
+        json={
+            "module_name": "Created module",
+            "description": "Created from API",
+            "source_xlsx_path": "imports/MOD-004.xlsx",
+            "created_by": "codex",
+            "rows": [
+                {
+                    "row_order": 1,
+                    "row_type": "header",
+                    "tech_doc_text": "Header note",
+                    "work_text": "Preparation",
+                    "indent_level": 0,
+                },
+                {
+                    "row_order": 2,
+                    "row_type": "step",
+                    "major_no": "1",
+                    "middle_no": "1",
+                    "minor_no": "1",
+                    "tech_doc_text": "Tech doc",
+                    "work_text": "Run command",
+                    "indent_level": 1,
+                    "expected_result": "Succeeded",
+                    "time_text": "5分",
+                    "window_text": "console",
+                    "p_text": ">",
+                    "command_text": "show version",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json()["result"] == "success"
+    assert response.json()["message"] == "Module was created."
+    assert response.json()["data"]["module_key"] == "MOD-004"
+    assert response.json()["data"]["row_count"] == 2
+
+
+def test_create_module_rejects_invalid_payload(client: TestClient) -> None:
+    """Module create API should reject invalid request bodies."""
+
+    response = client.post(
+        "/api/v1/modules",
+        json={
+            "module_name": "Created module",
+            "rows": [],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Request validation failed: 1 error(s).",
+    }
+
+
+def test_create_module_rejects_business_validation_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module create API should return 400 for business validation errors."""
+
+    def fake_create_module(settings: AppSettings, payload: object) -> ModuleDetailData:
+        del settings, payload
+        raise ValueError("row_order must be unique within rows.")
+
+    monkeypatch.setattr(modules, "create_module", fake_create_module)
+
+    response = client.post(
+        "/api/v1/modules",
+        json={
+            "module_name": "Created module",
+            "rows": [
+                {"row_order": 1, "row_type": "step"},
+                {"row_order": 1, "row_type": "step"},
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "row_order must be unique within rows.",
+    }
+
+
+def test_create_module_returns_error_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module create API should return the common error envelope on DB failure."""
+
+    def fake_create_module(settings: AppSettings, payload: object) -> ModuleDetailData:
+        del settings, payload
+        raise DatabaseConnectionError("Module create failed.")
+
+    monkeypatch.setattr(modules, "create_module", fake_create_module)
+
+    response = client.post(
+        "/api/v1/modules",
+        json={
+            "module_name": "Created module",
+            "rows": [{"row_order": 1, "row_type": "step"}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Module create failed.",
+    }

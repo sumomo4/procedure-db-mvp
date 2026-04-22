@@ -8,13 +8,18 @@ import pytest
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.db.modules import get_module_detail, list_modules
+from app.core.responses import ModuleCreateRequest, ModuleCreateRowInput
+from app.db.modules import create_module, get_module_detail, list_modules
 
 
 class FakeCursor:
     """Small cursor fake for module query tests."""
 
-    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+    def __init__(
+        self,
+        rows: list[tuple[object, ...]],
+        fetchone_results: list[tuple[object, ...] | None] | None = None,
+    ) -> None:
         """Store rows returned by ``fetchall``.
 
         Args:
@@ -23,7 +28,9 @@ class FakeCursor:
 
         self.rows = rows
         self.query = ""
-        self.parameters: dict[str, str] = {}
+        self.parameters: dict[str, object] = {}
+        self.executions: list[tuple[str, dict[str, object]]] = []
+        self.fetchone_results = list(fetchone_results or [])
 
     def __enter__(self) -> "FakeCursor":
         """Enter the context manager.
@@ -37,7 +44,7 @@ class FakeCursor:
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         """Exit the context manager."""
 
-    def execute(self, query: str, parameters: dict[str, str]) -> None:
+    def execute(self, query: str, parameters: dict[str, object]) -> None:
         """Store the executed query and parameters.
 
         Args:
@@ -47,6 +54,14 @@ class FakeCursor:
 
         self.query = query
         self.parameters = parameters
+        self.executions.append((query, parameters))
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        """Return the next configured ``fetchone`` result."""
+
+        if not self.fetchone_results:
+            return None
+        return self.fetchone_results.pop(0)
 
     def fetchall(self) -> list[tuple[object, ...]]:
         """Return configured rows.
@@ -69,6 +84,7 @@ class FakeConnection:
         """
 
         self.fake_cursor = cursor
+        self.commit_called = False
 
     def __enter__(self) -> "FakeConnection":
         """Enter the context manager.
@@ -90,6 +106,11 @@ class FakeConnection:
         """
 
         return self.fake_cursor
+
+    def commit(self) -> None:
+        """Record commit calls."""
+
+        self.commit_called = True
 
 
 def install_fake_psycopg(
@@ -284,3 +305,147 @@ def test_get_module_detail_raises_for_connection_error(monkeypatch: pytest.Monke
 
     with pytest.raises(DatabaseConnectionError):
         get_module_detail(AppSettings(), module_id=1)
+
+
+def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Create helper should insert module data and return created detail."""
+
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            rows=[
+                (
+                    4,
+                    "MOD-004",
+                    "Created module",
+                    "Created from API",
+                    40,
+                    1,
+                    "draft",
+                    "imports/MOD-004.xlsx",
+                    "codex",
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    400,
+                    1,
+                    "header",
+                    None,
+                    None,
+                    None,
+                    "Header note",
+                    "Preparation",
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                (
+                    4,
+                    "MOD-004",
+                    "Created module",
+                    "Created from API",
+                    40,
+                    1,
+                    "draft",
+                    "imports/MOD-004.xlsx",
+                    "codex",
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    401,
+                    2,
+                    "step",
+                    "1",
+                    "1",
+                    "1",
+                    "Tech doc",
+                    "Run command",
+                    1,
+                    "Succeeded",
+                    "5分",
+                    "console",
+                    ">",
+                    "show version",
+                ),
+            ],
+            fetchone_results=[
+                (3,),
+                (4, "MOD-004"),
+                (40,),
+                (400,),
+                (401,),
+            ],
+        ),
+    )
+
+    payload = ModuleCreateRequest(
+        module_name="Created module",
+        description="Created from API",
+        source_xlsx_path="imports/MOD-004.xlsx",
+        created_by="codex",
+        rows=[
+            ModuleCreateRowInput(
+                row_order=2,
+                row_type="step",
+                major_no="1",
+                middle_no="1",
+                minor_no="1",
+                tech_doc_text="Tech doc",
+                work_text="Run command",
+                indent_level=1,
+                expected_result="Succeeded",
+                time_text="5分",
+                window_text="console",
+                p_text=">",
+                command_text="show version",
+            ),
+            ModuleCreateRowInput(
+                row_order=1,
+                row_type="header",
+                tech_doc_text="Header note",
+                work_text="Preparation",
+                indent_level=0,
+            ),
+        ],
+    )
+
+    result = create_module(AppSettings(), payload)
+
+    assert result.module_id == 4
+    assert result.module_key == "MOD-004"
+    assert result.row_count == 2
+    assert result.rows[0].row_order == 1
+    assert result.rows[1].command_text == "show version"
+    executed_queries = "\n".join(query for query, _ in fake_cursor.executions)
+    assert "INSERT INTO proc.modules" in executed_queries
+    assert "INSERT INTO proc.module_versions" in executed_queries
+    assert "INSERT INTO proc.module_rows" in executed_queries
+
+
+def test_create_module_rejects_duplicate_row_order() -> None:
+    """Duplicate row_order values should be rejected before DB access."""
+
+    payload = ModuleCreateRequest(
+        module_name="Created module",
+        rows=[
+            ModuleCreateRowInput(row_order=1, row_type="step"),
+            ModuleCreateRowInput(row_order=1, row_type="step"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="row_order must be unique within rows."):
+        create_module(AppSettings(), payload)
+
+
+def test_create_module_raises_for_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Create helper should wrap connector failures."""
+
+    install_fake_psycopg(monkeypatch, should_raise=True)
+    payload = ModuleCreateRequest(
+        module_name="Created module",
+        rows=[ModuleCreateRowInput(row_order=1, row_type="step")],
+    )
+
+    with pytest.raises(DatabaseConnectionError):
+        create_module(AppSettings(), payload)

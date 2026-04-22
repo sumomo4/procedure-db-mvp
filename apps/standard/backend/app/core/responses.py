@@ -2,7 +2,7 @@
 
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 DataT = TypeVar("DataT")
@@ -163,6 +163,38 @@ class ModuleRowData(BaseModel):
     p_text: str | None
     command_text: str | None
     note: str | None
+
+
+class ModuleCreateRowInput(BaseModel):
+    """Module row input payload for create API."""
+
+    row_order: int = Field(gt=0)
+    row_type: Literal["header", "step", "meta", "spacer"]
+    major_no: str | None = None
+    middle_no: str | None = None
+    minor_no: str | None = None
+    tech_doc_text: str | None = None
+    work_text: str | None = None
+    indent_level: int | None = Field(default=None, ge=0, le=3)
+    expected_result: str | None = None
+    time_text: str | None = None
+    window_text: str | None = None
+    p_text: str | None = None
+    command_text: str | None = None
+    note: str | None = None
+
+
+class ModuleCreateRequest(BaseModel):
+    """Module create request payload."""
+
+    module_key: str | None = None
+    module_name: str = Field(min_length=1)
+    description: str | None = None
+    change_note: str | None = None
+    source_xlsx_path: str | None = None
+    source_sha256: str | None = None
+    created_by: str | None = None
+    rows: list[ModuleCreateRowInput] = Field(min_length=1)
 
 
 class ModuleDetailData(BaseModel):
