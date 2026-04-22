@@ -127,6 +127,62 @@ class ModuleListData(BaseModel):
     items: list[ModuleListItemData]
 
 
+class ModuleRowData(BaseModel):
+    """Module row response payload.
+
+    Attributes:
+        module_row_id: Internal module row identifier.
+        row_order: Display order in the module version.
+        row_type: Row type imported from the source module.
+        work_text: Work instruction text.
+        expected_result: Expected result text.
+        note: Optional note.
+    """
+
+    module_row_id: int
+    row_order: int
+    row_type: str
+    work_text: str | None
+    expected_result: str | None
+    note: str | None
+
+
+class ModuleDetailData(BaseModel):
+    """Module detail response payload.
+
+    Attributes:
+        module_id: Internal module identifier.
+        module_key: Human-readable unique module key.
+        module_name: Module display name.
+        description: Optional module description.
+        module_version_id: Internal module version identifier.
+        version_no: Module version number.
+        status: Current module version status.
+        status_label: User-facing status label.
+        row_count: Number of rows in the module version.
+        source_xlsx_path: Source Excel path used during import.
+        created_by: User who created the module version.
+        created_at: Creation date string.
+        updated_at: Last update date string.
+        rows: Rows included in the module version.
+    """
+
+    module_id: int
+    module_key: str
+    module_name: str
+    description: str | None
+    module_version_id: int
+    version_no: int
+    status: Literal["draft", "published", "archived"]
+    status_label: str
+    row_count: int
+    source_xlsx_path: str | None
+    created_by: str | None
+    created_at: str
+    updated_at: str
+    rows: list[ModuleRowData]
+
+
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:
     """Build a successful API response.
 

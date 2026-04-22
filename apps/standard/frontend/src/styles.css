@@ -653,6 +653,28 @@ th {
   overflow-wrap: anywhere;
 }
 
+.module-detail-note {
+  padding: 18px;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  background: #ffffff;
+}
+
+.module-detail-note span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.module-detail-note p {
+  margin: 0 0 8px;
+  color: #172026;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .app-shell,
   .login-panel,

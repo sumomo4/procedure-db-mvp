@@ -8,7 +8,7 @@ import pytest
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.db.modules import list_modules
+from app.db.modules import get_module_detail, list_modules
 
 
 class FakeCursor:
@@ -183,3 +183,84 @@ def test_list_modules_raises_for_connection_error(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(DatabaseConnectionError):
         list_modules(AppSettings())
+
+
+def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Module detail rows should be converted to response data."""
+
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            [
+                (
+                    1,
+                    "MOD-001",
+                    "Initial check procedure",
+                    "Description",
+                    10,
+                    1,
+                    "draft",
+                    None,
+                    "seed",
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
+                    100,
+                    1,
+                    "step",
+                    "Check before work.",
+                    "Ready.",
+                    None,
+                ),
+                (
+                    1,
+                    "MOD-001",
+                    "Initial check procedure",
+                    "Description",
+                    10,
+                    1,
+                    "draft",
+                    None,
+                    "seed",
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
+                    101,
+                    2,
+                    "step",
+                    "Start work.",
+                    "Started.",
+                    "Note",
+                ),
+            ]
+        ),
+    )
+
+    result = get_module_detail(AppSettings(), module_id=1)
+
+    assert fake_cursor.parameters == {"module_id": "1"}
+    assert result is not None
+    assert result.module_id == 1
+    assert result.module_key == "MOD-001"
+    assert result.status == "draft"
+    assert result.status_label == "作成中"
+    assert result.row_count == 2
+    assert result.created_at == "2026-04-22"
+    assert result.updated_at == "2026-04-22"
+    assert result.rows[0].module_row_id == 100
+    assert result.rows[1].note == "Note"
+
+
+def test_get_module_detail_returns_none_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No query rows should be converted to no detail data."""
+
+    install_fake_psycopg(monkeypatch, FakeCursor([]))
+
+    assert get_module_detail(AppSettings(), module_id=999) is None
+
+
+def test_get_module_detail_raises_for_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Connection failures should raise DatabaseConnectionError."""
+
+    install_fake_psycopg(monkeypatch, should_raise=True)
+
+    with pytest.raises(DatabaseConnectionError):
+        get_module_detail(AppSettings(), module_id=1)

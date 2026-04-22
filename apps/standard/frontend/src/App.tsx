@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 
 type Status = "Draft" | "approval" | "archive";
@@ -59,6 +59,32 @@ type ModuleListData = {
   items: ModuleListItemData[];
 };
 
+type ModuleDetailRowData = {
+  module_row_id: number;
+  row_order: number;
+  row_type: string;
+  work_text: string | null;
+  expected_result: string | null;
+  note: string | null;
+};
+
+type ModuleDetailData = {
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  description: string | null;
+  module_version_id: number;
+  version_no: number;
+  status: ModuleApiStatus;
+  status_label: string;
+  row_count: number;
+  source_xlsx_path: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  rows: ModuleDetailRowData[];
+};
+
 type ApiResponse<TData> = {
   result: ApiResult;
   data: TData | null;
@@ -75,6 +101,12 @@ type HealthCheckState = {
 type ModuleListState = {
   status: "loading" | "available" | "unavailable";
   items: ModuleListItemData[];
+  message: string;
+};
+
+type ModuleDetailState = {
+  status: "loading" | "available" | "unavailable";
+  item: ModuleDetailData | null;
   message: string;
 };
 
@@ -124,6 +156,7 @@ function App() {
         <Route path="/home" element={<HomePage />} />
         <Route path="/modules/search" element={<ModuleSearchPage />} />
         <Route path="/modules/list" element={<ModuleListPage />} />
+        <Route path="/modules/:moduleId" element={<ModuleDetailPage />} />
         <Route path="/modules/register" element={<ModuleRegisterPage />} />
         <Route path="/documents/search" element={<DocumentSearchPage />} />
         <Route path="/documents/create" element={<DocumentEditPage />} />
@@ -638,9 +671,153 @@ function ModuleListPage() {
             item.first_work_text ?? "-",
             item.created_by ?? "-",
             item.updated_at,
-            <button className="text-button" onClick={() => navigate("/documents/create")}>選択</button>,
+            <button className="text-button" onClick={() => navigate(`/modules/${item.module_id}`)}>詳細</button>,
           ])}
         />
+      )}
+    </Page>
+  );
+}
+
+function ModuleDetailPage() {
+  const navigate = useNavigate();
+  const { moduleId } = useParams();
+  const [moduleDetailState, setModuleDetailState] = useState<ModuleDetailState>({
+    status: "loading",
+    item: null,
+    message: "モジュール詳細を取得しています。",
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchModuleDetail(): Promise<void> {
+      if (!moduleId) {
+        setModuleDetailState({
+          status: "unavailable",
+          item: null,
+          message: "モジュールIDが指定されていません。",
+        });
+        return;
+      }
+
+      setModuleDetailState({
+        status: "loading",
+        item: null,
+        message: "モジュール詳細を取得しています。",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}`), {
+          signal: abortController.signal,
+        });
+        const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setModuleDetailState({
+            status: "unavailable",
+            item: null,
+            message: responseBody.message || `モジュール詳細の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setModuleDetailState({
+          status: "available",
+          item: responseBody.data,
+          message: responseBody.message || "モジュール詳細を取得しました。",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setModuleDetailState({
+          status: "unavailable",
+          item: null,
+          message: "APIに接続できませんでした。",
+        });
+      }
+    }
+
+    void fetchModuleDetail();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [moduleId]);
+
+  const item = moduleDetailState.item;
+
+  return (
+    <Page title="モジュール詳細" description="APIから取得したモジュールの基本情報と行データを確認します。">
+      <section className={`list-status list-status-${moduleDetailState.status}`} aria-live="polite">
+        <div>
+          <span>取得状態</span>
+          <strong>
+            {moduleDetailState.status === "loading"
+              ? "取得中"
+              : moduleDetailState.status === "available"
+                ? "取得完了"
+                : "取得失敗"}
+          </strong>
+        </div>
+        <div>
+          <span>モジュールID</span>
+          <strong>{moduleId ?? "指定なし"}</strong>
+        </div>
+        <div>
+          <span>行数</span>
+          <strong>{item ? item.row_count : "-"}</strong>
+        </div>
+        <p>{moduleDetailState.message}</p>
+      </section>
+
+      <Toolbar>
+        <button className="secondary" onClick={() => navigate("/modules/list")}>
+          <span aria-hidden="true">←</span>
+          一覧へ戻る
+        </button>
+        <button className="primary" onClick={() => navigate("/documents/create")}>
+          <span aria-hidden="true">＋</span>
+          原本作成へ
+        </button>
+      </Toolbar>
+
+      {item ? (
+        <>
+          <section className="detail-layout">
+            <div className="facts">
+              <Fact label="モジュールID" value={item.module_key} />
+              <Fact label="モジュール名" value={item.module_name} />
+              <Fact label="版" value={`v${item.version_no}`} />
+              <Fact label="承認状態" value={item.status_label} />
+              <Fact label="作成者" value={item.created_by ?? "-"} />
+              <Fact label="更新日" value={item.updated_at} />
+            </div>
+            <div className="module-detail-note">
+              <span>説明</span>
+              <p>{item.description ?? "説明は未設定です。"}</p>
+              <span>取込元</span>
+              <p>{item.source_xlsx_path ?? "未設定"}</p>
+            </div>
+          </section>
+          <DataTable
+            columns={["順序", "種別", "作業内容", "期待結果", "備考"]}
+            rows={item.rows.map((row) => [
+              String(row.row_order),
+              row.row_type,
+              row.work_text ?? "-",
+              row.expected_result ?? "-",
+              row.note ?? "-",
+            ])}
+          />
+        </>
+      ) : (
+        <section className="empty-state">
+          <h2>モジュール詳細を表示できません</h2>
+          <p>{moduleDetailState.message}</p>
+        </section>
       )}
     </Page>
   );
@@ -933,6 +1110,9 @@ function routeTitle(path: string) {
     "/documents/create": "原本 → 作成/更新",
     "/approval": "承認状態確認",
   };
+  if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list") {
+    return "モジュール → 詳細";
+  }
   return map[path] ?? "一覧/詳細画面";
 }
 

@@ -5,7 +5,7 @@ from typing import Any
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.core.responses import ModuleListData, ModuleListItemData
+from app.core.responses import ModuleDetailData, ModuleListData, ModuleListItemData, ModuleRowData
 
 
 MODULE_STATUS_LABELS = {
@@ -181,3 +181,113 @@ def list_modules(
     ]
 
     return ModuleListData(items=items)
+
+
+def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData | None:
+    """Read the latest module version and rows from PostgreSQL.
+
+    Args:
+        settings: Application settings that contain PostgreSQL connection values.
+        module_id: Target module identifier.
+
+    Returns:
+        Module detail payload when found. ``None`` when the module has no
+        version data or does not exist.
+
+    Raises:
+        DatabaseConnectionError: If the PostgreSQL driver is missing or the
+            module detail query fails.
+    """
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    query = """
+        WITH selected_version AS (
+            SELECT
+                mv.module_version_id,
+                mv.module_id,
+                mv.version_no,
+                mv.status,
+                mv.source_xlsx_path,
+                mv.created_by,
+                mv.created_at,
+                mv.updated_at
+            FROM proc.module_versions mv
+            WHERE mv.module_id = %(module_id)s
+            ORDER BY mv.version_no DESC
+            LIMIT 1
+        )
+        SELECT
+            m.module_id,
+            m.module_key,
+            m.name AS module_name,
+            m.description,
+            sv.module_version_id,
+            sv.version_no,
+            sv.status,
+            sv.source_xlsx_path,
+            sv.created_by,
+            sv.created_at,
+            sv.updated_at,
+            r.module_row_id,
+            r.row_order,
+            r.row_type,
+            r.work_text,
+            r.check_text_default,
+            r.tech_doc_text
+        FROM proc.modules m
+        JOIN selected_version sv
+            ON sv.module_id = m.module_id
+        LEFT JOIN proc.module_rows r
+            ON r.module_version_id = sv.module_version_id
+        WHERE m.module_id = %(module_id)s
+        ORDER BY r.row_order;
+    """
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, {"module_id": str(module_id)})
+                rows = cursor.fetchall()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module detail query failed.") from exception
+
+    if not rows:
+        return None
+
+    first_row = rows[0]
+    module_rows = [
+        ModuleRowData(
+            module_row_id=row[11],
+            row_order=row[12],
+            row_type=row[13],
+            work_text=row[14],
+            expected_result=row[15],
+            note=row[16],
+        )
+        for row in rows
+        if row[11] is not None
+    ]
+
+    return ModuleDetailData(
+        module_id=first_row[0],
+        module_key=first_row[1],
+        module_name=first_row[2],
+        description=first_row[3],
+        module_version_id=first_row[4],
+        version_no=first_row[5],
+        status=first_row[6],
+        status_label=MODULE_STATUS_LABELS.get(first_row[6], first_row[6]),
+        row_count=len(module_rows),
+        source_xlsx_path=first_row[7],
+        created_by=first_row[8],
+        created_at=_format_updated_at(first_row[9]),
+        updated_at=_format_updated_at(first_row[10]),
+        rows=module_rows,
+    )

@@ -8,12 +8,13 @@ from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ApiResponse,
+    ModuleDetailData,
     ModuleListData,
     RouterEndpointData,
     RouterFoundationData,
     success_response,
 )
-from app.db.modules import VALID_MODULE_STATUSES, list_modules
+from app.db.modules import VALID_MODULE_STATUSES, get_module_detail, list_modules
 from app.routers.health import get_app_settings
 
 
@@ -82,3 +83,38 @@ def read_module_router_foundation() -> ApiResponse[RouterFoundationData]:
         ],
     )
     return success_response(data, "Module router foundation is available.")
+
+
+@router.get("/{module_id}", response_model=ApiResponse[ModuleDetailData])
+def read_module_detail(
+    module_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleDetailData]:
+    """Return module detail from PostgreSQL.
+
+    Args:
+        module_id: Target module identifier.
+        settings: Application settings provided by dependency injection.
+
+    Returns:
+        Common response containing module detail data.
+
+    Raises:
+        HTTPException: If the module does not exist or the DB query fails.
+    """
+
+    try:
+        data = get_module_detail(settings, module_id)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Module was not found.",
+        )
+
+    return success_response(data, "Module detail is available.")
