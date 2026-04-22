@@ -623,6 +623,92 @@ th {
   grid-column: 1 / -1;
 }
 
+.register-form {
+  display: grid;
+  gap: 18px;
+}
+
+.register-step-card,
+.register-status {
+  padding: 22px;
+  border: 1px solid #d6cdbc;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(67, 54, 35, 0.08);
+}
+
+.register-step-card {
+  display: grid;
+  gap: 14px;
+}
+
+.register-step-card h2 {
+  margin: 0;
+}
+
+.register-step-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.register-step-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.register-status {
+  display: grid;
+  gap: 8px;
+  border-left: 5px solid #9dc3c8;
+}
+
+.register-status span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.register-status strong,
+.register-result-meta span {
+  overflow-wrap: anywhere;
+}
+
+.register-status p {
+  margin: 0;
+  color: #56636c;
+  line-height: 1.6;
+}
+
+.register-status-submitting {
+  border-left-color: #d7a84f;
+}
+
+.register-status-success {
+  border-left-color: #2e8b57;
+}
+
+.register-status-error {
+  border-left-color: #b84d3a;
+}
+
+.register-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.register-result-meta span {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  background: #f1f5f6;
+  color: #41505a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);

@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 type Status = "Draft" | "approval" | "archive";
 
@@ -106,6 +106,12 @@ type ModuleListState = {
 
 type ModuleDetailState = {
   status: "loading" | "available" | "unavailable";
+  item: ModuleDetailData | null;
+  message: string;
+};
+
+type ModuleCreateState = {
+  status: "idle" | "submitting" | "success" | "error";
   item: ModuleDetailData | null;
   message: string;
 };
@@ -1045,7 +1051,7 @@ function ModuleListPageLegacy() {
   );
 }
 
-function ModuleRegisterPage() {
+function ModuleRegisterPageLegacy() {
   return (
     <Page title="モジュール登録" description="Excelファイルをドラッグ&ドロップし、登録実行までの流れを確認します。">
       <section className="upload-zone" aria-label="Excelファイル登録">
@@ -1063,6 +1069,201 @@ function ModuleRegisterPage() {
       <Toolbar>
         <button className="primary"><span aria-hidden="true">✓</span>登録実行</button>
       </Toolbar>
+    </Page>
+  );
+}
+
+function ModuleRegisterPage() {
+  const navigate = useNavigate();
+  const [moduleKeyInput, setModuleKeyInput] = useState("");
+  const [moduleNameInput, setModuleNameInput] = useState("Initial check procedure");
+  const [descriptionInput, setDescriptionInput] = useState("Created from module register screen.");
+  const [sourcePathInput, setSourcePathInput] = useState("imports/manual-module.xlsx");
+  const [createdByInput, setCreatedByInput] = useState("webui");
+  const [workTextInput, setWorkTextInput] = useState("Check before work.");
+  const [expectedResultInput, setExpectedResultInput] = useState("Ready.");
+  const [timeTextInput, setTimeTextInput] = useState("5 min");
+  const [windowTextInput, setWindowTextInput] = useState("console");
+  const [promptTextInput, setPromptTextInput] = useState(">");
+  const [commandTextInput, setCommandTextInput] = useState("show version");
+  const [createState, setCreateState] = useState<ModuleCreateState>({
+    status: "idle",
+    item: null,
+    message: "Fill in the minimum fields and save the first module version.",
+  });
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+
+    setCreateState({
+      status: "submitting",
+      item: null,
+      message: "Creating module and first version...",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          module_key: moduleKeyInput.trim() || undefined,
+          module_name: moduleNameInput.trim(),
+          description: descriptionInput.trim() || undefined,
+          source_xlsx_path: sourcePathInput.trim() || undefined,
+          created_by: createdByInput.trim() || undefined,
+          rows: [
+            {
+              row_order: 1,
+              row_type: "step",
+              major_no: "1",
+              middle_no: "1",
+              minor_no: "1",
+              work_text: workTextInput.trim() || moduleNameInput.trim(),
+              indent_level: 0,
+              expected_result: expectedResultInput.trim() || undefined,
+              time_text: timeTextInput.trim() || undefined,
+              window_text: windowTextInput.trim() || undefined,
+              p_text: promptTextInput.trim() || undefined,
+              command_text: commandTextInput.trim() || undefined,
+            },
+          ],
+        }),
+      });
+
+      const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setCreateState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `Module create failed. HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setCreateState({
+        status: "success",
+        item: responseBody.data,
+        message: responseBody.message || "Module was created.",
+      });
+      setModuleKeyInput(responseBody.data.module_key);
+    } catch (error) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "Module create failed.",
+      });
+    }
+  }
+
+  const createdItem = createState.item;
+
+  return (
+    <Page title="モジュール登録" description="最小項目でモジュールを登録し、POST /api/v1/modules の保存結果を確認します。">
+      <section className="upload-zone" aria-label="モジュール登録の進め方">
+        <span className="upload-icon">⇧</span>
+        <h2>JSON ベースの最小登録</h2>
+        <p>Excel 直接取込は後段に回し、Sprint 3 では WebUI からモジュール本体と最初の 1 行を保存できる状態を先に作ります。</p>
+      </section>
+
+      <form className="register-form" onSubmit={handleSubmit}>
+        <FormGrid>
+          <label>
+            モジュールキー
+            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 または空欄で自動採番" />
+          </label>
+          <label>
+            モジュール名
+            <input value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} required />
+          </label>
+          <label>
+            作成者
+            <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
+          </label>
+          <label>
+            取込元パス
+            <input value={sourcePathInput} onChange={(event) => setSourcePathInput(event.target.value)} placeholder="imports/manual-module.xlsx" />
+          </label>
+          <label className="wide">
+            説明
+            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
+          </label>
+        </FormGrid>
+
+        <section className="register-step-card">
+          <h2>初回保存する手順行</h2>
+          <div className="register-step-grid">
+            <label className="wide">
+              作業内容
+              <textarea value={workTextInput} onChange={(event) => setWorkTextInput(event.target.value)} required />
+            </label>
+            <label>
+              期待結果
+              <input value={expectedResultInput} onChange={(event) => setExpectedResultInput(event.target.value)} />
+            </label>
+            <label>
+              時刻
+              <input value={timeTextInput} onChange={(event) => setTimeTextInput(event.target.value)} />
+            </label>
+            <label>
+              Window
+              <input value={windowTextInput} onChange={(event) => setWindowTextInput(event.target.value)} />
+            </label>
+            <label>
+              Prompt
+              <input value={promptTextInput} onChange={(event) => setPromptTextInput(event.target.value)} />
+            </label>
+            <label className="wide">
+              Command
+              <input value={commandTextInput} onChange={(event) => setCommandTextInput(event.target.value)} />
+            </label>
+          </div>
+        </section>
+
+        <section
+          className={`register-status ${
+            createState.status === "success"
+              ? "register-status-success"
+              : createState.status === "error"
+                ? "register-status-error"
+                : createState.status === "submitting"
+                  ? "register-status-submitting"
+                  : ""
+          }`}
+        >
+          <span>保存状態</span>
+          <strong>
+            {createState.status === "success"
+              ? "保存成功"
+              : createState.status === "error"
+                ? "保存失敗"
+                : createState.status === "submitting"
+                  ? "保存中"
+                  : "入力待ち"}
+          </strong>
+          <p>{createState.message}</p>
+          {createdItem ? (
+            <div className="register-result-meta">
+              <span>{createdItem.module_key}</span>
+              <span>version {createdItem.version_no}</span>
+              <span>{createdItem.status_label}</span>
+            </div>
+          ) : null}
+        </section>
+
+        <Toolbar>
+          {createdItem ? (
+            <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}`)}>
+              <span aria-hidden="true">↗</span>詳細を開く
+            </button>
+          ) : null}
+          <button className="primary" type="submit" disabled={createState.status === "submitting"}>
+            <span aria-hidden="true">✓</span>{createState.status === "submitting" ? "登録中..." : "登録実行"}
+          </button>
+        </Toolbar>
+      </form>
     </Page>
   );
 }
