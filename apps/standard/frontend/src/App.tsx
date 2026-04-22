@@ -1619,7 +1619,7 @@ function DocumentEditPage() {
   const [moduleListState, setModuleListState] = useState<ModuleListState>({
     status: "loading",
     items: [],
-    message: "Available modules are loading...",
+    message: "利用可能なモジュールを取得しています。",
   });
   const [itemSeed, setItemSeed] = useState(2);
   const [items, setItems] = useState<SourceDocCreateItemDraft[]>([
@@ -1628,7 +1628,7 @@ function DocumentEditPage() {
   const [createState, setCreateState] = useState<SourceDocCreateState>({
     status: "idle",
     item: null,
-    message: "Select modules and save the first source document version.",
+    message: "モジュールを選択して原本の初版を保存します。",
   });
 
   useEffect(() => {
@@ -1638,7 +1638,7 @@ function DocumentEditPage() {
       setModuleListState({
         status: "loading",
         items: [],
-        message: "Available modules are loading...",
+        message: "利用可能なモジュールを取得しています。",
       });
 
       try {
@@ -1651,7 +1651,7 @@ function DocumentEditPage() {
           setModuleListState({
             status: "unavailable",
             items: [],
-            message: responseBody.message || `Module list failed. HTTP ${response.status}`,
+            message: responseBody.message || `モジュール一覧の取得に失敗しました。HTTP ${response.status}`,
           });
           return;
         }
@@ -1659,7 +1659,7 @@ function DocumentEditPage() {
         setModuleListState({
           status: "available",
           items: responseBody.data.items,
-          message: responseBody.message || "Available modules were loaded.",
+          message: responseBody.message || "利用可能なモジュールを取得しました。",
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -1669,7 +1669,7 @@ function DocumentEditPage() {
         setModuleListState({
           status: "unavailable",
           items: [],
-          message: "Modules could not be loaded from the API.",
+          message: "モジュール一覧を API から取得できませんでした。",
         });
       }
     }
@@ -1717,7 +1717,7 @@ function DocumentEditPage() {
       setCreateState({
         status: "error",
         item: null,
-        message: "Source document name is required.",
+        message: "原本名は必須です。",
       });
       return;
     }
@@ -1726,7 +1726,7 @@ function DocumentEditPage() {
       setCreateState({
         status: "error",
         item: null,
-        message: "Select at least one module.",
+        message: "モジュールを1件以上選択してください。",
       });
       return;
     }
@@ -1734,7 +1734,7 @@ function DocumentEditPage() {
     setCreateState({
       status: "submitting",
       item: null,
-      message: "Creating source document and first version...",
+      message: "原本と初版を保存しています。",
     });
 
     try {
@@ -1759,7 +1759,7 @@ function DocumentEditPage() {
         setCreateState({
           status: "error",
           item: null,
-          message: responseBody.message || `Source document create failed. HTTP ${response.status}`,
+          message: responseBody.message || `原本作成に失敗しました。HTTP ${response.status}`,
         });
         return;
       }
@@ -1767,14 +1767,14 @@ function DocumentEditPage() {
       setCreateState({
         status: "success",
         item: responseBody.data,
-        message: responseBody.message || "Source document was created.",
+        message: responseBody.message || "原本を作成しました。",
       });
       setSourceDocKeyInput(responseBody.data.source_doc_key);
     } catch (error) {
       setCreateState({
         status: "error",
         item: null,
-        message: error instanceof Error ? error.message : "Source document create failed.",
+        message: error instanceof Error ? error.message : "原本作成に失敗しました。",
       });
     }
   }
@@ -1782,11 +1782,11 @@ function DocumentEditPage() {
   const createdItem = createState.item;
 
   return (
-    <Page title="???? / ??" description="????????????????????????POST /api/v1/source-docs ?????????????????">
+    <Page title="原本作成 / 更新" description="モジュールを組み合わせて原本の初版を保存します。POST /api/v1/source-docs の結果をこの画面から確認できます。">
       <form className="register-form" onSubmit={handleSubmit}>
         <FormGrid>
           <label>
-            ????
+            原本キー
             <input
               value={sourceDocKeyInput}
               onChange={(event) => setSourceDocKeyInput(event.target.value)}
@@ -1794,47 +1794,47 @@ function DocumentEditPage() {
             />
           </label>
           <label>
-            ???
+            原本名
             <input value={sourceDocNameInput} onChange={(event) => setSourceDocNameInput(event.target.value)} required />
           </label>
           <label>
-            ???
+            作成者
             <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
           </label>
           <label>
-            ????
+            変更メモ
             <input value={changeNoteInput} onChange={(event) => setChangeNoteInput(event.target.value)} />
           </label>
           <label className="wide">
-            ??
+            説明
             <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
           </label>
         </FormGrid>
 
         <section className="register-step-card">
           <div className="register-step-header">
-            <h2>???????</h2>
+            <h2>利用モジュール</h2>
             <button className="secondary" type="button" onClick={addItem}>
-              <span aria-hidden="true">?</span>???
+              <span aria-hidden="true">＋</span>行追加
             </button>
           </div>
           <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
             <div>
-              <span>????</span>
+              <span>取得状態</span>
               <strong>
                 {moduleListState.status === "loading"
-                  ? "Loading"
+                  ? "取得中"
                   : moduleListState.status === "available"
-                    ? "Available"
-                    : "Unavailable"}
+                    ? "取得成功"
+                    : "取得失敗"}
               </strong>
             </div>
             <div>
-              <span>?????</span>
+              <span>利用可能数</span>
               <strong>{moduleListState.items.length}</strong>
             </div>
             <div>
-              <span>????</span>
+              <span>先頭キー</span>
               <strong>{moduleListState.items[0]?.module_key ?? "-"}</strong>
             </div>
             <p>{moduleListState.message}</p>
@@ -1843,20 +1843,20 @@ function DocumentEditPage() {
             {items.map((item, index) => (
               <section key={item.rowId} className="register-row-editor">
                 <div className="register-row-editor-header">
-                  <strong>? {index + 1}</strong>
+                  <strong>行 {index + 1}</strong>
                   <button className="text-button" type="button" onClick={() => removeItem(item.rowId)} disabled={items.length === 1}>
-                    <span aria-hidden="true">?</span>??
+                    <span aria-hidden="true">−</span>削除
                   </button>
                 </div>
                 <div className="register-step-grid">
                   <label>
-                    ?????
+                    モジュール
                     <select
                       value={item.moduleId}
                       onChange={(event) => updateItemModule(item.rowId, event.target.value)}
                       required
                     >
-                      <option value="">????????</option>
+                      <option value="">選択してください</option>
                       {moduleListState.items.map((module) => (
                         <option key={module.module_id} value={String(module.module_id)}>
                           {`${module.module_key} ${module.module_name}`}
@@ -1865,7 +1865,7 @@ function DocumentEditPage() {
                     </select>
                   </label>
                   <label className="checkbox-field">
-                    ??
+                    有効
                     <input
                       type="checkbox"
                       checked={item.enabled}
@@ -1889,15 +1889,15 @@ function DocumentEditPage() {
                   : ""
           }`}
         >
-          <span>????</span>
+          <span>保存状態</span>
           <strong>
             {createState.status === "success"
-              ? "Created"
+              ? "保存完了"
               : createState.status === "error"
-                ? "Error"
+                ? "保存失敗"
                 : createState.status === "submitting"
-                  ? "Submitting"
-                  : "Ready"}
+                  ? "保存中"
+                  : "入力待ち"}
           </strong>
           <p>{createState.message}</p>
           {createdItem ? (
@@ -1911,15 +1911,15 @@ function DocumentEditPage() {
 
         <Toolbar>
           <button className="secondary" type="button" onClick={() => navigate("/documents/search")}>
-            <span aria-hidden="true">?</span>?????
+            <span aria-hidden="true">↩</span>一覧へ戻る
           </button>
           {createdItem ? (
             <button className="secondary" type="button" onClick={() => navigate(`/documents/${createdItem.source_doc_id}`)}>
-              <span aria-hidden="true">?</span>?????
+              <span aria-hidden="true">↗</span>詳細を開く
             </button>
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting"}>
-            <span aria-hidden="true">?</span>{createState.status === "submitting" ? "???..." : "????"}
+            <span aria-hidden="true">✎</span>{createState.status === "submitting" ? "保存中..." : "保存実行"}
           </button>
         </Toolbar>
       </form>
