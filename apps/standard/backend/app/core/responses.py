@@ -134,16 +134,32 @@ class ModuleRowData(BaseModel):
         module_row_id: Internal module row identifier.
         row_order: Display order in the module version.
         row_type: Row type imported from the source module.
+        major_no: Major procedure number.
+        middle_no: Middle procedure number.
+        minor_no: Minor procedure number.
+        tech_doc_text: Technical document text.
         work_text: Work instruction text.
         expected_result: Expected result text.
+        time_text: Time/check column text.
+        window_text: Window column text.
+        p_text: Prompt column text.
+        command_text: Command column text.
         note: Optional note.
     """
 
     module_row_id: int
     row_order: int
     row_type: str
+    major_no: str | None
+    middle_no: str | None
+    minor_no: str | None
+    tech_doc_text: str | None
     work_text: str | None
     expected_result: str | None
+    time_text: str | None
+    window_text: str | None
+    p_text: str | None
+    command_text: str | None
     note: str | None
 
 

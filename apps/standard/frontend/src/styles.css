@@ -675,6 +675,169 @@ th {
   overflow-wrap: anywhere;
 }
 
+.excel-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.excel-title-grid {
+  display: grid;
+  grid-template-columns: minmax(460px, 1fr) 72px 96px 64px 160px;
+  overflow-x: auto;
+  border: 1px solid #9aa6ac;
+  border-bottom: 0;
+  background: #ffffff;
+}
+
+.excel-cell {
+  min-height: 34px;
+  padding: 7px 9px;
+  border-right: 1px solid #9aa6ac;
+  border-bottom: 1px solid #9aa6ac;
+  display: flex;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+
+.excel-title-cell {
+  grid-row: span 2;
+  color: #172026;
+  background: #f8fbfc;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.excel-small-heading,
+.excel-sequence-cell {
+  justify-content: center;
+  background: #d9eaf7;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.excel-device-cell {
+  justify-content: center;
+  color: #ffffff;
+  background: #5d6770;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.excel-target-value,
+.excel-device-value {
+  justify-content: center;
+  background: #fff3c7;
+  font-weight: 800;
+}
+
+.excel-sheet-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #9aa6ac;
+  background: #ffffff;
+}
+
+.excel-sheet {
+  min-width: 1180px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.excel-sheet th,
+.excel-sheet td {
+  border: 1px solid #9aa6ac;
+  padding: 8px;
+  vertical-align: top;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.excel-sheet th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #172026;
+  background: #d9eaf7;
+  text-align: center;
+  font-weight: 900;
+}
+
+.excel-col-small {
+  width: 48px;
+}
+
+.excel-col-doc {
+  width: 150px;
+}
+
+.excel-col-work {
+  width: 360px;
+}
+
+.excel-col-check {
+  width: 280px;
+}
+
+.excel-col-time {
+  width: 64px;
+}
+
+.excel-col-window {
+  width: 92px;
+}
+
+.excel-col-prompt {
+  width: 72px;
+}
+
+.excel-col-command {
+  width: 210px;
+}
+
+.excel-row-header td {
+  background: #f7f4ee;
+  font-weight: 900;
+}
+
+.excel-row-meta td {
+  background: #eef4f6;
+  font-weight: 900;
+}
+
+.excel-number,
+.excel-center {
+  text-align: center;
+}
+
+.excel-work-cell {
+  font-weight: 700;
+}
+
+.excel-command-cell {
+  font-family: Consolas, "Courier New", monospace;
+  color: #1d3c45;
+  background: #fbfcfc;
+}
+
+.excel-remarks {
+  min-height: 110px;
+  padding: 18px;
+  border: 1px solid #9aa6ac;
+  background: #ffffff;
+}
+
+.excel-remarks strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.excel-remarks p {
+  margin: 0;
+  color: #56636c;
+  line-height: 1.7;
+}
+
 @media (max-width: 900px) {
   .app-shell,
   .login-panel,

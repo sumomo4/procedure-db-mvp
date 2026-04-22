@@ -207,9 +207,16 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     100,
                     1,
                     "step",
+                    "1",
+                    "1",
+                    "1",
+                    "Tech doc",
                     "Check before work.",
                     "Ready.",
+                    "□",
                     None,
+                    "TT",
+                    "show status",
                 ),
                 (
                     1,
@@ -226,9 +233,16 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     101,
                     2,
                     "step",
+                    "1",
+                    "1",
+                    "2",
+                    "Tech doc",
                     "Start work.",
                     "Started.",
-                    "Note",
+                    None,
+                    None,
+                    "TT",
+                    "show log",
                 ),
             ]
         ),
@@ -246,7 +260,10 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
     assert result.created_at == "2026-04-22"
     assert result.updated_at == "2026-04-22"
     assert result.rows[0].module_row_id == 100
-    assert result.rows[1].note == "Note"
+    assert result.rows[0].major_no == "1"
+    assert result.rows[0].tech_doc_text == "Tech doc"
+    assert result.rows[0].time_text == "□"
+    assert result.rows[1].command_text == "show log"
 
 
 def test_get_module_detail_returns_none_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:

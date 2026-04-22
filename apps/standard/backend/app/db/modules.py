@@ -1,4 +1,4 @@
-"""Database access helpers for module resources."""
+﻿"""Database access helpers for module resources."""
 
 from datetime import date, datetime
 from typing import Any
@@ -235,9 +235,16 @@ def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData
             r.module_row_id,
             r.row_order,
             r.row_type,
+            r.major_no,
+            r.middle_no,
+            r.minor_no,
+            r.tech_doc_text,
             r.work_text,
             r.check_text_default,
-            r.tech_doc_text
+            r.time_text,
+            r.window_template_default,
+            r.p_template_default,
+            r.command_template_default
         FROM proc.modules m
         JOIN selected_version sv
             ON sv.module_id = m.module_id
@@ -267,9 +274,17 @@ def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData
             module_row_id=row[11],
             row_order=row[12],
             row_type=row[13],
-            work_text=row[14],
-            expected_result=row[15],
-            note=row[16],
+            major_no=row[14],
+            middle_no=row[15],
+            minor_no=row[16],
+            tech_doc_text=row[17],
+            work_text=row[18],
+            expected_result=row[19],
+            time_text=row[20],
+            window_text=row[21],
+            p_text=row[22],
+            command_text=row[23],
+            note=row[17],
         )
         for row in rows
         if row[11] is not None

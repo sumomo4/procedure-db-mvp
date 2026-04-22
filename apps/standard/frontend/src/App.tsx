@@ -63,8 +63,16 @@ type ModuleDetailRowData = {
   module_row_id: number;
   row_order: number;
   row_type: string;
+  major_no: string | null;
+  middle_no: string | null;
+  minor_no: string | null;
+  tech_doc_text: string | null;
   work_text: string | null;
   expected_result: string | null;
+  time_text: string | null;
+  window_text: string | null;
+  p_text: string | null;
+  command_text: string | null;
   note: string | null;
 };
 
@@ -802,16 +810,7 @@ function ModuleDetailPage() {
               <p>{item.source_xlsx_path ?? "未設定"}</p>
             </div>
           </section>
-          <DataTable
-            columns={["順序", "種別", "作業内容", "期待結果", "備考"]}
-            rows={item.rows.map((row) => [
-              String(row.row_order),
-              row.row_type,
-              row.work_text ?? "-",
-              row.expected_result ?? "-",
-              row.note ?? "-",
-            ])}
-          />
+          <ExcelModulePreview item={item} />
         </>
       ) : (
         <section className="empty-state">
@@ -820,6 +819,75 @@ function ModuleDetailPage() {
         </section>
       )}
     </Page>
+  );
+}
+
+function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
+  return (
+    <section className="excel-preview" aria-label="Excel風モジュールプレビュー">
+      <div className="excel-title-grid">
+        <div className="excel-cell excel-title-cell">{item.module_name.replace("_CS ", " ")}</div>
+        <div className="excel-cell excel-small-heading">時刻</div>
+        <div className="excel-cell excel-small-heading">target</div>
+        <div className="excel-cell excel-small-heading">P</div>
+        <div className="excel-cell excel-device-cell">対象装置</div>
+        <div className="excel-cell excel-sequence-cell">通番</div>
+        <div className="excel-cell excel-target-value">1</div>
+        <div className="excel-cell excel-device-value">{"{{DEVICE_NAME}}"}</div>
+      </div>
+
+      <div className="excel-sheet-wrap">
+        <table className="excel-sheet">
+          <colgroup>
+            <col className="excel-col-small" />
+            <col className="excel-col-small" />
+            <col className="excel-col-small" />
+            <col className="excel-col-doc" />
+            <col className="excel-col-work" />
+            <col className="excel-col-check" />
+            <col className="excel-col-time" />
+            <col className="excel-col-window" />
+            <col className="excel-col-prompt" />
+            <col className="excel-col-command" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>大</th>
+              <th>中</th>
+              <th>小</th>
+              <th>技術資料名</th>
+              <th>作業内容</th>
+              <th>確認事項 or 項目</th>
+              <th>時刻</th>
+              <th>window</th>
+              <th>P</th>
+              <th>コマンド</th>
+            </tr>
+          </thead>
+          <tbody>
+            {item.rows.map((row) => (
+              <tr key={row.module_row_id} className={`excel-row excel-row-${row.row_type}`}>
+                <td className="excel-number">{row.major_no ?? ""}</td>
+                <td className="excel-number">{row.middle_no ?? ""}</td>
+                <td className="excel-number">{row.minor_no ?? ""}</td>
+                <td>{row.tech_doc_text ?? ""}</td>
+                <td className="excel-work-cell">{row.work_text ?? ""}</td>
+                <td>{row.expected_result ?? ""}</td>
+                <td className="excel-center">{row.time_text ?? ""}</td>
+                <td>{row.window_text ?? ""}</td>
+                <td>{row.p_text ?? ""}</td>
+                <td className="excel-command-cell">{row.command_text ?? ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="excel-remarks">
+        <strong>連絡事項</strong>
+        <p>Excelの結合セル欄に相当する領域です。Sprint 2では閲覧用の仮表示として扱います。</p>
+      </div>
+    </section>
   );
 }
 
