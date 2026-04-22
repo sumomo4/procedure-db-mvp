@@ -13,6 +13,7 @@ from app.core.responses import (
     SourceDocListData,
     SourceDocListItemData,
     SourceDocModuleItemData,
+    SourceDocUpdateRequest,
 )
 from app.routers import source_docs
 
@@ -481,4 +482,205 @@ def test_create_source_doc_returns_error_response(
         "result": "error",
         "data": None,
         "message": "Source document create failed.",
+    }
+
+
+def test_update_source_doc_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document update API should create the next source doc version."""
+
+    def fake_update_source_doc(
+        settings: AppSettings,
+        source_doc_id: int,
+        payload: SourceDocUpdateRequest,
+    ) -> SourceDocDetailData | None:
+        assert settings.app_env == "test"
+        assert source_doc_id == 1
+        assert payload.source_doc_name == "Updated source doc"
+        assert len(payload.items) == 2
+        return SourceDocDetailData(
+            source_doc_id=1,
+            source_doc_key="BP-STD-001",
+            source_doc_name="Updated source doc",
+            description="Updated from API",
+            source_doc_version_id=31,
+            version_no=2,
+            status="draft",
+            status_label="draft",
+            change_note="Second draft",
+            module_count=2,
+            enabled_module_count=2,
+            created_by="codex",
+            created_at="2026-04-23",
+            updated_at="2026-04-23",
+            items=[
+                SourceDocModuleItemData(
+                    blueprint_item_id=310,
+                    item_order=1,
+                    enabled=True,
+                    module_id=1,
+                    module_key="MOD-001",
+                    module_name="Module A",
+                    module_version_id=11,
+                    module_version_no=1,
+                    module_status="draft",
+                    module_status_label="draft",
+                    rows=[],
+                ),
+                SourceDocModuleItemData(
+                    blueprint_item_id=311,
+                    item_order=2,
+                    enabled=True,
+                    module_id=2,
+                    module_key="MOD-002",
+                    module_name="Module B",
+                    module_version_id=12,
+                    module_version_no=1,
+                    module_status="draft",
+                    module_status_label="draft",
+                    rows=[],
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(source_docs, "update_source_doc", fake_update_source_doc)
+
+    response = client.put(
+        "/api/v1/source-docs/1",
+        json={
+            "source_doc_name": "Updated source doc",
+            "description": "Updated from API",
+            "change_note": "Second draft",
+            "created_by": "codex",
+            "items": [
+                {"module_id": 1, "enabled": True},
+                {"module_id": 2, "enabled": True},
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["result"] == "success"
+    assert response.json()["message"] == "Source document was updated."
+    assert response.json()["data"]["source_doc_version_id"] == 31
+    assert response.json()["data"]["version_no"] == 2
+
+
+def test_update_source_doc_rejects_invalid_payload(client: TestClient) -> None:
+    """Source document update API should reject invalid request bodies."""
+
+    response = client.put(
+        "/api/v1/source-docs/1",
+        json={
+            "source_doc_name": "Updated source doc",
+            "items": [],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Request validation failed: 1 error(s).",
+    }
+
+
+def test_update_source_doc_rejects_business_validation_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document update API should return 400 for business validation errors."""
+
+    def fake_update_source_doc(
+        settings: AppSettings,
+        source_doc_id: int,
+        payload: SourceDocUpdateRequest,
+    ) -> SourceDocDetailData | None:
+        del settings, source_doc_id, payload
+        raise ValueError("module_id must be unique within items.")
+
+    monkeypatch.setattr(source_docs, "update_source_doc", fake_update_source_doc)
+
+    response = client.put(
+        "/api/v1/source-docs/1",
+        json={
+            "source_doc_name": "Updated source doc",
+            "items": [
+                {"module_id": 1, "enabled": True},
+                {"module_id": 1, "enabled": False},
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "module_id must be unique within items.",
+    }
+
+
+def test_update_source_doc_returns_not_found_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document update API should return 404 when the source doc does not exist."""
+
+    def fake_update_source_doc(
+        settings: AppSettings,
+        source_doc_id: int,
+        payload: SourceDocUpdateRequest,
+    ) -> SourceDocDetailData | None:
+        del settings, source_doc_id, payload
+        return None
+
+    monkeypatch.setattr(source_docs, "update_source_doc", fake_update_source_doc)
+
+    response = client.put(
+        "/api/v1/source-docs/999",
+        json={
+            "source_doc_name": "Updated source doc",
+            "items": [{"module_id": 1, "enabled": True}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Source document was not found.",
+    }
+
+
+def test_update_source_doc_returns_error_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document update API should return the common error envelope on DB failure."""
+
+    def fake_update_source_doc(
+        settings: AppSettings,
+        source_doc_id: int,
+        payload: SourceDocUpdateRequest,
+    ) -> SourceDocDetailData | None:
+        del settings, source_doc_id, payload
+        raise DatabaseConnectionError("Source document update failed.")
+
+    monkeypatch.setattr(source_docs, "update_source_doc", fake_update_source_doc)
+
+    response = client.put(
+        "/api/v1/source-docs/1",
+        json={
+            "source_doc_name": "Updated source doc",
+            "items": [{"module_id": 1, "enabled": True}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Source document update failed.",
     }

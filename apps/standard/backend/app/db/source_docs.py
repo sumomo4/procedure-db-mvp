@@ -8,6 +8,7 @@ from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     SourceDocCreateRequest,
+    SourceDocUpdateRequest,
     ModuleRowData,
     SourceDocDetailData,
     SourceDocListData,
@@ -310,8 +311,10 @@ def _normalize_source_doc_key(source_doc_key: str | None) -> str | None:
     return normalized_key
 
 
-def _validate_source_doc_create_request(payload: SourceDocCreateRequest) -> None:
-    """Validate create payload with business rules."""
+def _validate_source_doc_write_request(
+    payload: SourceDocCreateRequest | SourceDocUpdateRequest,
+) -> None:
+    """Validate create/update payload with business rules."""
 
     if not payload.source_doc_name.strip():
         raise ValueError("source_doc_name must not be blank.")
@@ -342,6 +345,64 @@ def _generate_next_source_doc_key(cursor: Any) -> str:
     row = cursor.fetchone()
     next_no = int(row[0]) + 1 if row and row[0] is not None else 1
     return f"BP-STD-{next_no:03d}"
+
+
+def _resolve_latest_module_version_id(cursor: Any, module_id: int) -> int:
+    """Resolve the latest module version id for the given module."""
+
+    cursor.execute(
+        """
+        SELECT mv.module_version_id
+        FROM proc.module_versions mv
+        WHERE mv.module_id = %(module_id)s
+        ORDER BY mv.version_no DESC
+        LIMIT 1;
+        """,
+        {"module_id": module_id},
+    )
+    module_version_row = cursor.fetchone()
+    if module_version_row is None:
+        raise ValueError(f"module_id {module_id} was not found.")
+    return int(module_version_row[0])
+
+
+def _insert_source_doc_items(
+    cursor: Any,
+    source_doc_version_id: int,
+    items: Sequence[Any],
+) -> None:
+    """Insert linked module items for a source document version."""
+
+    ordered_items = sorted(
+        enumerate(items, start=1),
+        key=lambda pair: pair[1].item_order if pair[1].item_order is not None else pair[0],
+    )
+    for fallback_order, item in ordered_items:
+        module_version_id = _resolve_latest_module_version_id(cursor, item.module_id)
+        cursor.execute(
+            """
+            INSERT INTO proc.blueprint_items (
+                blueprint_version_id,
+                item_order,
+                module_version_id,
+                enabled
+            )
+            VALUES (
+                %(source_doc_version_id)s,
+                %(item_order)s,
+                %(module_version_id)s,
+                %(enabled)s
+            )
+            RETURNING blueprint_item_id;
+            """,
+            {
+                "source_doc_version_id": source_doc_version_id,
+                "item_order": item.item_order if item.item_order is not None else fallback_order,
+                "module_version_id": module_version_id,
+                "enabled": item.enabled,
+            },
+        )
+        cursor.fetchone()
 
 
 def list_source_docs(
@@ -425,7 +486,7 @@ def create_source_doc(
     except ModuleNotFoundError as exception:
         raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
 
-    _validate_source_doc_create_request(payload)
+    _validate_source_doc_write_request(payload)
 
     try:
         with psycopg.connect(
@@ -492,49 +553,7 @@ def create_source_doc(
                     raise DatabaseConnectionError("Source document create failed.")
                 source_doc_version_id = int(inserted_version[0])
 
-                ordered_items = sorted(
-                    enumerate(payload.items, start=1),
-                    key=lambda pair: pair[1].item_order if pair[1].item_order is not None else pair[0],
-                )
-                for fallback_order, item in ordered_items:
-                    cursor.execute(
-                        """
-                        SELECT mv.module_version_id
-                        FROM proc.module_versions mv
-                        WHERE mv.module_id = %(module_id)s
-                        ORDER BY mv.version_no DESC
-                        LIMIT 1;
-                        """,
-                        {"module_id": item.module_id},
-                    )
-                    module_version_row = cursor.fetchone()
-                    if module_version_row is None:
-                        raise ValueError(f"module_id {item.module_id} was not found.")
-
-                    cursor.execute(
-                        """
-                        INSERT INTO proc.blueprint_items (
-                            blueprint_version_id,
-                            item_order,
-                            module_version_id,
-                            enabled
-                        )
-                        VALUES (
-                            %(source_doc_version_id)s,
-                            %(item_order)s,
-                            %(module_version_id)s,
-                            %(enabled)s
-                        )
-                        RETURNING blueprint_item_id;
-                        """,
-                        {
-                            "source_doc_version_id": source_doc_version_id,
-                            "item_order": item.item_order if item.item_order is not None else fallback_order,
-                            "module_version_id": int(module_version_row[0]),
-                            "enabled": item.enabled,
-                        },
-                    )
-                    cursor.fetchone()
+                _insert_source_doc_items(cursor, source_doc_version_id, payload.items)
 
             if source_doc_id is None:
                 raise DatabaseConnectionError("Source document create failed.")
@@ -551,4 +570,130 @@ def create_source_doc(
     detail = _map_source_doc_detail_rows(detail_rows, module_row_rows)
     if detail is None:
         raise DatabaseConnectionError("Source document create failed.")
+    return detail
+
+
+def update_source_doc(
+    settings: AppSettings,
+    source_doc_id: int,
+    payload: SourceDocUpdateRequest,
+) -> SourceDocDetailData | None:
+    """Update a source document and create its next draft version."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    _validate_source_doc_write_request(payload)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT blueprint_key
+                    FROM proc.blueprints
+                    WHERE blueprint_id = %(source_doc_id)s;
+                    """,
+                    {"source_doc_id": source_doc_id},
+                )
+                existing_source_doc = cursor.fetchone()
+                if existing_source_doc is None:
+                    return None
+
+                normalized_source_doc_key = _normalize_source_doc_key(payload.source_doc_key)
+                if normalized_source_doc_key is None:
+                    normalized_source_doc_key = str(existing_source_doc[0])
+                else:
+                    cursor.execute(
+                        """
+                        SELECT 1
+                        FROM proc.blueprints
+                        WHERE blueprint_key = %(source_doc_key)s
+                          AND blueprint_id <> %(source_doc_id)s;
+                        """,
+                        {
+                            "source_doc_key": normalized_source_doc_key,
+                            "source_doc_id": source_doc_id,
+                        },
+                    )
+                    if cursor.fetchone() is not None:
+                        raise ValueError("source_doc_key already exists.")
+
+                cursor.execute(
+                    """
+                    UPDATE proc.blueprints
+                    SET
+                        blueprint_key = %(source_doc_key)s,
+                        name = %(source_doc_name)s,
+                        description = %(description)s
+                    WHERE blueprint_id = %(source_doc_id)s;
+                    """,
+                    {
+                        "source_doc_id": source_doc_id,
+                        "source_doc_key": normalized_source_doc_key,
+                        "source_doc_name": payload.source_doc_name.strip(),
+                        "description": payload.description,
+                    },
+                )
+
+                cursor.execute(
+                    """
+                    SELECT COALESCE(MAX(version_no), 0) + 1
+                    FROM proc.blueprint_versions
+                    WHERE blueprint_id = %(source_doc_id)s;
+                    """,
+                    {"source_doc_id": source_doc_id},
+                )
+                next_version_row = cursor.fetchone()
+                next_version_no = int(next_version_row[0]) if next_version_row and next_version_row[0] is not None else 1
+
+                cursor.execute(
+                    """
+                    INSERT INTO proc.blueprint_versions (
+                        blueprint_id,
+                        version_no,
+                        status,
+                        change_note,
+                        created_by
+                    )
+                    VALUES (
+                        %(source_doc_id)s,
+                        %(version_no)s,
+                        'draft',
+                        %(change_note)s,
+                        %(created_by)s
+                    )
+                    RETURNING blueprint_version_id;
+                    """,
+                    {
+                        "source_doc_id": source_doc_id,
+                        "version_no": next_version_no,
+                        "change_note": payload.change_note,
+                        "created_by": payload.created_by,
+                    },
+                )
+                inserted_version = cursor.fetchone()
+                if inserted_version is None:
+                    raise DatabaseConnectionError("Source document update failed.")
+                source_doc_version_id = int(inserted_version[0])
+
+                _insert_source_doc_items(cursor, source_doc_version_id, payload.items)
+
+            detail_rows, module_row_rows = _fetch_source_doc_detail_rows(connection, source_doc_id)
+            connection.commit()
+    except ValueError:
+        raise
+    except DatabaseConnectionError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document update failed.") from exception
+
+    detail = _map_source_doc_detail_rows(detail_rows, module_row_rows)
+    if detail is None:
+        raise DatabaseConnectionError("Source document update failed.")
     return detail

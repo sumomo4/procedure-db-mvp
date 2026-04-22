@@ -201,6 +201,11 @@ type SourceDocDetailState = {
   message: string;
 };
 
+type SourceDocFormLoadState = {
+  status: "idle" | "loading" | "ready" | "error";
+  message: string;
+};
+
 
 type SourceDocCreateState = {
   status: "idle" | "submitting" | "success" | "error";
@@ -1609,7 +1614,7 @@ function DocumentSearchPage() {
   );
 }
 
-function DocumentEditPage() {
+function LegacyDocumentEditPage() {
   const navigate = useNavigate();
   const [sourceDocKeyInput, setSourceDocKeyInput] = useState("");
   const [sourceDocNameInput, setSourceDocNameInput] = useState("M1 procedure bundle");
@@ -1927,6 +1932,448 @@ function DocumentEditPage() {
   );
 }
 
+function DocumentEditPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const editSourceDocIdParam = searchParams.get("id");
+  const editSourceDocId =
+    editSourceDocIdParam && /^\d+$/.test(editSourceDocIdParam) ? Number(editSourceDocIdParam) : null;
+  const isEditMode = editSourceDocId !== null;
+  const [sourceDocKeyInput, setSourceDocKeyInput] = useState("");
+  const [sourceDocNameInput, setSourceDocNameInput] = useState("M1 procedure bundle");
+  const [descriptionInput, setDescriptionInput] = useState("Created from source document register screen.");
+  const [changeNoteInput, setChangeNoteInput] = useState("Initial draft");
+  const [createdByInput, setCreatedByInput] = useState("webui");
+  const [formLoadState, setFormLoadState] = useState<SourceDocFormLoadState>({
+    status: "idle",
+    message: "新規作成モードです。入力後に保存を実行してください。",
+  });
+  const [moduleListState, setModuleListState] = useState<ModuleListState>({
+    status: "loading",
+    items: [],
+    message: "利用可能なモジュールを取得しています。",
+  });
+  const [itemSeed, setItemSeed] = useState(2);
+  const [items, setItems] = useState<SourceDocCreateItemDraft[]>([{ rowId: 1, moduleId: "", enabled: true }]);
+  const [createState, setCreateState] = useState<SourceDocCreateState>({
+    status: "idle",
+    item: null,
+    message: "モジュールを選択して原本を保存してください。",
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchModules(): Promise<void> {
+      setModuleListState({
+        status: "loading",
+        items: [],
+        message: "利用可能なモジュールを取得しています。",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl("/api/v1/modules"), {
+          signal: abortController.signal,
+        });
+        const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setModuleListState({
+            status: "unavailable",
+            items: [],
+            message: responseBody.message || `モジュール一覧の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setModuleListState({
+          status: "available",
+          items: responseBody.data.items,
+          message: responseBody.message || "Modules are available.",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setModuleListState({
+          status: "unavailable",
+          items: [],
+          message: "モジュール一覧を API から取得できませんでした。",
+        });
+      }
+    }
+
+    void fetchModules();
+
+    return () => {
+      abortController.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isEditMode || editSourceDocId === null) {
+      setFormLoadState({
+        status: "idle",
+        message: "新規作成モードです。入力後に保存を実行してください。",
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    async function fetchSourceDocForEdit(): Promise<void> {
+      setFormLoadState({
+        status: "loading",
+        message: "更新対象の原本を読み込んでいます。",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/v1/source-docs/${editSourceDocId}`), {
+          signal: abortController.signal,
+        });
+        const responseBody = (await response.json()) as ApiResponse<SourceDocDetailData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setFormLoadState({
+            status: "error",
+            message: responseBody.message || `更新対象の原本取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        const detail = responseBody.data;
+        setSourceDocKeyInput(detail.source_doc_key);
+        setSourceDocNameInput(detail.source_doc_name);
+        setDescriptionInput(detail.description ?? "");
+        setChangeNoteInput(detail.change_note ?? "Updated draft");
+        setCreatedByInput(detail.created_by ?? "webui");
+        setItems(
+          detail.items.length > 0
+            ? detail.items.map((item, index) => ({
+                rowId: index + 1,
+                moduleId: String(item.module_id),
+                enabled: item.enabled,
+              }))
+            : [{ rowId: 1, moduleId: "", enabled: true }],
+        );
+        setItemSeed((detail.items.length || 1) + 1);
+        setCreateState({
+          status: "idle",
+          item: null,
+          message: "原本の更新内容を編集して保存してください。",
+        });
+        setFormLoadState({
+          status: "ready",
+          message: `${detail.source_doc_key} を更新モードで読み込みました。`,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setFormLoadState({
+          status: "error",
+          message: error instanceof Error ? error.message : "更新対象の原本取得に失敗しました。",
+        });
+      }
+    }
+
+    void fetchSourceDocForEdit();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [editSourceDocId, isEditMode]);
+
+  function updateItemModule(rowId: number, moduleId: string): void {
+    setItems((currentItems) =>
+      currentItems.map((item) => (item.rowId === rowId ? { ...item, moduleId } : item)),
+    );
+  }
+
+  function updateItemEnabled(rowId: number, enabled: boolean): void {
+    setItems((currentItems) =>
+      currentItems.map((item) => (item.rowId === rowId ? { ...item, enabled } : item)),
+    );
+  }
+
+  function addItem(): void {
+    setItems((currentItems) => [...currentItems, { rowId: itemSeed, moduleId: "", enabled: true }]);
+    setItemSeed((currentSeed) => currentSeed + 1);
+  }
+
+  function removeItem(rowId: number): void {
+    setItems((currentItems) => (currentItems.length > 1 ? currentItems.filter((item) => item.rowId !== rowId) : currentItems));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+
+    const selectedItems = items
+      .map((item, index) => ({
+        module_id: Number(item.moduleId),
+        enabled: item.enabled,
+        item_order: index + 1,
+      }))
+      .filter((item) => Number.isInteger(item.module_id) && item.module_id > 0);
+
+    if (!sourceDocNameInput.trim()) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "原本名は必須です。",
+      });
+      return;
+    }
+
+    if (selectedItems.length === 0) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "モジュールを1件以上選択してください。",
+      });
+      return;
+    }
+
+    setCreateState({
+      status: "submitting",
+      item: null,
+      message: isEditMode ? "原本の更新内容を保存しています。" : "原本と関連モジュールを保存しています。",
+    });
+
+    try {
+      const response = await fetch(
+        buildApiUrl(isEditMode && editSourceDocId !== null ? `/api/v1/source-docs/${editSourceDocId}` : "/api/v1/source-docs"),
+        {
+          method: isEditMode ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            source_doc_key: sourceDocKeyInput.trim() || undefined,
+            source_doc_name: sourceDocNameInput.trim(),
+            description: descriptionInput.trim() || undefined,
+            change_note: changeNoteInput.trim() || undefined,
+            created_by: createdByInput.trim() || undefined,
+            items: selectedItems,
+          }),
+        },
+      );
+
+      const responseBody = (await response.json()) as ApiResponse<SourceDocDetailData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setCreateState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `${isEditMode ? "原本更新" : "原本作成"}に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setCreateState({
+        status: "success",
+        item: responseBody.data,
+        message: responseBody.message || (isEditMode ? "原本を更新しました。" : "原本を保存しました。"),
+      });
+      setSourceDocKeyInput(responseBody.data.source_doc_key);
+      if (isEditMode) {
+        setFormLoadState({
+          status: "ready",
+          message: `${responseBody.data.source_doc_key} を更新しました。現在は version ${responseBody.data.version_no} です。`,
+        });
+      }
+    } catch (error) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : `${isEditMode ? "原本更新" : "原本作成"}に失敗しました。`,
+      });
+    }
+  }
+
+  const createdItem = createState.item;
+  const submitDisabled = createState.status === "submitting" || (isEditMode && formLoadState.status === "loading");
+
+  return (
+    <Page
+      title="原本作成 / 更新"
+      description={
+        isEditMode
+          ? "既存の原本を読み込み、更新版を保存します。PUT /api/v1/source-docs/{source_doc_id} をこの画面から確認できます。"
+          : "モジュールを組み合わせて原本の初版を保存します。POST /api/v1/source-docs の結果をこの画面から確認できます。"
+      }
+    >
+      <form className="register-form" onSubmit={handleSubmit}>
+        <section
+          className={`register-status ${
+            formLoadState.status === "ready"
+              ? "register-status-success"
+              : formLoadState.status === "error"
+                ? "register-status-error"
+                : formLoadState.status === "loading"
+                  ? "register-status-submitting"
+                  : ""
+          }`}
+        >
+          <span>編集モード</span>
+          <strong>{isEditMode ? "更新" : "新規作成"}</strong>
+          <p>{formLoadState.message}</p>
+          {editSourceDocId !== null ? (
+            <div className="register-result-meta">
+              <span>source_doc_id {editSourceDocId}</span>
+              <span>{sourceDocKeyInput || "-"}</span>
+            </div>
+          ) : null}
+        </section>
+
+        <FormGrid>
+          <label>
+            原本キー
+            <input
+              value={sourceDocKeyInput}
+              onChange={(event) => setSourceDocKeyInput(event.target.value)}
+              placeholder="BP-STD-003 auto-generated when blank"
+            />
+          </label>
+          <label>
+            原本名
+            <input value={sourceDocNameInput} onChange={(event) => setSourceDocNameInput(event.target.value)} required />
+          </label>
+          <label>
+            作成者
+            <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
+          </label>
+          <label>
+            変更メモ
+            <input value={changeNoteInput} onChange={(event) => setChangeNoteInput(event.target.value)} />
+          </label>
+          <label className="wide">
+            説明
+            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
+          </label>
+        </FormGrid>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <h2>利用モジュール</h2>
+            <button className="secondary" type="button" onClick={addItem}>
+              <span aria-hidden="true">＋</span>行追加
+            </button>
+          </div>
+          <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
+            <div>
+              <span>取得状態</span>
+              <strong>
+                {moduleListState.status === "loading"
+                  ? "取得中"
+                  : moduleListState.status === "available"
+                    ? "取得成功"
+                    : "取得失敗"}
+              </strong>
+            </div>
+            <div>
+              <span>利用可能数</span>
+              <strong>{moduleListState.items.length}</strong>
+            </div>
+            <div>
+              <span>先頭キー</span>
+              <strong>{moduleListState.items[0]?.module_key ?? "-"}</strong>
+            </div>
+            <p>{moduleListState.message}</p>
+          </section>
+          <div className="register-rows">
+            {items.map((item, index) => (
+              <section key={item.rowId} className="register-row-editor">
+                <div className="register-row-editor-header">
+                  <strong>行 {index + 1}</strong>
+                  <button className="text-button" type="button" onClick={() => removeItem(item.rowId)} disabled={items.length === 1}>
+                    <span aria-hidden="true">−</span>削除
+                  </button>
+                </div>
+                <div className="register-step-grid">
+                  <label>
+                    モジュール
+                    <select
+                      value={item.moduleId}
+                      onChange={(event) => updateItemModule(item.rowId, event.target.value)}
+                      required
+                    >
+                      <option value="">選択してください</option>
+                      {moduleListState.items.map((module) => (
+                        <option key={module.module_id} value={String(module.module_id)}>
+                          {`${module.module_key} ${module.module_name}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="checkbox-field">
+                    有効
+                    <input
+                      type="checkbox"
+                      checked={item.enabled}
+                      onChange={(event) => updateItemEnabled(item.rowId, event.target.checked)}
+                    />
+                  </label>
+                </div>
+              </section>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className={`register-status ${
+            createState.status === "success"
+              ? "register-status-success"
+              : createState.status === "error"
+                ? "register-status-error"
+                : createState.status === "submitting"
+                  ? "register-status-submitting"
+                  : ""
+          }`}
+        >
+          <span>保存状態</span>
+          <strong>
+            {createState.status === "success"
+              ? isEditMode
+                ? "更新完了"
+                : "保存完了"
+              : createState.status === "error"
+                ? "保存失敗"
+                : createState.status === "submitting"
+                  ? "保存中"
+                  : "入力待ち"}
+          </strong>
+          <p>{createState.message}</p>
+          {createdItem ? (
+            <div className="register-result-meta">
+              <span>{createdItem.source_doc_key}</span>
+              <span>version {createdItem.version_no}</span>
+              <span>{createdItem.status_label}</span>
+            </div>
+          ) : null}
+        </section>
+
+        <Toolbar>
+          <button className="secondary" type="button" onClick={() => navigate("/documents/search")}>
+            <span aria-hidden="true">←</span>一覧へ戻る
+          </button>
+          {createdItem ? (
+            <button className="secondary" type="button" onClick={() => navigate(`/documents/${createdItem.source_doc_id}`)}>
+              <span aria-hidden="true">↗</span>詳細を開く
+            </button>
+          ) : null}
+          <button className="primary" type="submit" disabled={submitDisabled}>
+            <span aria-hidden="true">✎</span>
+            {createState.status === "submitting" ? "保存中..." : isEditMode ? "更新実行" : "保存実行"}
+          </button>
+        </Toolbar>
+      </form>
+    </Page>
+  );
+}
+
 function DocumentDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -2013,7 +2460,14 @@ function DocumentDetailPage() {
       </section>
       <Toolbar>
         <button className="secondary" onClick={() => navigate("/documents/search")}><span aria-hidden="true">↩</span>一覧へ戻る</button>
-        <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">✎</span>更新する</button>
+        <button
+          className="primary"
+          onClick={() => {
+            if (item) {
+              navigate(`/documents/create?id=${item.source_doc_id}`);
+            }
+          }}
+        ><span aria-hidden="true">✎</span>更新する</button>
       </Toolbar>
       {item ? (
         <>

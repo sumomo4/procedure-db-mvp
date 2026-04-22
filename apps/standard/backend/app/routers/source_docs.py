@@ -13,6 +13,7 @@ from app.core.responses import (
     SourceDocCreateRequest,
     SourceDocDetailData,
     SourceDocListData,
+    SourceDocUpdateRequest,
     success_response,
 )
 from app.db.source_docs import (
@@ -20,6 +21,7 @@ from app.db.source_docs import (
     create_source_doc,
     get_source_doc_detail,
     list_source_docs,
+    update_source_doc,
 )
 from app.routers.health import get_app_settings
 
@@ -120,3 +122,33 @@ def create_source_doc_resource(
         ) from exception
 
     return success_response(data, "Source document was created.")
+
+
+@router.put("/{source_doc_id}", response_model=ApiResponse[SourceDocDetailData])
+def update_source_doc_resource(
+    source_doc_id: int,
+    payload: SourceDocUpdateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[SourceDocDetailData]:
+    """Update a source document and create its next version."""
+
+    try:
+        data = update_source_doc(settings, source_doc_id, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source document was not found.",
+        )
+
+    return success_response(data, "Source document was updated.")

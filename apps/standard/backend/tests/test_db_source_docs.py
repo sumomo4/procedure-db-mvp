@@ -8,8 +8,8 @@ import pytest
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.core.responses import SourceDocCreateItemInput, SourceDocCreateRequest
-from app.db.source_docs import create_source_doc, get_source_doc_detail, list_source_docs
+from app.core.responses import SourceDocCreateItemInput, SourceDocCreateRequest, SourceDocUpdateRequest
+from app.db.source_docs import create_source_doc, get_source_doc_detail, list_source_docs, update_source_doc
 
 
 class FakeCursor:
@@ -345,3 +345,174 @@ def test_create_source_doc_raises_for_connection_error(monkeypatch: pytest.Monke
 
     with pytest.raises(DatabaseConnectionError):
         create_source_doc(AppSettings(), payload)
+
+
+def test_update_source_doc_returns_updated_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Update helper should create a new source doc version and return detail data."""
+
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            rows_per_fetchall=[
+                [
+                    (
+                        1,
+                        "BP-STD-001",
+                        "Updated source doc",
+                        "Updated from API",
+                        31,
+                        2,
+                        "draft",
+                        "Second draft",
+                        "codex",
+                        datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc),
+                        datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc),
+                        310,
+                        1,
+                        True,
+                        1,
+                        "MOD-001",
+                        "Module A",
+                        11,
+                        1,
+                        "draft",
+                    ),
+                    (
+                        1,
+                        "BP-STD-001",
+                        "Updated source doc",
+                        "Updated from API",
+                        31,
+                        2,
+                        "draft",
+                        "Second draft",
+                        "codex",
+                        datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc),
+                        datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc),
+                        311,
+                        2,
+                        True,
+                        2,
+                        "MOD-002",
+                        "Module B",
+                        12,
+                        1,
+                        "draft",
+                    ),
+                ],
+                [
+                    (
+                        310,
+                        1000,
+                        1,
+                        "step",
+                        "1",
+                        "1",
+                        "1",
+                        "Tech doc",
+                        "Check before work.",
+                        1,
+                        "Ready.",
+                        "5m",
+                        "console",
+                        ">",
+                        "show status",
+                    ),
+                    (
+                        311,
+                        1001,
+                        1,
+                        "step",
+                        "1",
+                        "1",
+                        "1",
+                        "Tech doc",
+                        "Run work.",
+                        0,
+                        "Done.",
+                        None,
+                        None,
+                        ">",
+                        "show version",
+                    ),
+                ],
+            ],
+            fetchone_results=[
+                ("BP-STD-001",),
+                (2,),
+                (31,),
+                (11,),
+                (310,),
+                (12,),
+                (311,),
+            ],
+        ),
+    )
+
+    payload = SourceDocUpdateRequest(
+        source_doc_name="Updated source doc",
+        description="Updated from API",
+        change_note="Second draft",
+        created_by="codex",
+        items=[
+            SourceDocCreateItemInput(module_id=2, enabled=True, item_order=2),
+            SourceDocCreateItemInput(module_id=1, enabled=True, item_order=1),
+        ],
+    )
+
+    result = update_source_doc(AppSettings(), source_doc_id=1, payload=payload)
+
+    assert result is not None
+    assert result.source_doc_id == 1
+    assert result.source_doc_version_id == 31
+    assert result.version_no == 2
+    assert result.module_count == 2
+    executed_queries = "\n".join(query for query, _ in fake_cursor.executions)
+    assert "UPDATE proc.blueprints" in executed_queries
+    assert "INSERT INTO proc.blueprint_versions" in executed_queries
+    assert "INSERT INTO proc.blueprint_items" in executed_queries
+
+
+def test_update_source_doc_returns_none_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Update helper should return None when the source doc does not exist."""
+
+    install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(fetchone_results=[None]),
+    )
+    payload = SourceDocUpdateRequest(
+        source_doc_name="Updated source doc",
+        items=[SourceDocCreateItemInput(module_id=1, enabled=True)],
+    )
+
+    result = update_source_doc(AppSettings(), source_doc_id=999, payload=payload)
+
+    assert result is None
+
+
+def test_update_source_doc_rejects_duplicate_module_id() -> None:
+    """Duplicate module_id values should be rejected before DB access."""
+
+    payload = SourceDocUpdateRequest(
+        source_doc_name="Updated source doc",
+        items=[
+            SourceDocCreateItemInput(module_id=1, enabled=True),
+            SourceDocCreateItemInput(module_id=1, enabled=False),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="module_id must be unique within items."):
+        update_source_doc(AppSettings(), source_doc_id=1, payload=payload)
+
+
+def test_update_source_doc_raises_for_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Update helper should wrap connector failures."""
+
+    install_fake_psycopg(monkeypatch, should_raise=True)
+    payload = SourceDocUpdateRequest(
+        source_doc_name="Updated source doc",
+        items=[SourceDocCreateItemInput(module_id=1, enabled=True)],
+    )
+
+    with pytest.raises(DatabaseConnectionError):
+        update_source_doc(AppSettings(), source_doc_id=1, payload=payload)
