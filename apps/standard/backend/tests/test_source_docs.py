@@ -8,6 +8,7 @@ from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ModuleRowData,
+    SourceDocCreateRequest,
     SourceDocDetailData,
     SourceDocListData,
     SourceDocListItemData,
@@ -324,4 +325,160 @@ def test_read_source_doc_detail_returns_error_response(
         "result": "error",
         "data": None,
         "message": "Source document detail query failed.",
+    }
+
+
+def test_create_source_doc_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document create API should create a source doc and return detail data."""
+
+    def fake_create_source_doc(settings: AppSettings, payload: SourceDocCreateRequest) -> SourceDocDetailData:
+        assert settings.app_env == "test"
+        assert payload.source_doc_name == "Created source doc"
+        assert len(payload.items) == 2
+        return SourceDocDetailData(
+            source_doc_id=3,
+            source_doc_key="BP-STD-003",
+            source_doc_name="Created source doc",
+            description="Created from API",
+            source_doc_version_id=30,
+            version_no=1,
+            status="draft",
+            status_label="菴懈・荳ｭ",
+            change_note="Initial draft",
+            module_count=2,
+            enabled_module_count=1,
+            created_by="codex",
+            created_at="2026-04-23",
+            updated_at="2026-04-23",
+            items=[
+                SourceDocModuleItemData(
+                    blueprint_item_id=300,
+                    item_order=1,
+                    enabled=True,
+                    module_id=1,
+                    module_key="MOD-001",
+                    module_name="Module A",
+                    module_version_id=11,
+                    module_version_no=1,
+                    module_status="draft",
+                    module_status_label="菴懈・荳ｭ",
+                    rows=[],
+                ),
+                SourceDocModuleItemData(
+                    blueprint_item_id=301,
+                    item_order=2,
+                    enabled=False,
+                    module_id=2,
+                    module_key="MOD-002",
+                    module_name="Module B",
+                    module_version_id=12,
+                    module_version_no=1,
+                    module_status="draft",
+                    module_status_label="菴懈・荳ｭ",
+                    rows=[],
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(source_docs, "create_source_doc", fake_create_source_doc)
+
+    response = client.post(
+        "/api/v1/source-docs",
+        json={
+            "source_doc_name": "Created source doc",
+            "description": "Created from API",
+            "change_note": "Initial draft",
+            "created_by": "codex",
+            "items": [
+                {"module_id": 1, "enabled": True},
+                {"module_id": 2, "enabled": False},
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json()["result"] == "success"
+    assert response.json()["message"] == "Source document was created."
+    assert response.json()["data"]["source_doc_key"] == "BP-STD-003"
+    assert response.json()["data"]["module_count"] == 2
+
+
+def test_create_source_doc_rejects_invalid_payload(client: TestClient) -> None:
+    """Source document create API should reject invalid request bodies."""
+
+    response = client.post(
+        "/api/v1/source-docs",
+        json={
+            "source_doc_name": "Created source doc",
+            "items": [],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Request validation failed: 1 error(s).",
+    }
+
+
+def test_create_source_doc_rejects_business_validation_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document create API should return 400 for business validation errors."""
+
+    def fake_create_source_doc(settings: AppSettings, payload: SourceDocCreateRequest) -> SourceDocDetailData:
+        del settings, payload
+        raise ValueError("module_id must be unique within items.")
+
+    monkeypatch.setattr(source_docs, "create_source_doc", fake_create_source_doc)
+
+    response = client.post(
+        "/api/v1/source-docs",
+        json={
+            "source_doc_name": "Created source doc",
+            "items": [
+                {"module_id": 1, "enabled": True},
+                {"module_id": 1, "enabled": False},
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "module_id must be unique within items.",
+    }
+
+
+def test_create_source_doc_returns_error_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document create API should return the common error envelope on DB failure."""
+
+    def fake_create_source_doc(settings: AppSettings, payload: SourceDocCreateRequest) -> SourceDocDetailData:
+        del settings, payload
+        raise DatabaseConnectionError("Source document create failed.")
+
+    monkeypatch.setattr(source_docs, "create_source_doc", fake_create_source_doc)
+
+    response = client.post(
+        "/api/v1/source-docs",
+        json={
+            "source_doc_name": "Created source doc",
+            "items": [{"module_id": 1, "enabled": True}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Source document create failed.",
     }

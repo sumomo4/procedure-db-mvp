@@ -10,12 +10,14 @@ from app.core.responses import (
     ApiResponse,
     RouterEndpointData,
     RouterFoundationData,
+    SourceDocCreateRequest,
     SourceDocDetailData,
     SourceDocListData,
     success_response,
 )
 from app.db.source_docs import (
     VALID_SOURCE_DOC_STATUSES,
+    create_source_doc,
     get_source_doc_detail,
     list_source_docs,
 )
@@ -95,3 +97,26 @@ def read_source_doc_detail(
         )
 
     return success_response(data, "Source document detail is available.")
+
+
+@router.post("", response_model=ApiResponse[SourceDocDetailData], status_code=status.HTTP_201_CREATED)
+def create_source_doc_resource(
+    payload: SourceDocCreateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[SourceDocDetailData]:
+    """Create a source document, its first version, and linked modules."""
+
+    try:
+        data = create_source_doc(settings, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "Source document was created.")

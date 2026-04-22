@@ -281,6 +281,25 @@ class SourceDocListData(BaseModel):
     items: list[SourceDocListItemData]
 
 
+class SourceDocCreateItemInput(BaseModel):
+    """Linked module input payload for source document create API."""
+
+    module_id: int = Field(gt=0)
+    enabled: bool = True
+    item_order: int | None = Field(default=None, gt=0)
+
+
+class SourceDocCreateRequest(BaseModel):
+    """Source document create request payload."""
+
+    source_doc_key: str | None = None
+    source_doc_name: str = Field(min_length=1)
+    description: str | None = None
+    change_note: str | None = None
+    created_by: str | None = None
+    items: list[SourceDocCreateItemInput] = Field(min_length=1)
+
+
 class SourceDocModuleItemData(BaseModel):
     """Linked module item included in a source document detail response."""
 

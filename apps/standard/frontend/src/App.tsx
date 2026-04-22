@@ -201,6 +201,19 @@ type SourceDocDetailState = {
   message: string;
 };
 
+
+type SourceDocCreateState = {
+  status: "idle" | "submitting" | "success" | "error";
+  item: SourceDocDetailData | null;
+  message: string;
+};
+
+type SourceDocCreateItemDraft = {
+  rowId: number;
+  moduleId: string;
+  enabled: boolean;
+};
+
 type ApprovalStatusListItemData = {
   target_id: number;
   target_key: string;
@@ -1598,29 +1611,318 @@ function DocumentSearchPage() {
 
 function DocumentEditPage() {
   const navigate = useNavigate();
+  const [sourceDocKeyInput, setSourceDocKeyInput] = useState("");
+  const [sourceDocNameInput, setSourceDocNameInput] = useState("M1 procedure bundle");
+  const [descriptionInput, setDescriptionInput] = useState("Created from source document register screen.");
+  const [changeNoteInput, setChangeNoteInput] = useState("Initial draft");
+  const [createdByInput, setCreatedByInput] = useState("webui");
+  const [moduleListState, setModuleListState] = useState<ModuleListState>({
+    status: "loading",
+    items: [],
+    message: "Available modules are loading...",
+  });
+  const [itemSeed, setItemSeed] = useState(2);
+  const [items, setItems] = useState<SourceDocCreateItemDraft[]>([
+    { rowId: 1, moduleId: "", enabled: true },
+  ]);
+  const [createState, setCreateState] = useState<SourceDocCreateState>({
+    status: "idle",
+    item: null,
+    message: "Select modules and save the first source document version.",
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchModules(): Promise<void> {
+      setModuleListState({
+        status: "loading",
+        items: [],
+        message: "Available modules are loading...",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl("/api/v1/modules"), {
+          signal: abortController.signal,
+        });
+        const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setModuleListState({
+            status: "unavailable",
+            items: [],
+            message: responseBody.message || `Module list failed. HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setModuleListState({
+          status: "available",
+          items: responseBody.data.items,
+          message: responseBody.message || "Available modules were loaded.",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setModuleListState({
+          status: "unavailable",
+          items: [],
+          message: "Modules could not be loaded from the API.",
+        });
+      }
+    }
+
+    void fetchModules();
+
+    return () => {
+      abortController.abort();
+    };
+  }, []);
+
+  function updateItemModule(rowId: number, moduleId: string): void {
+    setItems((currentItems) =>
+      currentItems.map((item) => (item.rowId === rowId ? { ...item, moduleId } : item)),
+    );
+  }
+
+  function updateItemEnabled(rowId: number, enabled: boolean): void {
+    setItems((currentItems) =>
+      currentItems.map((item) => (item.rowId === rowId ? { ...item, enabled } : item)),
+    );
+  }
+
+  function addItem(): void {
+    setItems((currentItems) => [...currentItems, { rowId: itemSeed, moduleId: "", enabled: true }]);
+    setItemSeed((currentSeed) => currentSeed + 1);
+  }
+
+  function removeItem(rowId: number): void {
+    setItems((currentItems) => (currentItems.length > 1 ? currentItems.filter((item) => item.rowId !== rowId) : currentItems));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+
+    const selectedItems = items
+      .map((item, index) => ({
+        module_id: Number(item.moduleId),
+        enabled: item.enabled,
+        item_order: index + 1,
+      }))
+      .filter((item) => Number.isInteger(item.module_id) && item.module_id > 0);
+
+    if (!sourceDocNameInput.trim()) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "Source document name is required.",
+      });
+      return;
+    }
+
+    if (selectedItems.length === 0) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "Select at least one module.",
+      });
+      return;
+    }
+
+    setCreateState({
+      status: "submitting",
+      item: null,
+      message: "Creating source document and first version...",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/source-docs"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source_doc_key: sourceDocKeyInput.trim() || undefined,
+          source_doc_name: sourceDocNameInput.trim(),
+          description: descriptionInput.trim() || undefined,
+          change_note: changeNoteInput.trim() || undefined,
+          created_by: createdByInput.trim() || undefined,
+          items: selectedItems,
+        }),
+      });
+
+      const responseBody = (await response.json()) as ApiResponse<SourceDocDetailData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setCreateState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `Source document create failed. HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setCreateState({
+        status: "success",
+        item: responseBody.data,
+        message: responseBody.message || "Source document was created.",
+      });
+      setSourceDocKeyInput(responseBody.data.source_doc_key);
+    } catch (error) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "Source document create failed.",
+      });
+    }
+  }
+
+  const createdItem = createState.item;
+
   return (
-    <Page title="原本作成 / 更新" description="モジュールを組み合わせ、原本を作成または更新します。">
-      <FormGrid>
-        <label>原本名<input defaultValue="M1確認用 原本A" /></label>
-        <label>版数<input defaultValue="0.4" /></label>
-        <label>利用モジュール<select defaultValue="MOD-001"><option value="MOD-001">MOD-001 初期点検手順</option><option value="MOD-002">MOD-002 部品交換手順</option></select></label>
-        <label>状態<select defaultValue="Draft"><option>Draft</option><option>approval</option><option>archive</option></select></label>
-        <label className="wide">作成メモ<textarea defaultValue="モジュール組み合わせ結果を確認し、保存後に詳細へ遷移する。" /></label>
-      </FormGrid>
-      <section className="section-band">
-        <h2>モジュール組み合わせ</h2>
-        <DataTable
-          columns={["順序", "モジュール", "用途", "状態"]}
-          rows={[
-            ["1", "初期点検手順", "開始前確認", <StatusPill status="Draft" />],
-            ["2", "復旧確認手順", "作業後確認", <StatusPill status="archive" />],
-          ]}
-        />
-      </section>
-      <Toolbar>
-        <button className="secondary" onClick={() => navigate("/modules/list")}><span aria-hidden="true">←</span>一覧へ戻る</button>
-        <button className="primary" onClick={() => navigate("/documents/1")}><span aria-hidden="true">✓</span>保存して詳細へ</button>
-      </Toolbar>
+    <Page title="???? / ??" description="????????????????????????POST /api/v1/source-docs ?????????????????">
+      <form className="register-form" onSubmit={handleSubmit}>
+        <FormGrid>
+          <label>
+            ????
+            <input
+              value={sourceDocKeyInput}
+              onChange={(event) => setSourceDocKeyInput(event.target.value)}
+              placeholder="BP-STD-003 auto-generated when blank"
+            />
+          </label>
+          <label>
+            ???
+            <input value={sourceDocNameInput} onChange={(event) => setSourceDocNameInput(event.target.value)} required />
+          </label>
+          <label>
+            ???
+            <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
+          </label>
+          <label>
+            ????
+            <input value={changeNoteInput} onChange={(event) => setChangeNoteInput(event.target.value)} />
+          </label>
+          <label className="wide">
+            ??
+            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
+          </label>
+        </FormGrid>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <h2>???????</h2>
+            <button className="secondary" type="button" onClick={addItem}>
+              <span aria-hidden="true">?</span>???
+            </button>
+          </div>
+          <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
+            <div>
+              <span>????</span>
+              <strong>
+                {moduleListState.status === "loading"
+                  ? "Loading"
+                  : moduleListState.status === "available"
+                    ? "Available"
+                    : "Unavailable"}
+              </strong>
+            </div>
+            <div>
+              <span>?????</span>
+              <strong>{moduleListState.items.length}</strong>
+            </div>
+            <div>
+              <span>????</span>
+              <strong>{moduleListState.items[0]?.module_key ?? "-"}</strong>
+            </div>
+            <p>{moduleListState.message}</p>
+          </section>
+          <div className="register-rows">
+            {items.map((item, index) => (
+              <section key={item.rowId} className="register-row-editor">
+                <div className="register-row-editor-header">
+                  <strong>? {index + 1}</strong>
+                  <button className="text-button" type="button" onClick={() => removeItem(item.rowId)} disabled={items.length === 1}>
+                    <span aria-hidden="true">?</span>??
+                  </button>
+                </div>
+                <div className="register-step-grid">
+                  <label>
+                    ?????
+                    <select
+                      value={item.moduleId}
+                      onChange={(event) => updateItemModule(item.rowId, event.target.value)}
+                      required
+                    >
+                      <option value="">????????</option>
+                      {moduleListState.items.map((module) => (
+                        <option key={module.module_id} value={String(module.module_id)}>
+                          {`${module.module_key} ${module.module_name}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="checkbox-field">
+                    ??
+                    <input
+                      type="checkbox"
+                      checked={item.enabled}
+                      onChange={(event) => updateItemEnabled(item.rowId, event.target.checked)}
+                    />
+                  </label>
+                </div>
+              </section>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className={`register-status ${
+            createState.status === "success"
+              ? "register-status-success"
+              : createState.status === "error"
+                ? "register-status-error"
+                : createState.status === "submitting"
+                  ? "register-status-submitting"
+                  : ""
+          }`}
+        >
+          <span>????</span>
+          <strong>
+            {createState.status === "success"
+              ? "Created"
+              : createState.status === "error"
+                ? "Error"
+                : createState.status === "submitting"
+                  ? "Submitting"
+                  : "Ready"}
+          </strong>
+          <p>{createState.message}</p>
+          {createdItem ? (
+            <div className="register-result-meta">
+              <span>{createdItem.source_doc_key}</span>
+              <span>version {createdItem.version_no}</span>
+              <span>{createdItem.status_label}</span>
+            </div>
+          ) : null}
+        </section>
+
+        <Toolbar>
+          <button className="secondary" type="button" onClick={() => navigate("/documents/search")}>
+            <span aria-hidden="true">?</span>?????
+          </button>
+          {createdItem ? (
+            <button className="secondary" type="button" onClick={() => navigate(`/documents/${createdItem.source_doc_id}`)}>
+              <span aria-hidden="true">?</span>?????
+            </button>
+          ) : null}
+          <button className="primary" type="submit" disabled={createState.status === "submitting"}>
+            <span aria-hidden="true">?</span>{createState.status === "submitting" ? "???..." : "????"}
+          </button>
+        </Toolbar>
+      </form>
     </Page>
   );
 }

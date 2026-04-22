@@ -23,10 +23,10 @@
 | SB3-01 | - | API | モジュール登録APIの最小実装を行う | High | [記入] | [済] | `module_name` / `rows` 必須、`module_key` 省略時は `MOD-xxx` 自動採番、`draft` の version 1 を作成し、`module_rows` を保存して作成結果を返せる | Sprint 2 完了 |
 | SB3-02 | - | テスト | モジュール登録APIのpytestを追加する | High | [記入] | [済] | 正常系、入力不備、業務バリデーション、DB失敗の主要ケースが通る | SB3-01 |
 | SB3-03 | - | WebUI | モジュール登録画面を実API接続へ切り替える | High | [記入] | [済] | モジュール登録画面から登録APIを呼び、保存結果を表示できる | SB3-01, SB3-02 |
-| SB3-04 | - | 仕様検討 | 原本作成 / 更新の最小入力項目を整理する | High | [記入] | [未着手] | 原本名、利用モジュール、並び順、状態などの最小項目が整理されている | Sprint 2 完了 |
-| SB3-05 | - | API | 原本作成APIの最小実装を行う | High | [記入] | [未着手] | `POST /api/v1/source-docs` で blueprint / version / items を保存できる | SB3-04 |
+| SB3-04 | - | 仕様検討 | 原本作成 / 更新の最小入力項目を整理する | High | [記入] | [済] | `source_doc_name` / `items` 必須、`source_doc_key` 省略時は `BP-STD-xxx` 自動採番、モジュールの並び順と有効/無効を保持する最小入力が整理されている | Sprint 2 完了 |
+| SB3-05 | - | API | 原本作成APIの最小実装を行う | High | [記入] | [済] | `POST /api/v1/source-docs` で blueprint / version / items を保存し、作成結果を詳細レスポンスで返せる | SB3-04 |
 | SB3-06 | - | API | 原本更新APIの最小実装を行う | Medium | [記入] | [未着手] | `PUT /api/v1/source-docs/{source_doc_id}` で更新版を保存できる | SB3-05 |
-| SB3-07 | - | WebUI | 原本作成 / 更新画面を実API接続へ切り替える | High | [記入] | [未着手] | 原本作成 / 更新画面から保存実行できる | SB3-05, SB3-06 |
+| SB3-07 | - | WebUI | 原本作成 / 更新画面を実API接続へ切り替える | High | [記入] | [進行中] | 原本作成画面から `POST /api/v1/source-docs` を呼んで保存実行でき、更新側は SB3-06 完了後に接続できる | SB3-05, SB3-06 |
 | SB3-08 | - | 仕様検討 | 承認状態変更の業務ルールを整理する | Medium | [記入] | [未着手] | 誰が / いつ / どの条件で draft / published / archived に変更できるか整理されている | Sprint 2 完了 |
 | SB3-09 | - | API | 承認状態変更APIを実装する | Medium | [記入] | [未着手] | `PATCH /api/v1/statuses/{target_id}` で状態変更できる | SB3-08 |
 | SB3-10 | - | WebUI | 承認状態変更操作を画面から実行できるようにする | Medium | [記入] | [未着手] | 承認状態画面から変更APIを呼び、結果を反映できる | SB3-09 |

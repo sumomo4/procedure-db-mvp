@@ -1,11 +1,13 @@
 """Database access helpers for source document resources."""
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    SourceDocCreateRequest,
     ModuleRowData,
     SourceDocDetailData,
     SourceDocListData,
@@ -118,65 +120,10 @@ def _build_source_doc_list_query(
     return query, parameters
 
 
-def list_source_docs(
-    settings: AppSettings,
-    keyword: str | None = None,
-    status_filter: str | None = None,
-) -> SourceDocListData:
-    """Read source document list from PostgreSQL."""
+def _build_source_doc_detail_query() -> str:
+    """Build the source document detail query."""
 
-    try:
-        import psycopg
-    except ModuleNotFoundError as exception:
-        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
-
-    query, parameters = _build_source_doc_list_query(keyword, status_filter)
-
-    try:
-        with psycopg.connect(
-            settings.database_url,
-            connect_timeout=settings.db_connect_timeout_seconds,
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(query, parameters)
-                rows = cursor.fetchall()
-    except Exception as exception:
-        raise DatabaseConnectionError("Source document list query failed.") from exception
-
-    items = [
-        SourceDocListItemData(
-            source_doc_id=row[0],
-            source_doc_key=row[1],
-            source_doc_name=row[2],
-            description=row[3],
-            source_doc_version_id=row[4],
-            version_no=row[5],
-            status=row[6],
-            status_label=SOURCE_DOC_STATUS_LABELS.get(row[6], row[6]),
-            module_count=row[7],
-            enabled_module_count=row[8],
-            module_names=list(row[9] or []),
-            created_by=row[10],
-            updated_at=_format_updated_at(row[11]),
-        )
-        for row in rows
-    ]
-
-    return SourceDocListData(items=items)
-
-
-def get_source_doc_detail(
-    settings: AppSettings,
-    source_doc_id: int,
-) -> SourceDocDetailData | None:
-    """Read the latest source document version and linked modules from PostgreSQL."""
-
-    try:
-        import psycopg
-    except ModuleNotFoundError as exception:
-        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
-
-    query = """
+    return """
         WITH selected_version AS (
             SELECT
                 bv.blueprint_version_id,
@@ -226,7 +173,11 @@ def get_source_doc_detail(
         ORDER BY bi.item_order;
     """
 
-    module_rows_query = """
+
+def _build_source_doc_module_rows_query() -> str:
+    """Build the source document module rows query."""
+
+    return """
         WITH selected_version AS (
             SELECT
                 bv.blueprint_version_id
@@ -259,18 +210,26 @@ def get_source_doc_detail(
         ORDER BY bi.item_order, r.row_order;
     """
 
-    try:
-        with psycopg.connect(
-            settings.database_url,
-            connect_timeout=settings.db_connect_timeout_seconds,
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(query, {"source_doc_id": str(source_doc_id)})
-                rows = cursor.fetchall()
-                cursor.execute(module_rows_query, {"source_doc_id": str(source_doc_id)})
-                module_row_rows = cursor.fetchall()
-    except Exception as exception:
-        raise DatabaseConnectionError("Source document detail query failed.") from exception
+
+def _fetch_source_doc_detail_rows(
+    connection: Any,
+    source_doc_id: int,
+) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
+    """Fetch raw rows used to build a source document detail payload."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(_build_source_doc_detail_query(), {"source_doc_id": str(source_doc_id)})
+        rows = cursor.fetchall()
+        cursor.execute(_build_source_doc_module_rows_query(), {"source_doc_id": str(source_doc_id)})
+        module_row_rows = cursor.fetchall()
+    return rows, module_row_rows
+
+
+def _map_source_doc_detail_rows(
+    rows: Sequence[tuple[Any, ...]],
+    module_row_rows: Sequence[tuple[Any, ...]],
+) -> SourceDocDetailData | None:
+    """Convert raw source document detail rows to response data."""
 
     if not rows:
         return None
@@ -337,3 +296,259 @@ def get_source_doc_detail(
         updated_at=_format_updated_at(first_row[10]),
         items=items,
     )
+
+
+def _normalize_source_doc_key(source_doc_key: str | None) -> str | None:
+    """Normalize source document key text."""
+
+    if source_doc_key is None:
+        return None
+
+    normalized_key = source_doc_key.strip().upper()
+    if not normalized_key:
+        raise ValueError("source_doc_key must not be blank.")
+    return normalized_key
+
+
+def _validate_source_doc_create_request(payload: SourceDocCreateRequest) -> None:
+    """Validate create payload with business rules."""
+
+    if not payload.source_doc_name.strip():
+        raise ValueError("source_doc_name must not be blank.")
+
+    module_ids = [item.module_id for item in payload.items]
+    if len(module_ids) != len(set(module_ids)):
+        raise ValueError("module_id must be unique within items.")
+
+    item_orders = [item.item_order for item in payload.items if item.item_order is not None]
+    if len(item_orders) != len(set(item_orders)):
+        raise ValueError("item_order must be unique within items.")
+
+
+def _generate_next_source_doc_key(cursor: Any) -> str:
+    """Generate the next sequential source document key."""
+
+    cursor.execute(
+        """
+        SELECT COALESCE(
+            MAX((regexp_match(blueprint_key, '^BP-STD-(\\d+)$'))[1]::int),
+            0
+        )
+        FROM proc.blueprints
+        WHERE blueprint_key ~ '^BP-STD-\\d+$';
+        """,
+        {},
+    )
+    row = cursor.fetchone()
+    next_no = int(row[0]) + 1 if row and row[0] is not None else 1
+    return f"BP-STD-{next_no:03d}"
+
+
+def list_source_docs(
+    settings: AppSettings,
+    keyword: str | None = None,
+    status_filter: str | None = None,
+) -> SourceDocListData:
+    """Read source document list from PostgreSQL."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    query, parameters = _build_source_doc_list_query(keyword, status_filter)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, parameters)
+                rows = cursor.fetchall()
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document list query failed.") from exception
+
+    items = [
+        SourceDocListItemData(
+            source_doc_id=row[0],
+            source_doc_key=row[1],
+            source_doc_name=row[2],
+            description=row[3],
+            source_doc_version_id=row[4],
+            version_no=row[5],
+            status=row[6],
+            status_label=SOURCE_DOC_STATUS_LABELS.get(row[6], row[6]),
+            module_count=row[7],
+            enabled_module_count=row[8],
+            module_names=list(row[9] or []),
+            created_by=row[10],
+            updated_at=_format_updated_at(row[11]),
+        )
+        for row in rows
+    ]
+
+    return SourceDocListData(items=items)
+
+
+def get_source_doc_detail(
+    settings: AppSettings,
+    source_doc_id: int,
+) -> SourceDocDetailData | None:
+    """Read the latest source document version and linked modules from PostgreSQL."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            rows, module_row_rows = _fetch_source_doc_detail_rows(connection, source_doc_id)
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document detail query failed.") from exception
+
+    return _map_source_doc_detail_rows(rows, module_row_rows)
+
+
+def create_source_doc(
+    settings: AppSettings,
+    payload: SourceDocCreateRequest,
+) -> SourceDocDetailData:
+    """Create a source document, its initial version, and linked modules."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    _validate_source_doc_create_request(payload)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            source_doc_id: int | None = None
+
+            with connection.cursor() as cursor:
+                normalized_source_doc_key = _normalize_source_doc_key(payload.source_doc_key)
+                if normalized_source_doc_key is None:
+                    normalized_source_doc_key = _generate_next_source_doc_key(cursor)
+                else:
+                    cursor.execute(
+                        "SELECT 1 FROM proc.blueprints WHERE blueprint_key = %(source_doc_key)s;",
+                        {"source_doc_key": normalized_source_doc_key},
+                    )
+                    if cursor.fetchone() is not None:
+                        raise ValueError("source_doc_key already exists.")
+
+                cursor.execute(
+                    """
+                    INSERT INTO proc.blueprints (blueprint_key, name, description)
+                    VALUES (%(source_doc_key)s, %(source_doc_name)s, %(description)s)
+                    RETURNING blueprint_id;
+                    """,
+                    {
+                        "source_doc_key": normalized_source_doc_key,
+                        "source_doc_name": payload.source_doc_name.strip(),
+                        "description": payload.description,
+                    },
+                )
+                inserted_source_doc = cursor.fetchone()
+                if inserted_source_doc is None:
+                    raise DatabaseConnectionError("Source document create failed.")
+                source_doc_id = int(inserted_source_doc[0])
+
+                cursor.execute(
+                    """
+                    INSERT INTO proc.blueprint_versions (
+                        blueprint_id,
+                        version_no,
+                        status,
+                        change_note,
+                        created_by
+                    )
+                    VALUES (
+                        %(source_doc_id)s,
+                        1,
+                        'draft',
+                        %(change_note)s,
+                        %(created_by)s
+                    )
+                    RETURNING blueprint_version_id;
+                    """,
+                    {
+                        "source_doc_id": source_doc_id,
+                        "change_note": payload.change_note,
+                        "created_by": payload.created_by,
+                    },
+                )
+                inserted_version = cursor.fetchone()
+                if inserted_version is None:
+                    raise DatabaseConnectionError("Source document create failed.")
+                source_doc_version_id = int(inserted_version[0])
+
+                ordered_items = sorted(
+                    enumerate(payload.items, start=1),
+                    key=lambda pair: pair[1].item_order if pair[1].item_order is not None else pair[0],
+                )
+                for fallback_order, item in ordered_items:
+                    cursor.execute(
+                        """
+                        SELECT mv.module_version_id
+                        FROM proc.module_versions mv
+                        WHERE mv.module_id = %(module_id)s
+                        ORDER BY mv.version_no DESC
+                        LIMIT 1;
+                        """,
+                        {"module_id": item.module_id},
+                    )
+                    module_version_row = cursor.fetchone()
+                    if module_version_row is None:
+                        raise ValueError(f"module_id {item.module_id} was not found.")
+
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.blueprint_items (
+                            blueprint_version_id,
+                            item_order,
+                            module_version_id,
+                            enabled
+                        )
+                        VALUES (
+                            %(source_doc_version_id)s,
+                            %(item_order)s,
+                            %(module_version_id)s,
+                            %(enabled)s
+                        )
+                        RETURNING blueprint_item_id;
+                        """,
+                        {
+                            "source_doc_version_id": source_doc_version_id,
+                            "item_order": item.item_order if item.item_order is not None else fallback_order,
+                            "module_version_id": int(module_version_row[0]),
+                            "enabled": item.enabled,
+                        },
+                    )
+                    cursor.fetchone()
+
+            if source_doc_id is None:
+                raise DatabaseConnectionError("Source document create failed.")
+
+            detail_rows, module_row_rows = _fetch_source_doc_detail_rows(connection, source_doc_id)
+            connection.commit()
+    except ValueError:
+        raise
+    except DatabaseConnectionError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document create failed.") from exception
+
+    detail = _map_source_doc_detail_rows(detail_rows, module_row_rows)
+    if detail is None:
+        raise DatabaseConnectionError("Source document create failed.")
+    return detail
