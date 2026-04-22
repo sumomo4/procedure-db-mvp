@@ -16,6 +16,21 @@ log() {
   printf '\n==> %s\n' "$1"
 }
 
+verify_static_asset() {
+  local asset_path="$1"
+  local expected_type="$2"
+  local header
+
+  header="$(curl -I -s "http://127.0.0.1${asset_path}" | tr -d '\r')"
+  printf '%s\n' "${header}"
+
+  if ! grep -qi "^Content-Type: ${expected_type}" <<<"${header}"; then
+    echo "Static asset verification failed for ${asset_path}. Expected Content-Type ${expected_type}." >&2
+    echo "Check ${WEB_ROOT} permissions. Directories must be 0755 and files must be 0644." >&2
+    exit 1
+  fi
+}
+
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this script with sudo: sudo bash infra/ubuntu/finish_standard_server.sh" >&2
   exit 1
@@ -131,6 +146,19 @@ curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/health/db"
 echo
 curl -fsS "http://127.0.0.1/api/v1/health"
 echo
+
+log "Verifying static asset delivery"
+INDEX_JS_PATH="$(grep -o '/assets/[^"]*\.js' "${WEB_ROOT}/index.html" | head -n 1)"
+INDEX_CSS_PATH="$(grep -o '/assets/[^"]*\.css' "${WEB_ROOT}/index.html" | head -n 1)"
+
+if [[ -z "${INDEX_JS_PATH}" || -z "${INDEX_CSS_PATH}" ]]; then
+  echo "Could not resolve asset paths from ${WEB_ROOT}/index.html" >&2
+  exit 1
+fi
+
+verify_static_asset "${INDEX_JS_PATH}" "application/javascript"
+echo "---"
+verify_static_asset "${INDEX_CSS_PATH}" "text/css"
 
 log "Deployment completed"
 echo "http://192.168.10.5/"

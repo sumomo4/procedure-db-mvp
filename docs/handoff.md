@@ -236,6 +236,33 @@ Error: spawn EPERM
 
 OneDrive配下では、同期やファイルロックにより `node_modules` や `dist` の作成・削除で失敗する可能性がある。
 
+### テストサーバーWebUI配信権限
+
+`/var/www/procedure-db-standard` 配下の権限が崩れると、`/assets/*.js` や `/assets/*.css` を nginx が読めず、画面が真っ白になる。
+
+特に手動で `scp` などを使って `dist` を反映した場合は、`assets` ディレクトリが `700` になることがある。
+
+その場合の確認ポイント:
+
+```bash
+curl -I http://127.0.0.1/assets/<asset-name>.js
+curl -I http://127.0.0.1/assets/<asset-name>.css
+```
+
+正常時の `Content-Type`:
+
+- JS: `application/javascript`
+- CSS: `text/css`
+
+権限修正コマンド:
+
+```bash
+find /var/www/procedure-db-standard -type d -exec chmod 755 {} +
+find /var/www/procedure-db-standard -type f -exec chmod 644 {} +
+```
+
+`setup_standard_server.sh` と `finish_standard_server.sh` には、配信後にこの静的アセット確認を行う処理を追加済み。
+
 ## 11. 次にやる候補
 
 次回の候補:
