@@ -86,6 +86,8 @@ SERVICE
 log "Publishing WebUI"
 install -d -m 0755 "${WEB_ROOT}"
 rsync -a --delete "${FRONTEND_DIST}/" "${WEB_ROOT}/"
+find "${WEB_ROOT}" -type d -exec chmod 0755 {} +
+find "${WEB_ROOT}" -type f -exec chmod 0644 {} +
 
 log "Writing Nginx site"
 cat > /etc/nginx/sites-available/procedure-db-standard <<NGINX
