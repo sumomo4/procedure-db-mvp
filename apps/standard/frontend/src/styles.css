@@ -851,6 +851,27 @@ th {
   font-weight: 700;
 }
 
+.excel-indent {
+  display: grid;
+  grid-template-columns: 18px 18px 18px 18px minmax(0, 1fr);
+  align-items: start;
+}
+
+.excel-indent-slot {
+  min-height: 1px;
+}
+
+.excel-indent.indent-level-0 .excel-indent-slot {
+  border-left: 0;
+}
+
+.excel-indent.indent-level-1 .excel-indent-slot:nth-child(1),
+.excel-indent.indent-level-2 .excel-indent-slot:nth-child(-n + 2),
+.excel-indent.indent-level-3 .excel-indent-slot:nth-child(-n + 3),
+.excel-indent.indent-level-4 .excel-indent-slot:nth-child(-n + 4) {
+  border-left: 2px solid #c8d3d8;
+}
+
 .excel-command-cell {
   font-family: Consolas, "Courier New", monospace;
   color: #1d3c45;

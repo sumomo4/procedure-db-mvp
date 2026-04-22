@@ -931,6 +931,8 @@ function ModuleDetailPage() {
 }
 
 function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
+  const rowsWithIndent = buildIndentedRows(item.rows);
+
   return (
     <section className="excel-preview" aria-label="Excel風モジュールプレビュー">
       <div className="excel-title-grid">
@@ -973,13 +975,15 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
             </tr>
           </thead>
           <tbody>
-            {item.rows.map((row) => (
+            {rowsWithIndent.map(({ row, indentLevel }) => (
               <tr key={row.module_row_id} className={`excel-row excel-row-${row.row_type}`}>
                 <td className="excel-number">{row.major_no ?? ""}</td>
                 <td className="excel-number">{row.middle_no ?? ""}</td>
                 <td className="excel-number">{row.minor_no ?? ""}</td>
                 <td>{row.tech_doc_text ?? ""}</td>
-                <td className="excel-work-cell">{row.work_text ?? ""}</td>
+                <td className="excel-work-cell">
+                  <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                </td>
                 <td>{row.expected_result ?? ""}</td>
                 <td className="excel-center">{row.time_text ?? ""}</td>
                 <td>{row.window_text ?? ""}</td>
@@ -1469,13 +1473,15 @@ function ExcelSourceDocPreview({
                 </tr>
               </thead>
               <tbody>
-                {module.rows.map((row) => (
+                {buildIndentedRows(module.rows).map(({ row, indentLevel }) => (
                   <tr key={`${module.blueprint_item_id}-${row.module_row_id}`} className={`excel-row excel-row-${row.row_type}`}>
                     <td className="excel-number">{row.major_no ?? ""}</td>
                     <td className="excel-number">{row.middle_no ?? ""}</td>
                     <td className="excel-number">{row.minor_no ?? ""}</td>
                     <td>{row.tech_doc_text ?? ""}</td>
-                    <td className="excel-work-cell">{row.work_text ?? ""}</td>
+                    <td className="excel-work-cell">
+                      <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                    </td>
                     <td>{row.expected_result ?? ""}</td>
                     <td className="excel-center">{row.time_text ?? ""}</td>
                     <td>{row.window_text ?? ""}</td>
@@ -1489,6 +1495,61 @@ function ExcelSourceDocPreview({
         </article>
       ))}
     </section>
+  );
+}
+
+function buildIndentedRows(rows: ModuleDetailRowData[]): Array<{ row: ModuleDetailRowData; indentLevel: 0 | 1 | 2 | 3 | 4 }> {
+  let previousIndentLevel: 0 | 1 | 2 | 3 | 4 = 0;
+
+  return rows.map((row) => {
+    const indentLevel = resolveExcelIndentLevel(row, previousIndentLevel);
+    previousIndentLevel = indentLevel;
+    return { row, indentLevel };
+  });
+}
+
+function resolveExcelIndentLevel(
+  row: ModuleDetailRowData,
+  previousIndentLevel: 0 | 1 | 2 | 3 | 4,
+): 0 | 1 | 2 | 3 | 4 {
+  if (row.row_type === "header" || row.row_type === "meta") {
+    return 0;
+  }
+
+  const hasMajor = Boolean(row.major_no?.trim());
+  const hasMiddle = Boolean(row.middle_no?.trim());
+  const hasMinor = Boolean(row.minor_no?.trim());
+
+  if (hasMinor) {
+    return 2;
+  }
+
+  if (hasMiddle) {
+    return 1;
+  }
+
+  if (hasMajor) {
+    return 0;
+  }
+
+    return Math.min(previousIndentLevel + 1, 4) as 0 | 1 | 2 | 3 | 4;
+}
+
+function IndentedExcelText({
+  text,
+  indentLevel,
+}: {
+  text: string | null;
+  indentLevel: 0 | 1 | 2 | 3 | 4;
+}) {
+  return (
+    <div className={`excel-indent indent-level-${indentLevel}`}>
+      <span className="excel-indent-slot" aria-hidden="true" />
+      <span className="excel-indent-slot" aria-hidden="true" />
+      <span className="excel-indent-slot" aria-hidden="true" />
+      <span className="excel-indent-slot" aria-hidden="true" />
+      <span>{text ?? ""}</span>
+    </div>
   );
 }
 
