@@ -139,6 +139,7 @@ class ModuleRowData(BaseModel):
         minor_no: Minor procedure number.
         tech_doc_text: Technical document text.
         work_text: Work instruction text.
+        indent_level: Excel-derived indentation level for the work column.
         expected_result: Expected result text.
         time_text: Time/check column text.
         window_text: Window column text.
@@ -155,6 +156,7 @@ class ModuleRowData(BaseModel):
     minor_no: str | None
     tech_doc_text: str | None
     work_text: str | None
+    indent_level: int | None
     expected_result: str | None
     time_text: str | None
     window_text: str | None

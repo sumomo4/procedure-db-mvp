@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS proc.module_rows (
     minor_no text,
     tech_doc_text text,
     work_text text,
+    indent_level integer CHECK (indent_level BETWEEN 0 AND 3),
     check_text_default text,
     time_text text,
     window_template_default text,
@@ -57,6 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_module_rows_module_version_id
 
 ALTER TABLE proc.module_rows
     ADD COLUMN IF NOT EXISTS time_text text;
+
+ALTER TABLE proc.module_rows
+    ADD COLUMN IF NOT EXISTS indent_level integer;
 
 CREATE TABLE IF NOT EXISTS proc.blueprints (
     blueprint_id bigserial PRIMARY KEY,
@@ -377,6 +381,50 @@ JOIN proc.module_versions mv
     ON mv.module_id = m.module_id
     AND mv.version_no = 1;
 
+UPDATE proc.module_rows AS r
+SET indent_level = updates.indent_level
+FROM proc.module_versions AS mv
+JOIN proc.modules AS m
+    ON m.module_id = mv.module_id
+JOIN (
+    VALUES
+        ('MOD-001', 6, 0),
+        ('MOD-001', 7, 0),
+        ('MOD-001', 8, 1),
+        ('MOD-001', 9, 1),
+        ('MOD-001', 10, 2),
+        ('MOD-001', 11, 2),
+        ('MOD-001', 12, 2),
+        ('MOD-001', 13, 2),
+        ('MOD-001', 14, 2),
+        ('MOD-001', 15, 2),
+        ('MOD-001', 16, 1),
+        ('MOD-001', 18, 0),
+        ('MOD-001', 19, 1),
+        ('MOD-001', 20, 1),
+        ('MOD-001', 22, 0),
+        ('MOD-001', 24, 0),
+        ('MOD-001', 25, 1),
+        ('MOD-001', 38, 0),
+        ('MOD-002', 6, 0),
+        ('MOD-002', 7, 0),
+        ('MOD-002', 14, 0),
+        ('MOD-002', 17, 0),
+        ('MOD-002', 19, 0),
+        ('MOD-002', 27, 0),
+        ('MOD-002', 28, 1),
+        ('MOD-002', 30, 1),
+        ('MOD-002', 37, 1),
+        ('MOD-002', 46, 0),
+        ('MOD-002', 53, 0),
+        ('MOD-003', 7, 0),
+        ('MOD-003', 8, 1),
+        ('MOD-003', 13, 0)
+) AS updates(module_key, row_order, indent_level)
+    ON updates.module_key = m.module_key
+WHERE r.module_version_id = mv.module_version_id
+  AND r.row_order = updates.row_order;
+
 INSERT INTO proc.blueprints (blueprint_key, name, description)
 VALUES
     ('BP-STD-001', 'M1確認用 原本A', '初期点検と部品交換を組み合わせた確認用原本'),
@@ -448,7 +496,7 @@ DO UPDATE SET
     updated_at = now();
 
 INSERT INTO app_metadata (key, value)
-VALUES ('schema_version', '0.3.0')
+VALUES ('schema_version', '0.3.1')
 ON CONFLICT (key)
 DO UPDATE SET
     value = EXCLUDED.value,

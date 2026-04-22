@@ -59,6 +59,7 @@ type ModuleDetailRowData = {
   minor_no: string | null;
   tech_doc_text: string | null;
   work_text: string | null;
+  indent_level: number | null;
   expected_result: string | null;
   time_text: string | null;
   window_text: string | null;
@@ -1499,40 +1500,19 @@ function ExcelSourceDocPreview({
 }
 
 function buildIndentedRows(rows: ModuleDetailRowData[]): Array<{ row: ModuleDetailRowData; indentLevel: 0 | 1 | 2 | 3 | 4 }> {
-  let previousIndentLevel: 0 | 1 | 2 | 3 | 4 = 0;
-
   return rows.map((row) => {
-    const indentLevel = resolveExcelIndentLevel(row, previousIndentLevel);
-    previousIndentLevel = indentLevel;
-    return { row, indentLevel };
+    return { row, indentLevel: normalizeExcelIndentLevel(row.indent_level) };
   });
 }
 
-function resolveExcelIndentLevel(
-  row: ModuleDetailRowData,
-  previousIndentLevel: 0 | 1 | 2 | 3 | 4,
+function normalizeExcelIndentLevel(
+  indentLevel: number | null,
 ): 0 | 1 | 2 | 3 | 4 {
-  if (row.row_type === "header" || row.row_type === "meta") {
+  if (indentLevel === null || Number.isNaN(indentLevel)) {
     return 0;
   }
 
-  const hasMajor = Boolean(row.major_no?.trim());
-  const hasMiddle = Boolean(row.middle_no?.trim());
-  const hasMinor = Boolean(row.minor_no?.trim());
-
-  if (hasMinor) {
-    return 2;
-  }
-
-  if (hasMiddle) {
-    return 1;
-  }
-
-  if (hasMajor) {
-    return 0;
-  }
-
-    return Math.min(previousIndentLevel + 1, 4) as 0 | 1 | 2 | 3 | 4;
+  return Math.max(0, Math.min(Math.trunc(indentLevel), 4)) as 0 | 1 | 2 | 3 | 4;
 }
 
 function IndentedExcelText({

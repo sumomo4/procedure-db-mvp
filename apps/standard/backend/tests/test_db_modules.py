@@ -212,6 +212,7 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     "1",
                     "Tech doc",
                     "Check before work.",
+                    1,
                     "Ready.",
                     "□",
                     None,
@@ -238,6 +239,7 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     "2",
                     "Tech doc",
                     "Start work.",
+                    2,
                     "Started.",
                     None,
                     None,
@@ -262,6 +264,7 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
     assert result.rows[0].module_row_id == 100
     assert result.rows[0].major_no == "1"
     assert result.rows[0].tech_doc_text == "Tech doc"
+    assert result.rows[0].indent_level == 1
     assert result.rows[0].time_text == "□"
     assert result.rows[1].command_text == "show log"
 
