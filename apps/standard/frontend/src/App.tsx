@@ -80,6 +80,10 @@ type ModuleDetailData = {
   row_count: number;
   source_xlsx_path: string | null;
   created_by: string | null;
+  header_time_text: string | null;
+  target_text: string | null;
+  common_p_text: string | null;
+  target_device_text: string | null;
   created_at: string;
   updated_at: string;
   rows: ModuleDetailRowData[];
@@ -114,6 +118,20 @@ type ModuleCreateState = {
   status: "idle" | "submitting" | "success" | "error";
   item: ModuleDetailData | null;
   message: string;
+};
+
+type ModuleRegisterRowDraft = {
+  rowId: number;
+  majorNo: string;
+  middleNo: string;
+  minorNo: string;
+  techDocText: string;
+  workText: string;
+  expectedResult: string;
+  timeText: string;
+  windowText: string;
+  pText: string;
+  commandText: string;
 };
 
 type SourceDocApiStatus = ModuleApiStatus;
@@ -1080,17 +1098,61 @@ function ModuleRegisterPage() {
   const [descriptionInput, setDescriptionInput] = useState("Created from module register screen.");
   const [sourcePathInput, setSourcePathInput] = useState("imports/manual-module.xlsx");
   const [createdByInput, setCreatedByInput] = useState("webui");
-  const [workTextInput, setWorkTextInput] = useState("Check before work.");
-  const [expectedResultInput, setExpectedResultInput] = useState("Ready.");
-  const [timeTextInput, setTimeTextInput] = useState("5 min");
-  const [windowTextInput, setWindowTextInput] = useState("console");
-  const [promptTextInput, setPromptTextInput] = useState(">");
-  const [commandTextInput, setCommandTextInput] = useState("show version");
+  const [headerTimeInput, setHeaderTimeInput] = useState("09:00");
+  const [targetInput, setTargetInput] = useState("CS");
+  const [commonPInput, setCommonPInput] = useState(">");
+  const [targetDeviceInput, setTargetDeviceInput] = useState("device-01");
+  const [rowSeed, setRowSeed] = useState(2);
+  const [rows, setRows] = useState<ModuleRegisterRowDraft[]>([
+    {
+      rowId: 1,
+      majorNo: "1",
+      middleNo: "1",
+      minorNo: "1",
+      techDocText: "Tech doc",
+      workText: "Check before work.",
+      expectedResult: "Ready.",
+      timeText: "5 min",
+      windowText: "console",
+      pText: ">",
+      commandText: "show version",
+    },
+  ]);
   const [createState, setCreateState] = useState<ModuleCreateState>({
     status: "idle",
     item: null,
     message: "Fill in the minimum fields and save the first module version.",
   });
+
+  function updateRow(rowId: number, field: keyof ModuleRegisterRowDraft, value: string | number): void {
+    setRows((currentRows) =>
+      currentRows.map((row) => (row.rowId === rowId ? { ...row, [field]: value } : row)),
+    );
+  }
+
+  function addRow(): void {
+    setRows((currentRows) => [
+      ...currentRows,
+      {
+        rowId: rowSeed,
+        majorNo: "",
+        middleNo: "",
+        minorNo: "",
+        techDocText: "",
+        workText: "",
+        expectedResult: "",
+        timeText: "",
+        windowText: "",
+        pText: "",
+        commandText: "",
+      },
+    ]);
+    setRowSeed((currentSeed) => currentSeed + 1);
+  }
+
+  function removeRow(rowId: number): void {
+    setRows((currentRows) => (currentRows.length > 1 ? currentRows.filter((row) => row.rowId !== rowId) : currentRows));
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -1113,22 +1175,25 @@ function ModuleRegisterPage() {
           description: descriptionInput.trim() || undefined,
           source_xlsx_path: sourcePathInput.trim() || undefined,
           created_by: createdByInput.trim() || undefined,
-          rows: [
-            {
-              row_order: 1,
-              row_type: "step",
-              major_no: "1",
-              middle_no: "1",
-              minor_no: "1",
-              work_text: workTextInput.trim() || moduleNameInput.trim(),
-              indent_level: 0,
-              expected_result: expectedResultInput.trim() || undefined,
-              time_text: timeTextInput.trim() || undefined,
-              window_text: windowTextInput.trim() || undefined,
-              p_text: promptTextInput.trim() || undefined,
-              command_text: commandTextInput.trim() || undefined,
-            },
-          ],
+          header_time_text: headerTimeInput.trim() || undefined,
+          target_text: targetInput.trim() || undefined,
+          common_p_text: commonPInput.trim() || undefined,
+          target_device_text: targetDeviceInput.trim() || undefined,
+          rows: rows.map((row, index) => ({
+            row_order: index + 1,
+            row_type: "step",
+            major_no: row.majorNo.trim() || undefined,
+            middle_no: row.middleNo.trim() || undefined,
+            minor_no: row.minorNo.trim() || undefined,
+            tech_doc_text: row.techDocText.trim() || undefined,
+            work_text: row.workText.trim() || moduleNameInput.trim(),
+            indent_level: 0,
+            expected_result: row.expectedResult.trim() || undefined,
+            time_text: row.timeText.trim() || undefined,
+            window_text: row.windowText.trim() || undefined,
+            p_text: row.pText.trim() || undefined,
+            command_text: row.commandText.trim() || undefined,
+          })),
         }),
       });
 
@@ -1161,11 +1226,11 @@ function ModuleRegisterPage() {
   const createdItem = createState.item;
 
   return (
-    <Page title="モジュール登録" description="最小項目でモジュールを登録し、POST /api/v1/modules の保存結果を確認します。">
+    <Page title="モジュール登録" description="1回だけ入れる項目と複数行の手順行を分けて登録し、POST /api/v1/modules の保存結果を確認します。">
       <section className="upload-zone" aria-label="モジュール登録の進め方">
         <span className="upload-icon">⇧</span>
-        <h2>JSON ベースの最小登録</h2>
-        <p>Excel 直接取込は後段に回し、Sprint 3 では WebUI からモジュール本体と最初の 1 行を保存できる状態を先に作ります。</p>
+        <h2>先に登録の芯を固める</h2>
+        <p>ホルダー記法は今は持ち込まず、まずは実務で入れる項目をそのまま登録できる形を先に整えます。</p>
       </section>
 
       <form className="register-form" onSubmit={handleSubmit}>
@@ -1193,32 +1258,87 @@ function ModuleRegisterPage() {
         </FormGrid>
 
         <section className="register-step-card">
-          <h2>初回保存する手順行</h2>
+          <h2>1回だけ入力する項目</h2>
           <div className="register-step-grid">
-            <label className="wide">
-              作業内容
-              <textarea value={workTextInput} onChange={(event) => setWorkTextInput(event.target.value)} required />
-            </label>
-            <label>
-              期待結果
-              <input value={expectedResultInput} onChange={(event) => setExpectedResultInput(event.target.value)} />
-            </label>
             <label>
               時刻
-              <input value={timeTextInput} onChange={(event) => setTimeTextInput(event.target.value)} />
+              <input value={headerTimeInput} onChange={(event) => setHeaderTimeInput(event.target.value)} />
             </label>
             <label>
-              Window
-              <input value={windowTextInput} onChange={(event) => setWindowTextInput(event.target.value)} />
+              target
+              <input value={targetInput} onChange={(event) => setTargetInput(event.target.value)} />
             </label>
             <label>
-              Prompt
-              <input value={promptTextInput} onChange={(event) => setPromptTextInput(event.target.value)} />
+              P
+              <input value={commonPInput} onChange={(event) => setCommonPInput(event.target.value)} />
             </label>
-            <label className="wide">
-              Command
-              <input value={commandTextInput} onChange={(event) => setCommandTextInput(event.target.value)} />
+            <label>
+              対象装置
+              <input value={targetDeviceInput} onChange={(event) => setTargetDeviceInput(event.target.value)} />
             </label>
+          </div>
+        </section>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <h2>複数行の手順行</h2>
+            <button className="secondary" type="button" onClick={addRow}>
+              <span aria-hidden="true">＋</span>行追加
+            </button>
+          </div>
+          <div className="register-rows">
+            {rows.map((row, index) => (
+              <section key={row.rowId} className="register-row-editor">
+                <div className="register-row-editor-header">
+                  <strong>行 {index + 1}</strong>
+                  <button className="text-button" type="button" onClick={() => removeRow(row.rowId)} disabled={rows.length === 1}>
+                    <span aria-hidden="true">−</span>削除
+                  </button>
+                </div>
+                <div className="register-row-grid">
+                  <label>
+                    大
+                    <input value={row.majorNo} onChange={(event) => updateRow(row.rowId, "majorNo", event.target.value)} />
+                  </label>
+                  <label>
+                    中
+                    <input value={row.middleNo} onChange={(event) => updateRow(row.rowId, "middleNo", event.target.value)} />
+                  </label>
+                  <label>
+                    小
+                    <input value={row.minorNo} onChange={(event) => updateRow(row.rowId, "minorNo", event.target.value)} />
+                  </label>
+                  <label>
+                    技術資料名
+                    <input value={row.techDocText} onChange={(event) => updateRow(row.rowId, "techDocText", event.target.value)} />
+                  </label>
+                  <label className="wide">
+                    作業内容
+                    <textarea value={row.workText} onChange={(event) => updateRow(row.rowId, "workText", event.target.value)} required />
+                  </label>
+                  <label className="wide">
+                    確認事項 or 項目
+                    <input value={row.expectedResult} onChange={(event) => updateRow(row.rowId, "expectedResult", event.target.value)} />
+                  </label>
+                  <label>
+                    時刻
+                    <input value={row.timeText} onChange={(event) => updateRow(row.rowId, "timeText", event.target.value)} />
+                  </label>
+                  <label>
+                    window
+                    <input value={row.windowText} onChange={(event) => updateRow(row.rowId, "windowText", event.target.value)} />
+                  </label>
+                  <label>
+                    P
+                    <input value={row.pText} onChange={(event) => updateRow(row.rowId, "pText", event.target.value)} />
+                  </label>
+                  <label>
+                    コマンド
+                    <input value={row.commandText} onChange={(event) => updateRow(row.rowId, "commandText", event.target.value)} />
+                  </label>
+                </div>
+              </section>
+            ))}
           </div>
         </section>
 

@@ -140,6 +140,10 @@ def test_read_module_detail_returns_success_response(
             row_count=1,
             source_xlsx_path=None,
             created_by="seed",
+            header_time_text="09:00",
+            target_text="CS",
+            common_p_text=">",
+            target_device_text="device-01",
             created_at="2026-04-22",
             updated_at="2026-04-22",
             rows=[
@@ -182,6 +186,10 @@ def test_read_module_detail_returns_success_response(
             "row_count": 1,
             "source_xlsx_path": None,
             "created_by": "seed",
+            "header_time_text": "09:00",
+            "target_text": "CS",
+            "common_p_text": ">",
+            "target_device_text": "device-01",
             "created_at": "2026-04-22",
             "updated_at": "2026-04-22",
             "rows": [
@@ -265,6 +273,8 @@ def test_create_module_returns_success_response(
     def fake_create_module(settings: AppSettings, payload: object) -> ModuleDetailData:
         assert settings.app_env == "test"
         assert payload.module_name == "Created module"
+        assert payload.target_text == "CS"
+        assert payload.target_device_text == "device-01"
         assert len(payload.rows) == 2
         return ModuleDetailData(
             module_id=4,
@@ -278,6 +288,10 @@ def test_create_module_returns_success_response(
             row_count=2,
             source_xlsx_path="imports/MOD-004.xlsx",
             created_by="codex",
+            header_time_text="09:00",
+            target_text="CS",
+            common_p_text=">",
+            target_device_text="device-01",
             created_at="2026-04-22",
             updated_at="2026-04-22",
             rows=[
@@ -327,6 +341,10 @@ def test_create_module_returns_success_response(
             "description": "Created from API",
             "source_xlsx_path": "imports/MOD-004.xlsx",
             "created_by": "codex",
+            "header_time_text": "09:00",
+            "target_text": "CS",
+            "common_p_text": ">",
+            "target_device_text": "device-01",
             "rows": [
                 {
                     "row_order": 1,

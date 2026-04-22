@@ -223,6 +223,10 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     "draft",
                     None,
                     "seed",
+                    "09:00",
+                    "CS",
+                    ">",
+                    "device-01",
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
                     100,
@@ -250,6 +254,10 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     "draft",
                     None,
                     "seed",
+                    "09:00",
+                    "CS",
+                    ">",
+                    "device-01",
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
                     101,
@@ -280,6 +288,10 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
     assert result.status == "draft"
     assert result.status_label == "作成中"
     assert result.row_count == 2
+    assert result.header_time_text == "09:00"
+    assert result.target_text == "CS"
+    assert result.common_p_text == ">"
+    assert result.target_device_text == "device-01"
     assert result.created_at == "2026-04-22"
     assert result.updated_at == "2026-04-22"
     assert result.rows[0].module_row_id == 100
@@ -324,6 +336,10 @@ def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -
                     "draft",
                     "imports/MOD-004.xlsx",
                     "codex",
+                    "09:00",
+                    "CS",
+                    ">",
+                    "device-01",
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     400,
@@ -351,6 +367,10 @@ def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -
                     "draft",
                     "imports/MOD-004.xlsx",
                     "codex",
+                    "09:00",
+                    "CS",
+                    ">",
+                    "device-01",
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     401,
@@ -384,6 +404,10 @@ def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -
         description="Created from API",
         source_xlsx_path="imports/MOD-004.xlsx",
         created_by="codex",
+        header_time_text="09:00",
+        target_text="CS",
+        common_p_text=">",
+        target_device_text="device-01",
         rows=[
             ModuleCreateRowInput(
                 row_order=2,
@@ -415,6 +439,10 @@ def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -
     assert result.module_id == 4
     assert result.module_key == "MOD-004"
     assert result.row_count == 2
+    assert result.header_time_text == "09:00"
+    assert result.target_text == "CS"
+    assert result.common_p_text == ">"
+    assert result.target_device_text == "device-01"
     assert result.rows[0].row_order == 1
     assert result.rows[1].command_text == "show version"
     executed_queries = "\n".join(query for query, _ in fake_cursor.executions)

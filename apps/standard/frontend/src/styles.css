@@ -646,6 +646,15 @@ th {
   margin: 0;
 }
 
+.register-step-header,
+.register-row-editor-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .register-step-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -653,6 +662,30 @@ th {
 }
 
 .register-step-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.register-rows {
+  display: grid;
+  gap: 16px;
+}
+
+.register-row-editor {
+  padding: 18px;
+  border: 1px solid #ded6c8;
+  border-radius: 8px;
+  background: #fbfaf7;
+  display: grid;
+  gap: 14px;
+}
+
+.register-row-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.register-row-grid .wide {
   grid-column: 1 / -1;
 }
 
@@ -1047,6 +1080,8 @@ th {
   .list-status,
   .search-form,
   .form-grid,
+  .register-step-grid,
+  .register-row-grid,
   .facts,
   .approval-detail-grid {
     grid-template-columns: 1fr;

@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
     source_xlsx_path text,
     source_sha256 text,
     created_by text,
+    header_time_text text,
+    target_text text,
+    common_p_text text,
+    target_device_text text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (module_id, version_no)
@@ -31,6 +35,18 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
 
 CREATE INDEX IF NOT EXISTS idx_module_versions_status
     ON proc.module_versions (status);
+
+ALTER TABLE proc.module_versions
+    ADD COLUMN IF NOT EXISTS header_time_text text;
+
+ALTER TABLE proc.module_versions
+    ADD COLUMN IF NOT EXISTS target_text text;
+
+ALTER TABLE proc.module_versions
+    ADD COLUMN IF NOT EXISTS common_p_text text;
+
+ALTER TABLE proc.module_versions
+    ADD COLUMN IF NOT EXISTS target_device_text text;
 
 CREATE TABLE IF NOT EXISTS proc.module_rows (
     module_row_id bigserial PRIMARY KEY,
@@ -496,7 +512,7 @@ DO UPDATE SET
     updated_at = now();
 
 INSERT INTO app_metadata (key, value)
-VALUES ('schema_version', '0.3.1')
+VALUES ('schema_version', '0.3.2')
 ON CONFLICT (key)
 DO UPDATE SET
     value = EXCLUDED.value,

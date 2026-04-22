@@ -194,6 +194,10 @@ class ModuleCreateRequest(BaseModel):
     source_xlsx_path: str | None = None
     source_sha256: str | None = None
     created_by: str | None = None
+    header_time_text: str | None = None
+    target_text: str | None = None
+    common_p_text: str | None = None
+    target_device_text: str | None = None
     rows: list[ModuleCreateRowInput] = Field(min_length=1)
 
 
@@ -228,6 +232,10 @@ class ModuleDetailData(BaseModel):
     row_count: int
     source_xlsx_path: str | None
     created_by: str | None
+    header_time_text: str | None
+    target_text: str | None
+    common_p_text: str | None
+    target_device_text: str | None
     created_at: str
     updated_at: str
     rows: list[ModuleRowData]

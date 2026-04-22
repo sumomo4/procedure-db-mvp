@@ -127,6 +127,10 @@ def _build_module_detail_query() -> str:
                 mv.status,
                 mv.source_xlsx_path,
                 mv.created_by,
+                mv.header_time_text,
+                mv.target_text,
+                mv.common_p_text,
+                mv.target_device_text,
                 mv.created_at,
                 mv.updated_at
             FROM proc.module_versions mv
@@ -144,6 +148,10 @@ def _build_module_detail_query() -> str:
             sv.status,
             sv.source_xlsx_path,
             sv.created_by,
+            sv.header_time_text,
+            sv.target_text,
+            sv.common_p_text,
+            sv.target_device_text,
             sv.created_at,
             sv.updated_at,
             r.module_row_id,
@@ -187,24 +195,24 @@ def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData
     first_row = rows[0]
     module_rows = [
         ModuleRowData(
-            module_row_id=row[11],
-            row_order=row[12],
-            row_type=row[13],
-            major_no=row[14],
-            middle_no=row[15],
-            minor_no=row[16],
-            tech_doc_text=row[17],
-            work_text=row[18],
-            indent_level=row[19],
-            expected_result=row[20],
-            time_text=row[21],
-            window_text=row[22],
-            p_text=row[23],
-            command_text=row[24],
-            note=row[17],
+            module_row_id=row[15],
+            row_order=row[16],
+            row_type=row[17],
+            major_no=row[18],
+            middle_no=row[19],
+            minor_no=row[20],
+            tech_doc_text=row[21],
+            work_text=row[22],
+            indent_level=row[23],
+            expected_result=row[24],
+            time_text=row[25],
+            window_text=row[26],
+            p_text=row[27],
+            command_text=row[28],
+            note=row[21],
         )
         for row in rows
-        if row[11] is not None
+        if row[15] is not None
     ]
 
     return ModuleDetailData(
@@ -219,8 +227,12 @@ def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData
         row_count=len(module_rows),
         source_xlsx_path=first_row[7],
         created_by=first_row[8],
-        created_at=_format_updated_at(first_row[9]),
-        updated_at=_format_updated_at(first_row[10]),
+        header_time_text=first_row[9],
+        target_text=first_row[10],
+        common_p_text=first_row[11],
+        target_device_text=first_row[12],
+        created_at=_format_updated_at(first_row[13]),
+        updated_at=_format_updated_at(first_row[14]),
         rows=module_rows,
     )
 
@@ -390,7 +402,11 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                         change_note,
                         source_xlsx_path,
                         source_sha256,
-                        created_by
+                        created_by,
+                        header_time_text,
+                        target_text,
+                        common_p_text,
+                        target_device_text
                     )
                     VALUES (
                         %(module_id)s,
@@ -399,7 +415,11 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                         %(change_note)s,
                         %(source_xlsx_path)s,
                         %(source_sha256)s,
-                        %(created_by)s
+                        %(created_by)s,
+                        %(header_time_text)s,
+                        %(target_text)s,
+                        %(common_p_text)s,
+                        %(target_device_text)s
                     )
                     RETURNING module_version_id;
                     """,
@@ -409,6 +429,10 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                         "source_xlsx_path": payload.source_xlsx_path,
                         "source_sha256": payload.source_sha256,
                         "created_by": payload.created_by,
+                        "header_time_text": payload.header_time_text,
+                        "target_text": payload.target_text,
+                        "common_p_text": payload.common_p_text,
+                        "target_device_text": payload.target_device_text,
                     },
                 )
                 inserted_version = cursor.fetchone()
