@@ -25,6 +25,17 @@ jobs:
       - name: Build
         run: npm run build
 
+  deploy-script-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deploy scripts
+        run: |
+          bash -n infra/ubuntu/setup_standard_server.sh
+          bash -n infra/ubuntu/finish_standard_server.sh
+
   standard-backend-test:
     runs-on: ubuntu-latest
     defaults:
