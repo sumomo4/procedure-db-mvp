@@ -457,11 +457,79 @@ nav {
   align-items: end;
 }
 
+.module-search-form {
+  grid-template-columns: minmax(220px, 1.2fr) minmax(180px, 0.8fr) auto;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.list-status {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, auto)) minmax(220px, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid #d6cdbc;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(67, 54, 35, 0.08);
+}
+
+.list-status span {
+  display: block;
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.list-status strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.list-status p {
+  margin: 0;
+  color: #56636c;
+  line-height: 1.6;
+}
+
+.list-status-loading {
+  border-left: 5px solid #d7a84f;
+}
+
+.list-status-available {
+  border-left: 5px solid #2e8b57;
+}
+
+.list-status-unavailable {
+  border-left: 5px solid #b84d3a;
+}
+
+.empty-state {
+  min-height: 180px;
+  padding: 28px;
+  border: 1px dashed #9dc3c8;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.empty-state h2,
+.empty-state p {
+  margin: 0;
+}
+
+.empty-state p {
+  color: #56636c;
 }
 
 .table-wrap {
@@ -513,6 +581,21 @@ th {
 }
 
 .status-archive {
+  background: #ece8e2;
+  color: #56636c;
+}
+
+.status-module-draft {
+  background: #fff4d8;
+  color: #79570e;
+}
+
+.status-module-published {
+  background: #e4f2ea;
+  color: #1f6840;
+}
+
+.status-module-archived {
   background: #ece8e2;
   color: #56636c;
 }
@@ -584,6 +667,7 @@ th {
 
   .dashboard-grid,
   .health-row,
+  .list-status,
   .search-form,
   .form-grid,
   .facts {

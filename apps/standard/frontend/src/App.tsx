@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 
 type Status = "Draft" | "approval" | "archive";
@@ -37,6 +37,28 @@ type DatabaseHealthData = {
   status: "ok";
 };
 
+type ModuleApiStatus = "draft" | "published" | "archived";
+
+type ModuleListItemData = {
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  description: string | null;
+  module_version_id: number;
+  version_no: number;
+  status: ModuleApiStatus;
+  status_label: string;
+  row_count: number;
+  first_work_text: string | null;
+  source_xlsx_path: string | null;
+  created_by: string | null;
+  updated_at: string;
+};
+
+type ModuleListData = {
+  items: ModuleListItemData[];
+};
+
 type ApiResponse<TData> = {
   result: ApiResult;
   data: TData | null;
@@ -50,7 +72,32 @@ type HealthCheckState = {
   message: string;
 };
 
+type ModuleListState = {
+  status: "loading" | "available" | "unavailable";
+  items: ModuleListItemData[];
+  message: string;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+
+const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
+  { value: "all", label: "すべて" },
+  { value: "draft", label: "作成中" },
+  { value: "published", label: "承認済み" },
+  { value: "archived", label: "保管済み" },
+];
+
+function buildApiUrl(path: string): string {
+  if (API_BASE_URL) {
+    return `${API_BASE_URL.replace(/\/$/, "")}${path}`;
+  }
+
+  if (window.location.port === "5173") {
+    return `http://localhost:8000${path}`;
+  }
+
+  return path;
+}
 
 const modules: ModuleRow[] = [
   { id: "MOD-001", name: "初期点検手順", category: "点検", owner: "開発担当A", updatedAt: "2026-04-10", status: "Draft", version: "0.2" },
@@ -247,7 +294,7 @@ function ApiHealthPanel() {
 
     async function fetchHealth(): Promise<void> {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/health`, {
+        const response = await fetch(buildApiUrl("/api/v1/health"), {
           signal: abortController.signal,
         });
 
@@ -294,7 +341,7 @@ function ApiHealthPanel() {
 
     async function fetchDatabaseHealth(): Promise<void> {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/health/db`, {
+        const response = await fetch(buildApiUrl("/api/v1/health/db"), {
           signal: abortController.signal,
         });
 
@@ -408,6 +455,199 @@ function HealthStatusRow({
 
 function ModuleSearchPage() {
   const navigate = useNavigate();
+  const [keyword, setKeyword] = useState("");
+  const [status, setStatus] = useState<(typeof moduleStatusOptions)[number]["value"]>("all");
+
+  function handleSubmit(): void {
+    const params = new URLSearchParams();
+    const normalizedKeyword = keyword.trim();
+
+    if (normalizedKeyword) {
+      params.set("keyword", normalizedKeyword);
+    }
+
+    if (status !== "all") {
+      params.set("status", status);
+    }
+
+    const query = params.toString();
+    navigate(query ? `/modules/list?${query}` : "/modules/list");
+  }
+
+  return (
+    <Page title="モジュール検索" description="キーワードと承認状態で、登録済みモジュールを検索します。">
+      <form
+        className="search-form module-search-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSubmit();
+        }}
+      >
+        <label>
+          キーワード
+          <input
+            placeholder="例: 点検、交換、MOD-001"
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+          />
+        </label>
+        <label>
+          承認状態
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value as (typeof moduleStatusOptions)[number]["value"])}
+          >
+            {moduleStatusOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="primary" type="submit">
+          <span aria-hidden="true">⌕</span>
+          検索
+        </button>
+      </form>
+    </Page>
+  );
+}
+
+function ModuleListPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const keyword = searchParams.get("keyword") ?? "";
+  const statusFilter = searchParams.get("status") ?? "all";
+  const [moduleListState, setModuleListState] = useState<ModuleListState>({
+    status: "loading",
+    items: [],
+    message: "モジュール一覧を取得しています。",
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchModules(): Promise<void> {
+      setModuleListState({
+        status: "loading",
+        items: [],
+        message: "モジュール一覧を取得しています。",
+      });
+
+      try {
+        const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
+
+        if (keyword) {
+          endpoint.searchParams.set("keyword", keyword);
+        }
+
+        if (statusFilter !== "all") {
+          endpoint.searchParams.set("status", statusFilter);
+        }
+
+        const response = await fetch(endpoint.toString(), {
+          signal: abortController.signal,
+        });
+
+        const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setModuleListState({
+            status: "unavailable",
+            items: [],
+            message: responseBody.message || `モジュール一覧の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setModuleListState({
+          status: "available",
+          items: responseBody.data.items,
+          message: responseBody.message || "モジュール一覧を取得しました。",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setModuleListState({
+          status: "unavailable",
+          items: [],
+          message: "APIに接続できませんでした。",
+        });
+      }
+    }
+
+    void fetchModules();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [keyword, statusFilter]);
+
+  const statusFilterLabel =
+    moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+
+  return (
+    <Page title="モジュール一覧" description="APIから取得したモジュール一覧と検索結果を確認します。">
+      <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
+        <div>
+          <span>取得状態</span>
+          <strong>
+            {moduleListState.status === "loading"
+              ? "取得中"
+              : moduleListState.status === "available"
+                ? "取得完了"
+                : "取得失敗"}
+          </strong>
+        </div>
+        <div>
+          <span>検索キーワード</span>
+          <strong>{keyword || "指定なし"}</strong>
+        </div>
+        <div>
+          <span>承認状態</span>
+          <strong>{statusFilterLabel}</strong>
+        </div>
+        <p>{moduleListState.message}</p>
+      </section>
+      <Toolbar>
+        <button className="secondary" onClick={() => navigate("/modules/search")}>
+          <span aria-hidden="true">←</span>
+          条件変更
+        </button>
+        <button className="primary" onClick={() => navigate("/documents/create")}>
+          <span aria-hidden="true">＋</span>
+          原本作成へ
+        </button>
+      </Toolbar>
+      {moduleListState.status === "available" && moduleListState.items.length === 0 ? (
+        <section className="empty-state">
+          <h2>該当するモジュールはありません</h2>
+          <p>検索条件を変えて再度確認してください。</p>
+        </section>
+      ) : (
+        <DataTable
+          columns={["モジュールID", "モジュール名", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "操作"]}
+          rows={moduleListState.items.map((item) => [
+            item.module_key,
+            item.module_name,
+            `v${item.version_no}`,
+            <ModuleStatusPill status={item.status} label={item.status_label} />,
+            String(item.row_count),
+            item.first_work_text ?? "-",
+            item.created_by ?? "-",
+            item.updated_at,
+            <button className="text-button" onClick={() => navigate("/documents/create")}>選択</button>,
+          ])}
+        />
+      )}
+    </Page>
+  );
+}
+
+function ModuleSearchPageLegacy() {
+  const navigate = useNavigate();
   return (
     <Page title="モジュール検索" description="検索条件を入力し、登録済みモジュールの一覧へ進みます。">
       <SearchForm
@@ -422,7 +662,7 @@ function ModuleSearchPage() {
   );
 }
 
-function ModuleListPage() {
+function ModuleListPageLegacy() {
   const navigate = useNavigate();
   return (
     <Page title="モジュール一覧" description="検索結果を確認し、原本作成や詳細確認の対象を選択します。">
@@ -656,6 +896,10 @@ function DataTable({ columns, rows }: { columns: string[]; rows: ReactNode[][] }
 
 function StatusPill({ status }: { status: Status }) {
   return <span className={`status status-${status}`}>{statusLabels[status]}</span>;
+}
+
+function ModuleStatusPill({ status, label }: { status: ModuleApiStatus; label: string }) {
+  return <span className={`status status-module-${status}`}>{label}</span>;
 }
 
 function FlowStep({ label, active = false }: { label: string; active?: boolean }) {
