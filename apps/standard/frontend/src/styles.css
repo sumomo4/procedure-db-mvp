@@ -689,6 +689,22 @@ th {
   grid-column: 1 / -1;
 }
 
+.register-work-indent-0 {
+  padding-left: 12px;
+}
+
+.register-work-indent-1 {
+  padding-left: 28px;
+}
+
+.register-work-indent-2 {
+  padding-left: 44px;
+}
+
+.register-work-indent-3 {
+  padding-left: 60px;
+}
+
 .register-status {
   display: grid;
   gap: 8px;

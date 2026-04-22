@@ -122,6 +122,7 @@ type ModuleCreateState = {
 
 type ModuleRegisterRowDraft = {
   rowId: number;
+  indentLevel: number;
   majorNo: string;
   middleNo: string;
   minorNo: string;
@@ -1106,6 +1107,7 @@ function ModuleRegisterPage() {
   const [rows, setRows] = useState<ModuleRegisterRowDraft[]>([
     {
       rowId: 1,
+      indentLevel: 0,
       majorNo: "1",
       middleNo: "1",
       minorNo: "1",
@@ -1135,6 +1137,7 @@ function ModuleRegisterPage() {
       ...currentRows,
       {
         rowId: rowSeed,
+        indentLevel: 0,
         majorNo: "",
         middleNo: "",
         minorNo: "",
@@ -1187,7 +1190,7 @@ function ModuleRegisterPage() {
             minor_no: row.minorNo.trim() || undefined,
             tech_doc_text: row.techDocText.trim() || undefined,
             work_text: row.workText.trim() || moduleNameInput.trim(),
-            indent_level: 0,
+            indent_level: row.indentLevel,
             expected_result: row.expectedResult.trim() || undefined,
             time_text: row.timeText.trim() || undefined,
             window_text: row.windowText.trim() || undefined,
@@ -1297,6 +1300,15 @@ function ModuleRegisterPage() {
                 </div>
                 <div className="register-row-grid">
                   <label>
+                    段落
+                    <select value={row.indentLevel} onChange={(event) => updateRow(row.rowId, "indentLevel", Number(event.target.value))}>
+                      <option value={0}>1段</option>
+                      <option value={1}>2段</option>
+                      <option value={2}>3段</option>
+                      <option value={3}>4段</option>
+                    </select>
+                  </label>
+                  <label>
                     大
                     <input value={row.majorNo} onChange={(event) => updateRow(row.rowId, "majorNo", event.target.value)} />
                   </label>
@@ -1314,7 +1326,12 @@ function ModuleRegisterPage() {
                   </label>
                   <label className="wide">
                     作業内容
-                    <textarea value={row.workText} onChange={(event) => updateRow(row.rowId, "workText", event.target.value)} required />
+                    <textarea
+                      className={`register-work-indent-${row.indentLevel}`}
+                      value={row.workText}
+                      onChange={(event) => updateRow(row.rowId, "workText", event.target.value)}
+                      required
+                    />
                   </label>
                   <label className="wide">
                     確認事項 or 項目
