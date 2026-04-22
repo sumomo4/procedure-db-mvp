@@ -13,15 +13,6 @@ type ModuleRow = {
   version: string;
 };
 
-type DocumentRow = {
-  id: string;
-  title: string;
-  module: string;
-  status: Status;
-  version: string;
-  updatedAt: string;
-};
-
 type ApiResult = "success" | "error";
 
 type HealthData = {
@@ -118,6 +109,71 @@ type ModuleDetailState = {
   message: string;
 };
 
+type SourceDocApiStatus = ModuleApiStatus;
+
+type SourceDocListItemData = {
+  source_doc_id: number;
+  source_doc_key: string;
+  source_doc_name: string;
+  description: string | null;
+  source_doc_version_id: number;
+  version_no: number;
+  status: SourceDocApiStatus;
+  status_label: string;
+  module_count: number;
+  enabled_module_count: number;
+  module_names: string[];
+  created_by: string | null;
+  updated_at: string;
+};
+
+type SourceDocListData = {
+  items: SourceDocListItemData[];
+};
+
+type SourceDocModuleItemData = {
+  blueprint_item_id: number;
+  item_order: number;
+  enabled: boolean;
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  module_version_id: number;
+  module_version_no: number;
+  module_status: ModuleApiStatus;
+  module_status_label: string;
+};
+
+type SourceDocDetailData = {
+  source_doc_id: number;
+  source_doc_key: string;
+  source_doc_name: string;
+  description: string | null;
+  source_doc_version_id: number;
+  version_no: number;
+  status: SourceDocApiStatus;
+  status_label: string;
+  change_note: string | null;
+  module_count: number;
+  enabled_module_count: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  items: SourceDocModuleItemData[];
+};
+
+type SourceDocListState = {
+  status: "loading" | "available" | "unavailable";
+  items: SourceDocListItemData[];
+  message: string;
+};
+
+type SourceDocDetailState = {
+  status: "loading" | "available" | "unavailable";
+  item: SourceDocDetailData | null;
+  message: string;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
@@ -143,11 +199,6 @@ const modules: ModuleRow[] = [
   { id: "MOD-001", name: "初期点検手順", category: "点検", owner: "開発担当A", updatedAt: "2026-04-10", status: "Draft", version: "0.2" },
   { id: "MOD-002", name: "部品交換手順", category: "保守", owner: "開発担当B", updatedAt: "2026-04-12", status: "approval", version: "0.3" },
   { id: "MOD-003", name: "復旧確認手順", category: "復旧", owner: "管理者", updatedAt: "2026-04-14", status: "archive", version: "1.0" },
-];
-
-const documents: DocumentRow[] = [
-  { id: "ORG-101", title: "M1確認用 原本A", module: "初期点検手順", status: "Draft", version: "0.4", updatedAt: "2026-04-14" },
-  { id: "ORG-102", title: "M1確認用 原本B", module: "部品交換手順", status: "approval", version: "0.6", updatedAt: "2026-04-15" },
 ];
 
 const statusLabels: Record<Status, string> = {
@@ -956,28 +1007,191 @@ function ModuleRegisterPage() {
 
 function DocumentSearchPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialKeyword = searchParams.get("keyword") ?? "";
+  const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
+  const [keywordInput, setKeywordInput] = useState(initialKeyword);
+  const [statusInput, setStatusInput] = useState(initialStatus);
+  const keyword = initialKeyword;
+  const statusFilter = initialStatus;
+  const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
+    status: "loading",
+    items: [],
+    message: "原本一覧を取得しています。",
+  });
+
+  useEffect(() => {
+    setKeywordInput(initialKeyword);
+    setStatusInput(initialStatus);
+  }, [initialKeyword, initialStatus]);
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchSourceDocs(): Promise<void> {
+      setSourceDocListState({
+        status: "loading",
+        items: [],
+        message: "原本一覧を取得しています。",
+      });
+
+      try {
+        const endpoint = new URL(buildApiUrl("/api/v1/source-docs"), window.location.origin);
+
+        if (keyword) {
+          endpoint.searchParams.set("keyword", keyword);
+        }
+
+        if (statusFilter !== "all") {
+          endpoint.searchParams.set("status", statusFilter);
+        }
+
+        const response = await fetch(endpoint.toString(), {
+          signal: abortController.signal,
+        });
+
+        const responseBody = (await response.json()) as ApiResponse<SourceDocListData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setSourceDocListState({
+            status: "unavailable",
+            items: [],
+            message: responseBody.message || `原本一覧の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setSourceDocListState({
+          status: "available",
+          items: responseBody.data.items,
+          message: responseBody.message || "原本一覧を取得しました。",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setSourceDocListState({
+          status: "unavailable",
+          items: [],
+          message: "APIに接続できませんでした。",
+        });
+      }
+    }
+
+    void fetchSourceDocs();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [keyword, statusFilter]);
+
+  function handleSubmit(): void {
+    const nextParams = new URLSearchParams();
+
+    if (keywordInput.trim()) {
+      nextParams.set("keyword", keywordInput.trim());
+    }
+
+    if (statusInput !== "all") {
+      nextParams.set("status", statusInput);
+    }
+
+    const nextQuery = nextParams.toString();
+    navigate(nextQuery ? `/documents/search?${nextQuery}` : "/documents/search");
+  }
+
+  const statusFilterLabel =
+    moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+
   return (
-    <Page title="原本参照" description="原本を検索し、一覧 / 詳細画面で内容と関連情報を確認します。">
-      <SearchForm
-        fields={[
-          ["原本名", "M1確認用"],
-          ["利用モジュール", "初期点検手順"],
-          ["状態", "Draft / 承認待ち / 保管済み"],
-        ]}
-        onSubmit={() => navigate("/documents/ORG-101")}
-      />
-      <DataTable
-        columns={["ID", "原本名", "利用モジュール", "版数", "状態", "更新日", "操作"]}
-        rows={documents.map((item) => [
-          item.id,
-          item.title,
-          item.module,
-          item.version,
-          <StatusPill status={item.status} />,
-          item.updatedAt,
-          <button className="text-button" onClick={() => navigate(`/documents/${item.id}`)}>詳細</button>,
-        ])}
-      />
+    <Page title="原本参照" description="APIから取得した原本一覧を確認し、関連モジュールと詳細情報を追えます。">
+      <form
+        className="search-form module-search-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSubmit();
+        }}
+      >
+        <label>
+          キーワード
+          <input
+            placeholder="例: M1確認用 / MOD-001 / 原本A"
+            value={keywordInput}
+            onChange={(event) => setKeywordInput(event.target.value)}
+          />
+        </label>
+        <label>
+          状態
+          <select
+            value={statusInput}
+            onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}
+          >
+            {moduleStatusOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="primary" type="submit">
+          <span aria-hidden="true">⌕</span>
+          検索
+        </button>
+      </form>
+
+      <section className={`list-status list-status-${sourceDocListState.status}`} aria-live="polite">
+        <div>
+          <span>取得状態</span>
+          <strong>
+            {sourceDocListState.status === "loading"
+              ? "取得中"
+              : sourceDocListState.status === "available"
+                ? "取得成功"
+                : "取得失敗"}
+          </strong>
+        </div>
+        <div>
+          <span>検索キーワード</span>
+          <strong>{keyword || "指定なし"}</strong>
+        </div>
+        <div>
+          <span>状態</span>
+          <strong>{statusFilterLabel}</strong>
+        </div>
+        <p>{sourceDocListState.message}</p>
+      </section>
+      <Toolbar>
+        <button className="secondary" onClick={() => navigate("/documents/search")}>
+          <span aria-hidden="true">↺</span>
+          条件を戻す
+        </button>
+        <button className="primary" onClick={() => navigate("/documents/create")}>
+          <span aria-hidden="true">＋</span>
+          原本作成へ
+        </button>
+      </Toolbar>
+      {sourceDocListState.status === "available" && sourceDocListState.items.length === 0 ? (
+        <section className="empty-state">
+          <h2>該当する原本はありません</h2>
+          <p>検索条件を変えて再度確認してください。</p>
+        </section>
+      ) : (
+        <DataTable
+          columns={["原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "作成者", "更新日", "操作"]}
+          rows={sourceDocListState.items.map((item) => [
+            item.source_doc_key,
+            item.source_doc_name,
+            `v${item.version_no}`,
+            <ModuleStatusPill status={item.status} label={item.status_label} />,
+            item.module_names.join(", ") || "-",
+            `${item.enabled_module_count}/${item.module_count}`,
+            item.created_by ?? "-",
+            item.updated_at,
+            <button className="text-button" onClick={() => navigate(`/documents/${item.source_doc_id}`)}>詳細</button>,
+          ])}
+        />
+      )}
     </Page>
   );
 }
@@ -1005,7 +1219,7 @@ function DocumentEditPage() {
       </section>
       <Toolbar>
         <button className="secondary" onClick={() => navigate("/modules/list")}><span aria-hidden="true">←</span>一覧へ戻る</button>
-        <button className="primary" onClick={() => navigate("/documents/ORG-101")}><span aria-hidden="true">✓</span>保存して詳細へ</button>
+        <button className="primary" onClick={() => navigate("/documents/1")}><span aria-hidden="true">✓</span>保存して詳細へ</button>
       </Toolbar>
     </Page>
   );
@@ -1013,38 +1227,132 @@ function DocumentEditPage() {
 
 function DocumentDetailPage() {
   const navigate = useNavigate();
-  const doc = documents[0];
+  const { id } = useParams();
+  const [sourceDocDetailState, setSourceDocDetailState] = useState<SourceDocDetailState>({
+    status: "loading",
+    item: null,
+    message: "原本詳細を取得しています。",
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchSourceDocDetail(): Promise<void> {
+      setSourceDocDetailState({
+        status: "loading",
+        item: null,
+        message: "原本詳細を取得しています。",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/v1/source-docs/${id}`), {
+          signal: abortController.signal,
+        });
+        const responseBody = (await response.json()) as ApiResponse<SourceDocDetailData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setSourceDocDetailState({
+            status: "unavailable",
+            item: null,
+            message: responseBody.message || `原本詳細の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setSourceDocDetailState({
+          status: "available",
+          item: responseBody.data,
+          message: responseBody.message || "原本詳細を取得しました。",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setSourceDocDetailState({
+          status: "unavailable",
+          item: null,
+          message: "APIに接続できませんでした。",
+        });
+      }
+    }
+
+    void fetchSourceDocDetail();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [id]);
+
+  const item = sourceDocDetailState.item;
+
   return (
-    <Page title="原本詳細" description="原本の内容、関連モジュール、承認状態を確認します。">
-      <section className="detail-layout">
-        <div className="facts">
-          <Fact label="原本ID" value={doc.id} />
-          <Fact label="原本名" value={doc.title} />
-          <Fact label="版数" value={doc.version} />
-          <Fact label="状態" value={statusLabels[doc.status]} />
-          <Fact label="更新日" value={doc.updatedAt} />
+    <Page title="原本詳細" description="原本の版、状態、関連モジュール構成を API から確認します。">
+      <section className={`list-status list-status-${sourceDocDetailState.status}`} aria-live="polite">
+        <div>
+          <span>取得状態</span>
+          <strong>
+            {sourceDocDetailState.status === "loading"
+              ? "取得中"
+              : sourceDocDetailState.status === "available"
+                ? "取得成功"
+                : "取得失敗"}
+          </strong>
         </div>
-        <div className="timeline" aria-label="版管理フロー">
-          <FlowStep label="Draft" active />
-          <FlowStep label="承認申請" />
-          <FlowStep label="approval" />
-          <FlowStep label="archive" />
+        <div>
+          <span>原本ID</span>
+          <strong>{id ?? "未指定"}</strong>
         </div>
-      </section>
-      <section className="section-band">
-        <h2>関連情報</h2>
-        <DataTable
-          columns={["種別", "名称", "確認内容"]}
-          rows={[
-            ["モジュール", "初期点検手順", "内容確認、関連情報確認"],
-            ["承認", "承認状態確認", "状態確認 / 状態変更"],
-          ]}
-        />
+        <div>
+          <span>関連モジュール数</span>
+          <strong>{item ? item.module_count : "-"}</strong>
+        </div>
+        <p>{sourceDocDetailState.message}</p>
       </section>
       <Toolbar>
-        <button className="secondary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">✎</span>更新する</button>
-        <button className="primary" onClick={() => navigate("/approval")}><span aria-hidden="true">✓</span>承認状態へ</button>
+        <button className="secondary" onClick={() => navigate("/documents/search")}><span aria-hidden="true">↩</span>一覧へ戻る</button>
+        <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">✎</span>更新する</button>
       </Toolbar>
+      {item ? (
+        <>
+          <section className="detail-layout">
+            <div className="facts">
+              <Fact label="原本ID" value={item.source_doc_key} />
+              <Fact label="原本名" value={item.source_doc_name} />
+              <Fact label="版" value={`v${item.version_no}`} />
+              <Fact label="状態" value={item.status_label} />
+              <Fact label="作成者" value={item.created_by ?? "-"} />
+              <Fact label="更新日" value={item.updated_at} />
+            </div>
+            <div className="module-detail-note">
+              <span>説明</span>
+              <p>{item.description ?? "説明は未設定です。"}</p>
+              <span>変更メモ</span>
+              <p>{item.change_note ?? "変更メモは未設定です。"}</p>
+            </div>
+          </section>
+          <section className="section-band">
+            <h2>関連モジュール</h2>
+            <DataTable
+              columns={["順序", "有効", "モジュールID", "モジュール名", "版", "状態", "操作"]}
+              rows={item.items.map((module) => [
+                String(module.item_order),
+                module.enabled ? "有効" : "無効",
+                module.module_key,
+                module.module_name,
+                `v${module.module_version_no}`,
+                <ModuleStatusPill status={module.module_status} label={module.module_status_label} />,
+                <button className="text-button" onClick={() => navigate(`/modules/${module.module_id}`)}>モジュール詳細</button>,
+              ])}
+            />
+          </section>
+        </>
+      ) : (
+        <section className="empty-state">
+          <h2>原本詳細を表示できません</h2>
+          <p>{sourceDocDetailState.message}</p>
+        </section>
+      )}
     </Page>
   );
 }

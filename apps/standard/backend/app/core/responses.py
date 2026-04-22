@@ -199,6 +199,81 @@ class ModuleDetailData(BaseModel):
     rows: list[ModuleRowData]
 
 
+class SourceDocListItemData(BaseModel):
+    """Source document list item response payload.
+
+    Attributes:
+        source_doc_id: Internal source document identifier.
+        source_doc_key: Human-readable unique source document key.
+        source_doc_name: Source document display name.
+        description: Optional source document description.
+        source_doc_version_id: Internal source document version identifier.
+        version_no: Source document version number.
+        status: Current source document version status.
+        status_label: User-facing status label.
+        module_count: Number of linked modules.
+        enabled_module_count: Number of enabled linked modules.
+        module_names: Linked module display names in item order.
+        created_by: User who created the source document version.
+        updated_at: Last update date string.
+    """
+
+    source_doc_id: int
+    source_doc_key: str
+    source_doc_name: str
+    description: str | None
+    source_doc_version_id: int
+    version_no: int
+    status: Literal["draft", "published", "archived"]
+    status_label: str
+    module_count: int
+    enabled_module_count: int
+    module_names: list[str]
+    created_by: str | None
+    updated_at: str
+
+
+class SourceDocListData(BaseModel):
+    """Source document list response payload."""
+
+    items: list[SourceDocListItemData]
+
+
+class SourceDocModuleItemData(BaseModel):
+    """Linked module item included in a source document detail response."""
+
+    blueprint_item_id: int
+    item_order: int
+    enabled: bool
+    module_id: int
+    module_key: str
+    module_name: str
+    module_version_id: int
+    module_version_no: int
+    module_status: Literal["draft", "published", "archived"]
+    module_status_label: str
+
+
+class SourceDocDetailData(BaseModel):
+    """Source document detail response payload."""
+
+    source_doc_id: int
+    source_doc_key: str
+    source_doc_name: str
+    description: str | None
+    source_doc_version_id: int
+    version_no: int
+    status: Literal["draft", "published", "archived"]
+    status_label: str
+    change_note: str | None
+    module_count: int
+    enabled_module_count: int
+    created_by: str | None
+    created_at: str
+    updated_at: str
+    items: list[SourceDocModuleItemData]
+
+
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:
     """Build a successful API response.
 
