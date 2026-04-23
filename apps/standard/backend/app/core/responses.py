@@ -443,6 +443,12 @@ class ApprovalStatusDetailData(BaseModel):
     allowed_transitions: list[ApprovalTransitionData]
 
 
+class ApprovalStatusUpdateRequest(BaseModel):
+    """Approval status update request payload."""
+
+    status: Literal["draft", "published", "archived"]
+
+
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:
     """Build a successful API response.
 

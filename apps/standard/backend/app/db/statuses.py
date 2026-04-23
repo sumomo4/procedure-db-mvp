@@ -16,13 +16,13 @@ from app.db.source_docs import SOURCE_DOC_STATUS_LABELS
 
 APPROVAL_TARGET_TYPE = "source-doc"
 APPROVAL_NEXT_ACTIONS = {
-    "draft": "承認申請",
-    "published": "保管",
+    "draft": "承認する",
+    "published": "保管する",
     "archived": "確認のみ",
 }
 APPROVAL_ALLOWED_TRANSITIONS = {
-    "draft": [("published", "承認申請")],
-    "published": [("archived", "保管")],
+    "draft": [("published", "承認する")],
+    "published": [("archived", "保管する")],
     "archived": [],
 }
 
@@ -117,7 +117,7 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
             version_no=row[3],
             status=row[4],
             status_label=SOURCE_DOC_STATUS_LABELS.get(row[4], row[4]),
-            next_action=APPROVAL_NEXT_ACTIONS.get(row[4], "確認"),
+            next_action=APPROVAL_NEXT_ACTIONS.get(row[4], "確認のみ"),
             module_count=row[5],
             enabled_module_count=row[6],
             created_by=row[7],
@@ -213,7 +213,7 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
         version_no=row[4],
         status=row[5],
         status_label=SOURCE_DOC_STATUS_LABELS.get(row[5], row[5]),
-        next_action=APPROVAL_NEXT_ACTIONS.get(row[5], "確認"),
+        next_action=APPROVAL_NEXT_ACTIONS.get(row[5], "確認のみ"),
         module_count=row[7],
         enabled_module_count=row[8],
         module_names=list(row[9] or []),
@@ -223,3 +223,69 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
         updated_at=_format_updated_at(row[11]),
         allowed_transitions=_build_transition_data(row[5]),
     )
+
+
+def update_status(
+    settings: AppSettings,
+    target_id: int,
+    to_status: str,
+) -> ApprovalStatusDetailData | None:
+    """Update the latest approval status for one target."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        bv.blueprint_version_id,
+                        bv.status
+                    FROM proc.blueprint_versions bv
+                    WHERE bv.blueprint_id = %(target_id)s
+                    ORDER BY bv.version_no DESC
+                    LIMIT 1;
+                    """,
+                    {"target_id": target_id},
+                )
+                current_row = cursor.fetchone()
+                if current_row is None:
+                    return None
+
+                blueprint_version_id = int(current_row[0])
+                current_status = str(current_row[1])
+                allowed_targets = {
+                    status_value for status_value, _ in APPROVAL_ALLOWED_TRANSITIONS.get(current_status, [])
+                }
+                if to_status not in allowed_targets:
+                    raise ValueError(
+                        f"status transition from {current_status} to {to_status} is not allowed."
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE proc.blueprint_versions
+                    SET
+                        status = %(to_status)s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE blueprint_version_id = %(blueprint_version_id)s;
+                    """,
+                    {
+                        "to_status": to_status,
+                        "blueprint_version_id": blueprint_version_id,
+                    },
+                )
+            connection.commit()
+    except ValueError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("Approval status update failed.") from exception
+
+    return get_status_detail(settings, target_id)
