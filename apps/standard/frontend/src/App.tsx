@@ -194,8 +194,11 @@ type ModuleImportPreviewState = {
   message: string;
 };
 
+type ModuleRegisterRowType = "header" | "step" | "meta" | "spacer";
+
 type ModuleRegisterRowDraft = {
   rowId: number;
+  rowType: ModuleRegisterRowType;
   indentLevel: number;
   majorNo: string;
   middleNo: string;
@@ -409,7 +412,7 @@ function App() {
         <Route path="/modules/search" element={<ModuleSearchPage />} />
         <Route path="/modules/list" element={<ModuleListPage />} />
         <Route path="/modules/:moduleId" element={<ModuleDetailPage />} />
-        <Route path="/modules/register" element={<ModuleRegisterPage />} />
+        <Route path="/modules/register" element={<ModuleRegisterPageV2 />} />
         <Route path="/documents/search" element={<DocumentSearchPage />} />
         <Route path="/documents/create" element={<DocumentEditPage />} />
         <Route path="/documents/:id" element={<DocumentDetailPage />} />
@@ -1283,6 +1286,7 @@ function ModuleRegisterPage() {
   const [rows, setRows] = useState<ModuleRegisterRowDraft[]>([
     {
       rowId: 1,
+      rowType: "step",
       indentLevel: 0,
       majorNo: "1",
       middleNo: "1",
@@ -1420,6 +1424,7 @@ function ModuleRegisterPage() {
       ...currentRows,
       {
         rowId: rowSeed,
+        rowType: "step",
         indentLevel: 0,
         majorNo: "",
         middleNo: "",
@@ -1924,6 +1929,829 @@ function ModuleRegisterPage() {
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting"}>
             <span aria-hidden="true">✎</span>
+            {createState.status === "submitting" ? "保存中..." : "保存実行"}
+          </button>
+        </Toolbar>
+      </form>
+    </Page>
+  );
+}
+
+function ModuleRegisterPageV2() {
+  type RegisterRowType = "header" | "step" | "meta" | "spacer";
+  type RegisterRowDraft = {
+    rowId: number;
+    rowType: RegisterRowType;
+    indentLevel: number;
+    majorNo: string;
+    middleNo: string;
+    minorNo: string;
+    techDocText: string;
+    workText: string;
+    expectedResult: string;
+    deviceEntries: ModuleRegisterDeviceEntryDraft[];
+  };
+
+  const navigate = useNavigate();
+  const [moduleKeyInput, setModuleKeyInput] = useState("");
+  const [moduleNameInput, setModuleNameInput] = useState("初期点検手順");
+  const [descriptionInput, setDescriptionInput] = useState("モジュール登録画面から作成。");
+  const [sourcePathInput, setSourcePathInput] = useState("imports/manual-module.xlsx");
+  const [createdByInput, setCreatedByInput] = useState("webui");
+  const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
+  const [deviceHeaders, setDeviceHeaders] = useState<ModuleRegisterDeviceHeaderDraft[]>([
+    {
+      slotNo: 1,
+      headerTimeText: "09:00",
+      targetText: "CS",
+      pText: ">",
+      targetDeviceText: "device-01",
+    },
+  ]);
+  const [rowSeed, setRowSeed] = useState(2);
+  const [rows, setRows] = useState<RegisterRowDraft[]>([
+    {
+      rowId: 1,
+      rowType: "step",
+      indentLevel: 0,
+      majorNo: "1",
+      middleNo: "1",
+      minorNo: "1",
+      techDocText: "技術資料",
+      workText: "作業前確認。",
+      expectedResult: "準備完了。",
+      deviceEntries: [
+        {
+          slotNo: 1,
+          timeText: "5分",
+          windowText: "コンソール",
+          pText: ">",
+          commandText: "show version",
+        },
+      ],
+    },
+  ]);
+  const [createState, setCreateState] = useState<ModuleCreateState>({
+    status: "idle",
+    item: null,
+    message: "装置ブロックと手順行を入力して、初版モジュールを保存してください。",
+  });
+  const [importPreviewState, setImportPreviewState] = useState<ModuleImportPreviewState>({
+    status: "idle",
+    item: null,
+    message: "Excel取込プレビューはまだ実行していません。",
+  });
+
+  function blankDeviceEntry(slotNo: number): ModuleRegisterDeviceEntryDraft {
+    return {
+      slotNo,
+      timeText: "",
+      windowText: "",
+      pText: "",
+      commandText: "",
+    };
+  }
+
+  function normalizeRowType(value: string): RegisterRowType {
+    if (value === "header" || value === "meta" || value === "spacer") {
+      return value;
+    }
+    return "step";
+  }
+
+  function createDefaultRow(rowId: number): RegisterRowDraft {
+    return {
+      rowId,
+      rowType: "step",
+      indentLevel: 0,
+      majorNo: "",
+      middleNo: "",
+      minorNo: "",
+      techDocText: "",
+      workText: "",
+      expectedResult: "",
+      deviceEntries: deviceHeaders.map((header) => blankDeviceEntry(header.slotNo)),
+    };
+  }
+
+  function getRegisterRowDeviceEntry(row: RegisterRowDraft, slotNo: number): ModuleRegisterDeviceEntryDraft {
+    return row.deviceEntries.find((candidate) => candidate.slotNo === slotNo) ?? blankDeviceEntry(slotNo);
+  }
+
+  function updateRow(rowId: number, field: keyof RegisterRowDraft, value: string | number): void {
+    setRows((currentRows) => currentRows.map((row) => (row.rowId === rowId ? { ...row, [field]: value } : row)));
+  }
+
+  function updateDeviceHeader(
+    slotNo: number,
+    field: keyof Omit<ModuleRegisterDeviceHeaderDraft, "slotNo">,
+    value: string,
+  ): void {
+    setDeviceHeaders((currentHeaders) =>
+      currentHeaders.map((header) => (header.slotNo === slotNo ? { ...header, [field]: value } : header)),
+    );
+  }
+
+  function updateRowDeviceEntry(
+    rowId: number,
+    slotNo: number,
+    field: keyof Omit<ModuleRegisterDeviceEntryDraft, "slotNo">,
+    value: string,
+  ): void {
+    setRows((currentRows) =>
+      currentRows.map((row) =>
+        row.rowId === rowId
+          ? {
+              ...row,
+              deviceEntries: row.deviceEntries.map((entry) =>
+                entry.slotNo === slotNo ? { ...entry, [field]: value } : entry,
+              ),
+            }
+          : row,
+      ),
+    );
+  }
+
+  function addDeviceSlot(): void {
+    setDeviceHeaders((currentHeaders) => {
+      if (currentHeaders.length >= 20) {
+        return currentHeaders;
+      }
+
+      const nextSlotNo = Math.max(...currentHeaders.map((header) => header.slotNo)) + 1;
+      setRows((currentRows) =>
+        currentRows.map((row) => ({
+          ...row,
+          deviceEntries: [...row.deviceEntries, blankDeviceEntry(nextSlotNo)],
+        })),
+      );
+
+      return [
+        ...currentHeaders,
+        {
+          slotNo: nextSlotNo,
+          headerTimeText: "",
+          targetText: "",
+          pText: "",
+          targetDeviceText: `device-${String(nextSlotNo).padStart(2, "0")}`,
+        },
+      ];
+    });
+  }
+
+  function removeDeviceSlot(slotNo: number): void {
+    setDeviceHeaders((currentHeaders) => {
+      if (currentHeaders.length === 1) {
+        return currentHeaders;
+      }
+
+      setRows((currentRows) =>
+        currentRows.map((row) => ({
+          ...row,
+          deviceEntries: row.deviceEntries.filter((entry) => entry.slotNo !== slotNo),
+        })),
+      );
+
+      return currentHeaders.filter((header) => header.slotNo !== slotNo);
+    });
+  }
+
+  function addRow(): void {
+    setRows((currentRows) => [...currentRows, createDefaultRow(rowSeed)]);
+    setRowSeed((currentSeed) => currentSeed + 1);
+  }
+
+  function removeRow(rowId: number): void {
+    setRows((currentRows) => (currentRows.length > 1 ? currentRows.filter((row) => row.rowId !== rowId) : currentRows));
+  }
+
+  function applyImportedDraft(item: ModuleImportPreviewData): void {
+    const nextHeaders =
+      item.device_headers.length > 0
+        ? item.device_headers.map((header) => ({
+            slotNo: header.slot_no,
+            headerTimeText: header.header_time_text ?? "",
+            targetText: header.target_text ?? "",
+            pText: header.p_text ?? "",
+            targetDeviceText: header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`,
+          }))
+        : [
+            {
+              slotNo: 1,
+              headerTimeText: item.header_time_text ?? "",
+              targetText: item.target_text ?? "",
+              pText: item.common_p_text ?? "",
+              targetDeviceText: item.target_device_text ?? "device-01",
+            },
+          ];
+
+    const nextRows =
+      item.rows.length > 0
+        ? item.rows.map((row, index) => ({
+            rowId: index + 1,
+            rowType: normalizeRowType(row.row_type),
+            indentLevel: row.indent_level ?? 0,
+            majorNo: row.major_no ?? "",
+            middleNo: row.middle_no ?? "",
+            minorNo: row.minor_no ?? "",
+            techDocText: row.tech_doc_text ?? "",
+            workText: row.work_text ?? "",
+            expectedResult: row.expected_result ?? "",
+            deviceEntries: nextHeaders.map((header) => {
+              const entry = row.device_entries.find((candidate) => candidate.slot_no === header.slotNo);
+              return {
+                slotNo: header.slotNo,
+                timeText: entry?.time_text ?? "",
+                windowText: entry?.window_text ?? "",
+                pText: entry?.p_text ?? "",
+                commandText: entry?.command_text ?? "",
+              };
+            }),
+          }))
+        : [createDefaultRow(1)];
+
+    setModuleKeyInput(item.module_key ?? "");
+    setModuleNameInput(item.module_name);
+    setDescriptionInput(item.description ?? "");
+    setSourcePathInput(item.source_xlsx_path ?? "");
+    setCreatedByInput(item.created_by ?? "webui");
+    setDeviceHeaders(nextHeaders);
+    setRows(nextRows);
+    setRowSeed(nextRows.length + 1);
+    setCreateState({
+      status: "idle",
+      item: null,
+      message: "取込結果を画面へ反映しました。必要に応じて修正してから保存してください。",
+    });
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+
+    setCreateState({
+      status: "submitting",
+      item: null,
+      message: "入力内容を登録しています...",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          module_key: moduleKeyInput.trim() || undefined,
+          module_name: moduleNameInput.trim(),
+          description: descriptionInput.trim() || undefined,
+          source_xlsx_path: sourcePathInput.trim() || undefined,
+          created_by: createdByInput.trim() || undefined,
+          device_headers: deviceHeaders.map((header) => ({
+            slot_no: header.slotNo,
+            header_time_text: header.headerTimeText.trim() || undefined,
+            target_text: header.targetText.trim() || undefined,
+            p_text: header.pText.trim() || undefined,
+            target_device_text: header.targetDeviceText.trim() || undefined,
+          })),
+          rows: rows.map((row, index) => ({
+            row_order: index + 1,
+            row_type: row.rowType,
+            major_no: row.majorNo.trim() || undefined,
+            middle_no: row.middleNo.trim() || undefined,
+            minor_no: row.minorNo.trim() || undefined,
+            tech_doc_text: row.techDocText.trim() || undefined,
+            work_text: row.workText.trim() || moduleNameInput.trim(),
+            indent_level: row.indentLevel,
+            expected_result: row.expectedResult.trim() || undefined,
+            device_entries: row.deviceEntries.map((entry) => ({
+              slot_no: entry.slotNo,
+              time_text: entry.timeText.trim() || undefined,
+              window_text: entry.windowText.trim() || undefined,
+              p_text: entry.pText.trim() || undefined,
+              command_text: entry.commandText.trim() || undefined,
+            })),
+          })),
+        }),
+      });
+
+      const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setCreateState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `モジュール登録に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setCreateState({
+        status: "success",
+        item: responseBody.data,
+        message: responseBody.message || "モジュールを登録しました。",
+      });
+      setModuleKeyInput(responseBody.data.module_key);
+    } catch (error) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "モジュール登録に失敗しました。",
+      });
+    }
+  }
+
+  async function handleWorkbookImport(): Promise<void> {
+    if (!selectedImportFile) {
+      setImportPreviewState({
+        status: "error",
+        item: null,
+        message: "先に xlsx / xlsm ファイルを選択してください。",
+      });
+      return;
+    }
+
+    setImportPreviewState({
+      status: "submitting",
+      item: null,
+      message: "ワークブックを取り込んでいます...",
+    });
+
+    try {
+      const query = new URLSearchParams({ filename: selectedImportFile.name });
+      if (createdByInput.trim()) {
+        query.set("created_by", createdByInput.trim());
+      }
+
+      const response = await fetch(`${buildApiUrl("/api/v1/modules/import")}?${query.toString()}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+        },
+        body: await selectedImportFile.arrayBuffer(),
+      });
+
+      const responseBody = (await response.json()) as ApiResponse<ModuleImportPreviewData>;
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setImportPreviewState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `Excelファイル取込に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      applyImportedDraft(responseBody.data);
+      setImportPreviewState({
+        status: "success",
+        item: responseBody.data,
+        message: responseBody.message || "ワークブック取込結果を画面へ反映しました。",
+      });
+    } catch (error) {
+      setImportPreviewState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "Excelファイル取込に失敗しました。",
+      });
+    }
+  }
+
+  async function handleImportPreview(): Promise<void> {
+    setImportPreviewState({
+      status: "submitting",
+      item: null,
+      message: "Excel取込プレビューを変換しています...",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/import-sheet"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          module_key: moduleKeyInput.trim() || undefined,
+          module_name: moduleNameInput.trim(),
+          description: descriptionInput.trim() || undefined,
+          change_note: "登録画面からプレビュー",
+          source_xlsx_path: sourcePathInput.trim() || undefined,
+          created_by: createdByInput.trim() || undefined,
+          device_header_cells: deviceHeaders.map((header) => ({
+            slot_no: header.slotNo,
+            header_time_text: header.headerTimeText.trim() || undefined,
+            target_text: header.targetText.trim() || undefined,
+            p_text: header.pText.trim() || undefined,
+            target_device_text: header.targetDeviceText.trim() || undefined,
+          })),
+          row_cells: rows.map((row) => {
+            const payload: Record<string, unknown> = {
+              A: row.majorNo.trim() || undefined,
+              B: row.middleNo.trim() || undefined,
+              C: row.minorNo.trim() || undefined,
+              D: row.techDocText.trim() || undefined,
+              I: row.expectedResult.trim() || undefined,
+              device_entries: row.deviceEntries.map((entry) => ({
+                slot_no: entry.slotNo,
+                time_text: entry.timeText.trim() || undefined,
+                window_text: entry.windowText.trim() || undefined,
+                p_text: entry.pText.trim() || undefined,
+                command_text: entry.commandText.trim() || undefined,
+              })),
+            };
+            payload[(["E", "F", "G", "H"][row.indentLevel] ?? "E")] = row.workText.trim() || undefined;
+            return payload;
+          }),
+        }),
+      });
+
+      const responseBody = (await response.json()) as ApiResponse<ModuleImportPreviewData>;
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setImportPreviewState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `Excel取込プレビューに失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setImportPreviewState({
+        status: "success",
+        item: responseBody.data,
+        message: responseBody.message || "Excel取込プレビューを正規化しました。",
+      });
+    } catch (error) {
+      setImportPreviewState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "Excel取込プレビューに失敗しました。",
+      });
+    }
+  }
+
+  const createdItem = createState.item;
+  const previewItem = importPreviewState.item;
+
+  return (
+    <Page
+      title="モジュール登録"
+      description="装置ブロックと手順行を入力し、初版モジュールを保存します。装置は横方向に最大20台まで追加できます。"
+    >
+      <section className="upload-zone" aria-label="モジュール登録ガイダンス">
+        <span className="upload-icon">+</span>
+        <h2>先に装置ブロックを追加し、そのあと手順行を追加します</h2>
+        <p>装置ごとに「時刻 / target / P / 対象装置」と、各手順行に対する「時刻 / window / P / コマンド」をまとめて入力できます。</p>
+      </section>
+
+      <form className="register-form" onSubmit={handleSubmit}>
+        <FormGrid>
+          <label>
+            モジュールキー
+            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 未入力時は自動採番" />
+          </label>
+          <label>
+            モジュール名
+            <input value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} required />
+          </label>
+          <label>
+            作成者
+            <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
+          </label>
+          <label>
+            取込元
+            <input value={sourcePathInput} onChange={(event) => setSourcePathInput(event.target.value)} placeholder="imports/manual-module.xlsx" />
+          </label>
+          <label className="wide">
+            説明
+            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
+          </label>
+        </FormGrid>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <div>
+              <h2>装置ブロック</h2>
+              <p className="register-section-copy">
+                装置を横方向に追加できます。各装置ブロックの中に「時刻 / target / P / 対象装置」と、各手順行の「時刻 / window / P / コマンド」をまとめて持ちます。
+              </p>
+            </div>
+            <button className="secondary" type="button" onClick={addDeviceSlot} disabled={deviceHeaders.length >= 20}>
+              <span aria-hidden="true">+</span>
+              装置追加
+            </button>
+          </div>
+          <div className="register-device-accordion-list">
+            {deviceHeaders.map((header) => (
+              <details key={header.slotNo} className="register-device-accordion" open={header.slotNo === 1}>
+                <summary className="register-device-accordion-summary">
+                  <div className="register-device-accordion-title">
+                    <strong>{`装置 ${header.slotNo}`}</strong>
+                    <span>{header.targetDeviceText || "装置名未入力"}</span>
+                  </div>
+                  <button
+                    className="text-button"
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      removeDeviceSlot(header.slotNo);
+                    }}
+                    disabled={deviceHeaders.length === 1}
+                  >
+                    <span aria-hidden="true">-</span>
+                    装置削除
+                  </button>
+                </summary>
+
+                <div className="register-device-accordion-body">
+                  <section className="register-device-subsection">
+                    <div className="register-device-subsection-header">
+                      <strong>装置基本情報</strong>
+                      <span>時刻 / target / P / 対象装置</span>
+                    </div>
+                    <div className="register-device-header-grid">
+                      <label>
+                        時刻
+                        <input
+                          value={header.headerTimeText}
+                          onChange={(event) => updateDeviceHeader(header.slotNo, "headerTimeText", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        target
+                        <input
+                          value={header.targetText}
+                          onChange={(event) => updateDeviceHeader(header.slotNo, "targetText", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        P
+                        <input value={header.pText} onChange={(event) => updateDeviceHeader(header.slotNo, "pText", event.target.value)} />
+                      </label>
+                      <label>
+                        対象装置
+                        <input
+                          value={header.targetDeviceText}
+                          onChange={(event) => updateDeviceHeader(header.slotNo, "targetDeviceText", event.target.value)}
+                        />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="register-device-subsection">
+                    <div className="register-device-subsection-header">
+                      <strong>手順行ごとの装置コマンド</strong>
+                      <span>各手順行に対する 時刻 / window / P / コマンド</span>
+                    </div>
+                    <div className="register-device-command-list">
+                      {rows.map((row, index) => {
+                        const entry = getRegisterRowDeviceEntry(row, header.slotNo);
+                        return (
+                          <section key={`${header.slotNo}-${row.rowId}`} className="register-device-command-card">
+                            <div className="register-device-command-card-header">
+                              <strong>{`行 ${index + 1}`}</strong>
+                              <span>{row.workText.trim() || "作業内容未入力"}</span>
+                            </div>
+                            <div className="register-device-row-group-grid">
+                              <label>
+                                時刻
+                                <input
+                                  value={entry.timeText}
+                                  onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "timeText", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                window
+                                <input
+                                  value={entry.windowText}
+                                  onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "windowText", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                P
+                                <input
+                                  value={entry.pText}
+                                  onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "pText", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                コマンド
+                                <input
+                                  value={entry.commandText}
+                                  onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "commandText", event.target.value)}
+                                />
+                              </label>
+                            </div>
+                          </section>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
+              </details>
+            ))}
+          </div>
+        </section>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <div>
+              <h2>手順行</h2>
+              <p className="register-section-copy">
+                ここでは共通の手順項目を入力します。装置ごとのコマンド列は上の装置ブロック側で編集します。
+              </p>
+            </div>
+            <button className="secondary" type="button" onClick={addRow}>
+              <span aria-hidden="true">+</span>
+              行追加
+            </button>
+          </div>
+          <div className="register-rows">
+            {rows.map((row, index) => (
+              <section key={row.rowId} className="register-row-editor">
+                <div className="register-row-editor-header">
+                  <strong>{`行 ${index + 1}`}</strong>
+                  <button className="text-button" type="button" onClick={() => removeRow(row.rowId)} disabled={rows.length === 1}>
+                    <span aria-hidden="true">-</span>
+                    行削除
+                  </button>
+                </div>
+                <div className="register-row-grid">
+                  <label>
+                    段落
+                    <select value={row.indentLevel} onChange={(event) => updateRow(row.rowId, "indentLevel", Number(event.target.value))}>
+                      <option value={0}>1段</option>
+                      <option value={1}>2段</option>
+                      <option value={2}>3段</option>
+                      <option value={3}>4段</option>
+                    </select>
+                  </label>
+                  <label>
+                    行種別
+                    <select value={row.rowType} onChange={(event) => updateRow(row.rowId, "rowType", event.target.value)}>
+                      <option value="step">手順</option>
+                      <option value="header">見出し</option>
+                      <option value="meta">メモ</option>
+                      <option value="spacer">空行</option>
+                    </select>
+                  </label>
+                  <label>
+                    大
+                    <input value={row.majorNo} onChange={(event) => updateRow(row.rowId, "majorNo", event.target.value)} />
+                  </label>
+                  <label>
+                    中
+                    <input value={row.middleNo} onChange={(event) => updateRow(row.rowId, "middleNo", event.target.value)} />
+                  </label>
+                  <label>
+                    小
+                    <input value={row.minorNo} onChange={(event) => updateRow(row.rowId, "minorNo", event.target.value)} />
+                  </label>
+                  <label>
+                    技術資料名
+                    <input value={row.techDocText} onChange={(event) => updateRow(row.rowId, "techDocText", event.target.value)} />
+                  </label>
+                  <label className="wide">
+                    作業内容
+                    <textarea
+                      className={`register-work-indent-${row.indentLevel}`}
+                      value={row.workText}
+                      onChange={(event) => updateRow(row.rowId, "workText", event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label className="wide">
+                    確認事項 / 項目
+                    <input value={row.expectedResult} onChange={(event) => updateRow(row.rowId, "expectedResult", event.target.value)} />
+                  </label>
+                </div>
+              </section>
+            ))}
+          </div>
+        </section>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <div>
+              <h2>Excelファイル取込</h2>
+              <p className="register-section-copy">
+                xlsx / xlsm を選択して <code>POST /api/v1/modules/import</code> に送り、取込結果をこの画面へ反映します。
+              </p>
+            </div>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => void handleWorkbookImport()}
+              disabled={!selectedImportFile || importPreviewState.status === "submitting"}
+            >
+              <span aria-hidden="true">↑</span>
+              ファイル取込
+            </button>
+          </div>
+          <FormGrid>
+            <label className="wide">
+              Excelファイル
+              <input type="file" accept=".xlsx,.xlsm" onChange={(event) => setSelectedImportFile(event.target.files?.[0] ?? null)} />
+            </label>
+          </FormGrid>
+          <section className="register-status">
+            <span>選択状態</span>
+            <strong>{selectedImportFile ? "選択済み" : "未選択"}</strong>
+            <p>{selectedImportFile ? `${selectedImportFile.name} を選択しています。` : "先に xlsx / xlsm ファイルを選択してください。"}</p>
+          </section>
+        </section>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <div>
+              <h2>Excel取込プレビュー</h2>
+              <p className="register-section-copy">
+                現在の入力を 1 シート相当の JSON として <code>POST /api/v1/modules/import-sheet</code> に送り、正規化内容を確認します。
+              </p>
+            </div>
+            <button className="secondary" type="button" onClick={() => void handleImportPreview()}>
+              <span aria-hidden="true">→</span>
+              プレビュー実行
+            </button>
+          </div>
+
+          <section
+            className={`register-status ${
+              importPreviewState.status === "success"
+                ? "register-status-success"
+                : importPreviewState.status === "error"
+                  ? "register-status-error"
+                  : importPreviewState.status === "submitting"
+                    ? "register-status-submitting"
+                    : ""
+            }`}
+          >
+            <span>プレビュー状態</span>
+            <strong>
+              {importPreviewState.status === "success"
+                ? "正規化完了"
+                : importPreviewState.status === "error"
+                  ? "変換失敗"
+                  : importPreviewState.status === "submitting"
+                    ? "変換中"
+                    : "未実行"}
+            </strong>
+            <p>{importPreviewState.message}</p>
+            {previewItem ? (
+              <>
+                <div className="register-result-meta">
+                  <span>{previewItem.module_key ?? "自動採番"}</span>
+                  <span>{previewItem.module_name}</span>
+                  <span>{`装置 ${previewItem.device_headers.length} 台`}</span>
+                  <span>{`手順行 ${previewItem.rows.length} 行`}</span>
+                </div>
+                <details className="json-preview-wrap">
+                  <summary>正規化結果を表示</summary>
+                  <pre className="json-preview">{JSON.stringify(previewItem, null, 2)}</pre>
+                </details>
+              </>
+            ) : null}
+          </section>
+        </section>
+
+        <section
+          className={`register-status ${
+            createState.status === "success"
+              ? "register-status-success"
+              : createState.status === "error"
+                ? "register-status-error"
+                : createState.status === "submitting"
+                  ? "register-status-submitting"
+                  : ""
+          }`}
+        >
+          <span>保存状態</span>
+          <strong>
+            {createState.status === "success"
+              ? "保存完了"
+              : createState.status === "error"
+                ? "保存失敗"
+                : createState.status === "submitting"
+                  ? "保存中"
+                  : "入力待ち"}
+          </strong>
+          <p>{createState.message}</p>
+          {createdItem ? (
+            <div className="register-result-meta">
+              <span>{createdItem.module_key}</span>
+              <span>{`版 v${createdItem.version_no}`}</span>
+              <span>{createdItem.status_label}</span>
+              <span>{`装置 ${createdItem.device_headers.length} 台`}</span>
+            </div>
+          ) : null}
+        </section>
+
+        <Toolbar>
+          {createdItem ? (
+            <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}`)}>
+              <span aria-hidden="true">&lt;-</span>
+              詳細を開く
+            </button>
+          ) : null}
+          <button className="primary" type="submit" disabled={createState.status === "submitting"}>
+            <span aria-hidden="true">✔</span>
             {createState.status === "submitting" ? "保存中..." : "保存実行"}
           </button>
         </Toolbar>
