@@ -3007,24 +3007,22 @@ function IndentedExcelText({
 }
 
 function ApprovalPage() {
-  // approval-screen-v2
   const navigate = useNavigate();
   const [approvalListState, setApprovalListState] = useState<ApprovalStatusListState>({
     status: "loading",
     items: [],
-    message: "承認状態一覧を取得しています。",
+    message: "\u627f\u8a8d\u72b6\u614b\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
   });
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [approvalDetailState, setApprovalDetailState] = useState<ApprovalStatusDetailState>({
     status: "idle",
     item: null,
-    message: "対象を選択すると承認状態の詳細を表示します。",
+    message: "\u5bfe\u8c61\u3092\u9078\u629e\u3059\u308b\u3068\u627f\u8a8d\u72b6\u614b\u306e\u8a73\u7d30\u3092\u8868\u793a\u3057\u307e\u3059\u3002",
   });
-  const [approvalMutationState, setApprovalMutationState] =
-    useState<ApprovalStatusMutationState>({
-      status: "idle",
-      message: "実行できる操作を選ぶと状態変更APIを呼び出します。",
-    });
+  const [approvalMutationState, setApprovalMutationState] = useState<ApprovalStatusMutationState>({
+    status: "idle",
+    message: "\u5b9f\u884c\u3067\u304d\u308b\u64cd\u4f5c\u3092\u9078\u3076\u3068\u72b6\u614b\u5909\u66f4API\u3092\u547c\u3073\u51fa\u3057\u307e\u3059\u3002",
+  });
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
@@ -3034,7 +3032,7 @@ function ApprovalPage() {
       setApprovalListState({
         status: "loading",
         items: [],
-        message: "承認状態一覧を取得しています。",
+        message: "\u627f\u8a8d\u72b6\u614b\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
       });
 
       try {
@@ -3049,7 +3047,7 @@ function ApprovalPage() {
             items: [],
             message:
               responseBody.message ||
-              `承認状態一覧の取得に失敗しました。HTTP ${response.status}`,
+              `\u627f\u8a8d\u72b6\u614b\u4e00\u89a7\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002 HTTP ${response.status}`,
           });
           return;
         }
@@ -3058,7 +3056,7 @@ function ApprovalPage() {
         setApprovalListState({
           status: "available",
           items,
-          message: responseBody.message || "承認状態一覧を取得しました。",
+          message: responseBody.message || "\u627f\u8a8d\u72b6\u614b\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
         });
 
         setSelectedTargetId((current) => {
@@ -3078,7 +3076,7 @@ function ApprovalPage() {
         setApprovalListState({
           status: "unavailable",
           items: [],
-          message: "承認状態一覧の取得中にAPI接続で失敗しました。",
+          message: "\u627f\u8a8d\u72b6\u614b\u4e00\u89a7\u306e\u53d6\u5f97\u4e2d\u306bAPI\u63a5\u7d9a\u3067\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
         });
       }
     }
@@ -3095,7 +3093,7 @@ function ApprovalPage() {
       setApprovalDetailState({
         status: "idle",
         item: null,
-        message: "対象を選択すると承認状態の詳細を表示します。",
+        message: "\u5bfe\u8c61\u3092\u9078\u629e\u3059\u308b\u3068\u627f\u8a8d\u72b6\u614b\u306e\u8a73\u7d30\u3092\u8868\u793a\u3057\u307e\u3059\u3002",
       });
       return;
     }
@@ -3106,7 +3104,7 @@ function ApprovalPage() {
       setApprovalDetailState({
         status: "loading",
         item: null,
-        message: "承認状態の詳細を取得しています。",
+        message: "\u627f\u8a8d\u72b6\u614b\u306e\u8a73\u7d30\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
       });
 
       try {
@@ -3121,7 +3119,7 @@ function ApprovalPage() {
             item: null,
             message:
               responseBody.message ||
-              `承認状態詳細の取得に失敗しました。HTTP ${response.status}`,
+              `\u627f\u8a8d\u72b6\u614b\u8a73\u7d30\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002 HTTP ${response.status}`,
           });
           return;
         }
@@ -3129,7 +3127,7 @@ function ApprovalPage() {
         setApprovalDetailState({
           status: "available",
           item: responseBody.data,
-          message: responseBody.message || "承認状態の詳細を取得しました。",
+          message: responseBody.message || "\u627f\u8a8d\u72b6\u614b\u306e\u8a73\u7d30\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -3139,7 +3137,7 @@ function ApprovalPage() {
         setApprovalDetailState({
           status: "unavailable",
           item: null,
-          message: "承認状態詳細の取得中にAPI接続で失敗しました。",
+          message: "\u627f\u8a8d\u72b6\u614b\u8a73\u7d30\u306e\u53d6\u5f97\u4e2d\u306bAPI\u63a5\u7d9a\u3067\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
         });
       }
     }
@@ -3154,7 +3152,7 @@ function ApprovalPage() {
   useEffect(() => {
     setApprovalMutationState({
       status: "idle",
-      message: "実行できる操作を選ぶと状態変更APIを呼び出します。",
+      message: "\u5b9f\u884c\u3067\u304d\u308b\u64cd\u4f5c\u3092\u9078\u3076\u3068\u72b6\u614b\u5909\u66f4API\u3092\u547c\u3073\u51fa\u3057\u307e\u3059\u3002",
     });
   }, [selectedTargetId]);
 
@@ -3169,7 +3167,7 @@ function ApprovalPage() {
 
     setApprovalMutationState({
       status: "submitting",
-      message: "承認状態を変更しています。",
+      message: "\u627f\u8a8d\u72b6\u614b\u3092\u5909\u66f4\u3057\u3066\u3044\u307e\u3059\u3002",
     });
 
     try {
@@ -3187,7 +3185,7 @@ function ApprovalPage() {
           status: "error",
           message:
             responseBody.message ||
-            `承認状態変更に失敗しました。HTTP ${response.status}`,
+            `\u627f\u8a8d\u72b6\u614b\u5909\u66f4\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002 HTTP ${response.status}`,
         });
         return;
       }
@@ -3195,17 +3193,17 @@ function ApprovalPage() {
       setApprovalDetailState({
         status: "available",
         item: responseBody.data,
-        message: responseBody.message || "承認状態を更新しました。",
+        message: responseBody.message || "\u627f\u8a8d\u72b6\u614b\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f\u3002",
       });
       setApprovalMutationState({
         status: "success",
-        message: responseBody.message || "承認状態を更新しました。",
+        message: responseBody.message || "\u627f\u8a8d\u72b6\u614b\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f\u3002",
       });
       setReloadTick((current) => current + 1);
     } catch (error) {
       setApprovalMutationState({
         status: "error",
-        message: "承認状態変更の実行中にAPI接続で失敗しました。",
+        message: "\u627f\u8a8d\u72b6\u614b\u5909\u66f4\u306e\u5b9f\u884c\u4e2d\u306bAPI\u63a5\u7d9a\u3067\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
       });
     }
   }
@@ -3221,46 +3219,46 @@ function ApprovalPage() {
 
   return (
     <Page
-      title="承認状態確認 / 変更"
-      description="会議で整理した版管理・承認ルールに沿って、原本の状態確認と変更を行います。"
+      title="\u627f\u8a8d\u72b6\u614b\u78ba\u8a8d / \u5909\u66f4"
+      description="\u4f1a\u8b70\u3067\u6574\u7406\u3057\u305f\u7248\u7ba1\u7406\u30fb\u627f\u8a8d\u30eb\u30fc\u30eb\u306b\u6cbf\u3063\u3066\u3001\u539f\u672c\u306e\u72b6\u614b\u78ba\u8a8d\u3068\u5909\u66f4\u3092\u884c\u3044\u307e\u3059\u3002"
     >
       <section className="approval-flow">
-        <FlowStep label="0. 初版作成" />
-        <FlowStep label="1. 承認前（draft）" active />
-        <FlowStep label="2. 承認済み（published）" />
-        <FlowStep label="3. 保管済み（archived）" />
+        <FlowStep label="0. \u521d\u7248\u4f5c\u6210" />
+        <FlowStep label="1. \u627f\u8a8d\u524d\uff08draft\uff09" active />
+        <FlowStep label="2. \u627f\u8a8d\u6e08\u307f\uff08published\uff09" />
+        <FlowStep label="3. \u4fdd\u7ba1\u6e08\u307f\uff08archived\uff09" />
       </section>
 
       <section className={`list-status list-status-${approvalListState.status}`} aria-live="polite">
         <div>
-          <span>一覧取得状態</span>
+          <span>\u4e00\u89a7\u53d6\u5f97\u72b6\u614b</span>
           <strong>
             {approvalListState.status === "loading"
-              ? "取得中"
+              ? "\u53d6\u5f97\u4e2d"
               : approvalListState.status === "available"
-                ? "取得成功"
-                : "取得失敗"}
+                ? "\u53d6\u5f97\u6210\u529f"
+                : "\u53d6\u5f97\u5931\u6557"}
           </strong>
         </div>
         <div>
-          <span>対象件数</span>
+          <span>\u5bfe\u8c61\u4ef6\u6570</span>
           <strong>{approvalListState.items.length}</strong>
         </div>
         <div>
-          <span>選択中</span>
-          <strong>{selectedSummary?.target_key ?? "未選択"}</strong>
+          <span>\u9078\u629e\u4e2d</span>
+          <strong>{selectedSummary?.target_key ?? "\u672a\u9078\u629e"}</strong>
         </div>
         <p>{approvalListState.message}</p>
       </section>
 
       {approvalListState.status === "available" && approvalListState.items.length === 0 ? (
         <section className="empty-state">
-          <h2>承認対象はまだありません</h2>
-          <p>原本を保存すると、この画面から承認状態と次の操作を確認できます。</p>
+          <h2>\u627f\u8a8d\u5bfe\u8c61\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093</h2>
+          <p>\u539f\u672c\u3092\u4fdd\u5b58\u3059\u308b\u3068\u3001\u3053\u306e\u753b\u9762\u304b\u3089\u627f\u8a8d\u72b6\u614b\u3068\u6b21\u306e\u64cd\u4f5c\u3092\u78ba\u8a8d\u3067\u304d\u307e\u3059\u3002</p>
         </section>
       ) : (
         <DataTable
-          columns={["対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "選択"]}
+          columns={["\u5bfe\u8c61", "\u7248\u6570", "\u73fe\u5728\u72b6\u614b", "\u6b21\u306e\u64cd\u4f5c", "\u5229\u7528\u30e2\u30b8\u30e5\u30fc\u30eb", "\u66f4\u65b0\u65e5", "\u9078\u629e"]}
           rows={approvalListState.items.map((item) => [
             `${item.target_key} ${item.target_name}`,
             `v${item.version_no}`,
@@ -3269,30 +3267,31 @@ function ApprovalPage() {
             `${item.enabled_module_count}/${item.module_count}`,
             item.updated_at,
             <button className="text-button" onClick={() => setSelectedTargetId(item.target_id)}>
-              å¯¾è±¡ãé¸ã¶</button>,
+              \u5bfe\u8c61\u3092\u9078\u3076
+            </button>,
           ])}
         />
       )}
 
       <section className={`list-status list-status-${detailStatusClass}`} aria-live="polite">
         <div>
-          <span>é¸æç¶æ</span>
+          <span>\u9078\u629e\u72b6\u614b</span>
           <strong>
             {approvalDetailState.status === "idle"
-              ? "未選択"
+              ? "\u672a\u9078\u629e"
               : approvalDetailState.status === "loading"
-                ? "取得中"
+                ? "\u53d6\u5f97\u4e2d"
                 : approvalDetailState.status === "available"
-                  ? "取得成功"
-                  : "取得失敗"}
+                  ? "\u53d6\u5f97\u6210\u529f"
+                  : "\u53d6\u5f97\u5931\u6557"}
           </strong>
         </div>
         <div>
-          <span>対象ID</span>
-          <strong>{selectedTargetId ?? "未選択"}</strong>
+          <span>\u5bfe\u8c61ID</span>
+          <strong>{selectedTargetId ?? "\u672a\u9078\u629e"}</strong>
         </div>
         <div>
-          <span>次の操作</span>
+          <span>\u6b21\u306e\u64cd\u4f5c</span>
           <strong>{selectedItem?.next_action ?? "-"}</strong>
         </div>
         <p>{approvalDetailState.message}</p>
@@ -3300,23 +3299,23 @@ function ApprovalPage() {
 
       <section className={`list-status list-status-${mutationStatusClass}`} aria-live="polite">
         <div>
-          <span>状態変更</span>
+          <span>\u72b6\u614b\u5909\u66f4</span>
           <strong>
             {approvalMutationState.status === "idle"
-              ? "未実行"
+              ? "\u672a\u5b9f\u884c"
               : approvalMutationState.status === "submitting"
-                ? "変更中"
+                ? "\u5909\u66f4\u4e2d"
                 : approvalMutationState.status === "success"
-                  ? "変更成功"
-                  : "変更失敗"}
+                  ? "\u5909\u66f4\u6210\u529f"
+                  : "\u5909\u66f4\u5931\u6557"}
           </strong>
         </div>
         <div>
-          <span>対象</span>
-          <strong>{selectedSummary?.target_key ?? "未選択"}</strong>
+          <span>\u5bfe\u8c61</span>
+          <strong>{selectedSummary?.target_key ?? "\u672a\u9078\u629e"}</strong>
         </div>
         <div>
-          <span>実行候補</span>
+          <span>\u5b9f\u884c\u5019\u88dc</span>
           <strong>{selectedItem?.allowed_transitions.length ?? 0}</strong>
         </div>
         <p>{approvalMutationState.message}</p>
@@ -3326,24 +3325,24 @@ function ApprovalPage() {
         <>
           <section className="detail-layout">
             <div className="facts">
-              <Fact label="対象ID" value={selectedItem.target_key} />
-              <Fact label="対象名" value={selectedItem.target_name} />
-              <Fact label="版" value={`v${selectedItem.version_no}`} />
-              <Fact label="現在状態" value={selectedItem.status_label} />
-              <Fact label="作成者" value={selectedItem.created_by ?? "-"} />
-              <Fact label="更新日" value={selectedItem.updated_at} />
+              <Fact label="\u5bfe\u8c61ID" value={selectedItem.target_key} />
+              <Fact label="\u5bfe\u8c61\u540d" value={selectedItem.target_name} />
+              <Fact label="\u7248" value={`v${selectedItem.version_no}`} />
+              <Fact label="\u73fe\u5728\u72b6\u614b" value={selectedItem.status_label} />
+              <Fact label="\u4f5c\u6210\u8005" value={selectedItem.created_by ?? "-"} />
+              <Fact label="\u66f4\u65b0\u65e5" value={selectedItem.updated_at} />
             </div>
             <div className="module-detail-note">
-              <span>説明</span>
-              <p>{selectedItem.description ?? "説明は未設定です。"}</p>
-              <span>変更メモ</span>
-              <p>{selectedItem.change_note ?? "変更メモは未設定です。"}</p>
+              <span>\u8aac\u660e</span>
+              <p>{selectedItem.description ?? "\u8aac\u660e\u306f\u672a\u8a2d\u5b9a\u3067\u3059\u3002"}</p>
+              <span>\u5909\u66f4\u30e1\u30e2</span>
+              <p>{selectedItem.change_note ?? "\u5909\u66f4\u30e1\u30e2\u306f\u672a\u8a2d\u5b9a\u3067\u3059\u3002"}</p>
             </div>
           </section>
 
           <section className="section-band approval-detail-grid">
             <div>
-              <h2>実行できる操作</h2>
+              <h2>\u5b9f\u884c\u3067\u304d\u308b\u64cd\u4f5c</h2>
               {selectedItem.allowed_transitions.length > 0 ? (
                 <div className="approval-transition-list">
                   {selectedItem.allowed_transitions.map((transition) => (
@@ -3356,18 +3355,18 @@ function ApprovalPage() {
                         disabled={approvalMutationState.status === "submitting"}
                       >
                         {approvalMutationState.status === "submitting"
-                          ? "変更中..."
+                          ? "\u5909\u66f4\u4e2d..."
                           : transition.action_label}
                       </button>
                     </article>
                   ))}
                 </div>
               ) : (
-                <p>この状態から実行できる承認操作はありません。</p>
+                <p>\u3053\u306e\u72b6\u614b\u304b\u3089\u5b9f\u884c\u3067\u304d\u308b\u627f\u8a8d\u64cd\u4f5c\u306f\u3042\u308a\u307e\u305b\u3093\u3002</p>
               )}
             </div>
             <div>
-              <h2>関連モジュール</h2>
+              <h2>\u95a2\u9023\u30e2\u30b8\u30e5\u30fc\u30eb</h2>
               {selectedItem.module_names.length > 0 ? (
                 <div className="approval-module-list">
                   {selectedItem.module_names.map((moduleName) => (
@@ -3377,30 +3376,30 @@ function ApprovalPage() {
                   ))}
                 </div>
               ) : (
-                <p>関連モジュールはありません。</p>
+                <p>\u95a2\u9023\u30e2\u30b8\u30e5\u30fc\u30eb\u306f\u3042\u308a\u307e\u305b\u3093\u3002</p>
               )}
             </div>
           </section>
 
           <Toolbar>
             <button className="secondary" onClick={() => navigate(`/documents/${selectedItem.target_id}`)}>
-              <span aria-hidden="true">↗</span>
-              原本詳細へ
+              <span aria-hidden="true">\u2197</span>
+              \u539f\u672c\u8a73\u7d30\u3078
             </button>
           </Toolbar>
         </>
       ) : (
         <section className="empty-state">
-          <h2>承認対象を選択してください</h2>
+          <h2>\u627f\u8a8d\u5bfe\u8c61\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044</h2>
           <p>{approvalDetailState.message}</p>
         </section>
       )}
 
       <section className="section-band">
-        <h2>版管理ルール</h2>
+        <h2>\u7248\u7ba1\u7406\u30eb\u30fc\u30eb</h2>
         <p>
-          M1 では最小ルールとして、原本は <code>draft</code> から <code>published</code> へ承認し、
-          その後に <code>archived</code> へ保管します。
+          M1 \u3067\u306f\u6700\u5c0f\u30eb\u30fc\u30eb\u3068\u3057\u3066\u3001\u539f\u672c\u306f <code>draft</code> \u304b\u3089 <code>published</code> \u3078\u627f\u8a8d\u3057\u3001
+          \u305d\u306e\u5f8c\u306b <code>archived</code> \u3078\u4fdd\u7ba1\u3057\u307e\u3059\u3002
         </p>
       </section>
     </Page>
