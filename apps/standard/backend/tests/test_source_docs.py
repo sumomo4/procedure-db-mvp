@@ -80,7 +80,7 @@ def test_read_source_docs_returns_success_response(
                 }
             ]
         },
-        "message": "Source documents are available.",
+        "message": "原本一覧を取得しました。",
     }
 
 
@@ -272,7 +272,7 @@ def test_read_source_doc_detail_returns_success_response(
                 },
             ],
         },
-        "message": "Source document detail is available.",
+        "message": "原本詳細を取得しました。",
     }
 
 
@@ -299,7 +299,7 @@ def test_read_source_doc_detail_returns_not_found_response(
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "Source document was not found.",
+        "message": "原本が見つかりませんでした。",
     }
 
 
@@ -403,7 +403,7 @@ def test_create_source_doc_returns_success_response(
 
     assert response.status_code == status.HTTP_201_CREATED
     assert response.json()["result"] == "success"
-    assert response.json()["message"] == "Source document was created."
+    assert response.json()["message"] == "原本を作成しました。"
     assert response.json()["data"]["source_doc_key"] == "BP-STD-003"
     assert response.json()["data"]["module_count"] == 2
 
@@ -564,7 +564,7 @@ def test_update_source_doc_returns_success_response(
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"] == "success"
-    assert response.json()["message"] == "Source document was updated."
+    assert response.json()["message"] == "原本を更新しました。"
     assert response.json()["data"]["source_doc_version_id"] == 31
     assert response.json()["data"]["version_no"] == 2
 
@@ -651,7 +651,7 @@ def test_update_source_doc_returns_not_found_response(
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "Source document was not found.",
+        "message": "原本が見つかりませんでした。",
     }
 
 

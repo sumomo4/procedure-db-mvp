@@ -56,7 +56,7 @@ def read_source_docs(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "Source documents are available.")
+    return success_response(data, "原本一覧を取得しました。")
 
 
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
@@ -68,13 +68,13 @@ def read_source_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
         sprint="Sprint 2",
         status="foundation-ready",
         planned_endpoints=[
-            RouterEndpointData(method="GET", path="/api/v1/source-docs", purpose="原本一覧取得 / 検索"),
-            RouterEndpointData(method="GET", path="/api/v1/source-docs/{source_doc_id}", purpose="原本詳細取得"),
+            RouterEndpointData(method="GET", path="/api/v1/source-docs", purpose="原本一覧参照 / 検索"),
+            RouterEndpointData(method="GET", path="/api/v1/source-docs/{source_doc_id}", purpose="原本詳細参照"),
             RouterEndpointData(method="POST", path="/api/v1/source-docs", purpose="原本作成"),
             RouterEndpointData(method="PUT", path="/api/v1/source-docs/{source_doc_id}", purpose="原本更新"),
         ],
     )
-    return success_response(data, "Source document router foundation is available.")
+    return success_response(data, "原本 API 構成情報を取得しました。")
 
 
 @router.get("/{source_doc_id}", response_model=ApiResponse[SourceDocDetailData])
@@ -95,10 +95,10 @@ def read_source_doc_detail(
     if data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Source document was not found.",
+            detail="原本が見つかりませんでした。",
         )
 
-    return success_response(data, "Source document detail is available.")
+    return success_response(data, "原本詳細を取得しました。")
 
 
 @router.post("", response_model=ApiResponse[SourceDocDetailData], status_code=status.HTTP_201_CREATED)
@@ -121,7 +121,7 @@ def create_source_doc_resource(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "Source document was created.")
+    return success_response(data, "原本を作成しました。")
 
 
 @router.put("/{source_doc_id}", response_model=ApiResponse[SourceDocDetailData])
@@ -148,7 +148,7 @@ def update_source_doc_resource(
     if data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Source document was not found.",
+            detail="原本が見つかりませんでした。",
         )
 
-    return success_response(data, "Source document was updated.")
+    return success_response(data, "原本を更新しました。")

@@ -116,7 +116,7 @@ def test_read_statuses_returns_success_response(
                 }
             ]
         },
-        "message": "Approval statuses are available.",
+        "message": "承認状態一覧を取得しました。",
     }
 
 
@@ -187,7 +187,7 @@ def test_read_status_detail_returns_success_response(
                 }
             ],
         },
-        "message": "Approval status detail is available.",
+        "message": "承認状態詳細を取得しました。",
     }
 
 
@@ -212,7 +212,7 @@ def test_read_status_detail_returns_not_found_response(
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "Approval target was not found.",
+        "message": "承認対象が見つかりませんでした。",
     }
 
 
@@ -263,7 +263,7 @@ def test_patch_status_detail_returns_success_response(
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"] == "success"
-    assert response.json()["message"] == "Approval status was updated."
+    assert response.json()["message"] == "承認状態を更新しました。"
     assert response.json()["data"]["status"] == "published"
     assert response.json()["data"]["next_action"] == "保管する"
 
@@ -290,7 +290,7 @@ def test_patch_status_detail_returns_not_found_response(
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "Approval target was not found.",
+        "message": "承認対象が見つかりませんでした。",
     }
 
 

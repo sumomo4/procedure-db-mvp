@@ -66,7 +66,7 @@ def read_modules(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "Modules are available.")
+    return success_response(data, "モジュール一覧を取得しました。")
 
 
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
@@ -88,7 +88,7 @@ def read_module_router_foundation() -> ApiResponse[RouterFoundationData]:
             RouterEndpointData(method="PUT", path="/api/v1/modules/{module_id}", purpose="モジュール更新"),
         ],
     )
-    return success_response(data, "Module router foundation is available.")
+    return success_response(data, "モジュール API 構成情報を取得しました。")
 
 
 @router.get("/{module_id}", response_model=ApiResponse[ModuleDetailData])
@@ -120,10 +120,10 @@ def read_module_detail(
     if data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Module was not found.",
+            detail="モジュールが見つかりませんでした。",
         )
 
-    return success_response(data, "Module detail is available.")
+    return success_response(data, "モジュール詳細を取得しました。")
 
 
 @router.post("", response_model=ApiResponse[ModuleDetailData], status_code=status.HTTP_201_CREATED)
@@ -146,7 +146,7 @@ def create_module_resource(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "Module was created.")
+    return success_response(data, "モジュールを登録しました。")
 
 
 @router.post("/import-sheet", response_model=ApiResponse[ModuleCreateRequest])
@@ -178,7 +178,7 @@ def normalize_module_sheet_resource(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "Excel sheet input was normalized.")
+    return success_response(data, "Excel取込プレビューを正規化しました。")
 
 
 @router.post("/import", response_model=ApiResponse[ModuleCreateRequest])
@@ -207,4 +207,4 @@ def import_module_workbook_resource(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "Workbook upload was normalized.")
+    return success_response(data, "ワークブック取込結果を正規化しました。")

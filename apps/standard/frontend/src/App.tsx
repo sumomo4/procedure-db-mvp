@@ -1310,7 +1310,7 @@ function ModuleRegisterPage() {
   const [importPreviewState, setImportPreviewState] = useState<ModuleImportPreviewState>({
     status: "idle",
     item: null,
-    message: "import-sheet 入口の確認はまだ実行していません。",
+    message: "Excel取込プレビューはまだ実行していません。",
   });
 
   function updateRow(rowId: number, field: keyof ModuleRegisterRowDraft, value: string | number): void {
@@ -1522,7 +1522,7 @@ function ModuleRegisterPage() {
     setImportPreviewState({
       status: "submitting",
       item: null,
-      message: "import-sheet へ現在の入力を送信しています。",
+      message: "Excel取込プレビューを実行しています。",
     });
 
     try {
@@ -1535,7 +1535,7 @@ function ModuleRegisterPage() {
           module_key: moduleKeyInput.trim() || undefined,
           module_name: moduleNameInput.trim(),
           description: descriptionInput.trim() || undefined,
-          change_note: "preview from register screen",
+          change_note: "登録画面からプレビュー",
           source_xlsx_path: sourcePathInput.trim() || undefined,
           created_by: createdByInput.trim() || undefined,
           device_header_cells: deviceHeaders.map((header) => ({
@@ -1569,7 +1569,7 @@ function ModuleRegisterPage() {
         setImportPreviewState({
           status: "error",
           item: null,
-          message: responseBody.message || `import-sheet 変換に失敗しました。HTTP ${response.status}`,
+          message: responseBody.message || `Excel取込プレビューに失敗しました。HTTP ${response.status}`,
         });
         return;
       }
@@ -1577,13 +1577,13 @@ function ModuleRegisterPage() {
       setImportPreviewState({
         status: "success",
         item: responseBody.data,
-        message: responseBody.message || "入力内容を ModuleCreateRequest に正規化できました。",
+        message: responseBody.message || "Excel入力を正規化しました。",
       });
     } catch (error) {
       setImportPreviewState({
         status: "error",
         item: null,
-        message: error instanceof Error ? error.message : "import-sheet 変換に失敗しました。",
+        message: error instanceof Error ? error.message : "Excel取込プレビューに失敗しました。",
       });
     }
   }
@@ -1869,7 +1869,7 @@ function ModuleRegisterPage() {
             {previewItem ? (
               <>
                 <div className="register-result-meta">
-                  <span>{previewItem.module_key ?? "(auto)"}</span>
+                  <span>{previewItem.module_key ?? "自動採番"}</span>
                   <span>{previewItem.module_name}</span>
                   <span>{`装置 ${previewItem.device_headers.length} 台`}</span>
                   <span>{`手順行 ${previewItem.rows.length} 行`}</span>
@@ -1908,7 +1908,7 @@ function ModuleRegisterPage() {
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.module_key}</span>
-              <span>{`version ${createdItem.version_no}`}</span>
+              <span>{`版 v${createdItem.version_no}`}</span>
               <span>{createdItem.status_label}</span>
               <span>{`装置 ${createdItem.device_headers.length} 台`}</span>
             </div>
@@ -1923,7 +1923,7 @@ function ModuleRegisterPage() {
             </button>
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting"}>
-            <span aria-hidden="true">save</span>
+            <span aria-hidden="true">✎</span>
             {createState.status === "submitting" ? "保存中..." : "保存実行"}
           </button>
         </Toolbar>
@@ -2127,8 +2127,8 @@ function LegacyDocumentEditPage() {
   const navigate = useNavigate();
   const [sourceDocKeyInput, setSourceDocKeyInput] = useState("");
   const [sourceDocNameInput, setSourceDocNameInput] = useState("M1 procedure bundle");
-  const [descriptionInput, setDescriptionInput] = useState("Created from source document register screen.");
-  const [changeNoteInput, setChangeNoteInput] = useState("Initial draft");
+  const [descriptionInput, setDescriptionInput] = useState("原本登録画面から作成。");
+  const [changeNoteInput, setChangeNoteInput] = useState("初版作成");
   const [createdByInput, setCreatedByInput] = useState("webui");
   const [moduleListState, setModuleListState] = useState<ModuleListState>({
     status: "loading",
@@ -2304,7 +2304,7 @@ function LegacyDocumentEditPage() {
             <input
               value={sourceDocKeyInput}
               onChange={(event) => setSourceDocKeyInput(event.target.value)}
-              placeholder="BP-STD-003 auto-generated when blank"
+              placeholder="BP-STD-003 未入力時は自動採番"
             />
           </label>
           <label>
@@ -2417,7 +2417,7 @@ function LegacyDocumentEditPage() {
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.source_doc_key}</span>
-              <span>version {createdItem.version_no}</span>
+              <span>{`版 v${createdItem.version_no}`}</span>
               <span>{createdItem.status_label}</span>
             </div>
           ) : null}
@@ -2450,8 +2450,8 @@ function DocumentEditPage() {
   const isEditMode = editSourceDocId !== null;
   const [sourceDocKeyInput, setSourceDocKeyInput] = useState("");
   const [sourceDocNameInput, setSourceDocNameInput] = useState("M1 procedure bundle");
-  const [descriptionInput, setDescriptionInput] = useState("Created from source document register screen.");
-  const [changeNoteInput, setChangeNoteInput] = useState("Initial draft");
+  const [descriptionInput, setDescriptionInput] = useState("原本登録画面から作成。");
+  const [changeNoteInput, setChangeNoteInput] = useState("初版作成");
   const [createdByInput, setCreatedByInput] = useState("webui");
   const [formLoadState, setFormLoadState] = useState<SourceDocFormLoadState>({
     status: "idle",
@@ -2498,7 +2498,7 @@ function DocumentEditPage() {
         setModuleListState({
           status: "available",
           items: responseBody.data.items,
-          message: responseBody.message || "Modules are available.",
+          message: responseBody.message || "モジュール一覧を取得しました。",
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -2555,7 +2555,7 @@ function DocumentEditPage() {
         setSourceDocKeyInput(detail.source_doc_key);
         setSourceDocNameInput(detail.source_doc_name);
         setDescriptionInput(detail.description ?? "");
-        setChangeNoteInput(detail.change_note ?? "Updated draft");
+        setChangeNoteInput(detail.change_note ?? "更新版作成");
         setCreatedByInput(detail.created_by ?? "webui");
         setItems(
           detail.items.length > 0
@@ -2690,7 +2690,7 @@ function DocumentEditPage() {
       if (isEditMode) {
         setFormLoadState({
           status: "ready",
-          message: `${responseBody.data.source_doc_key} を更新しました。現在は version ${responseBody.data.version_no} です。`,
+          message: `${responseBody.data.source_doc_key} を更新しました。現在は版 v${responseBody.data.version_no} です。`,
         });
       }
     } catch (error) {
@@ -2743,7 +2743,7 @@ function DocumentEditPage() {
             <input
               value={sourceDocKeyInput}
               onChange={(event) => setSourceDocKeyInput(event.target.value)}
-              placeholder="BP-STD-003 auto-generated when blank"
+              placeholder="BP-STD-003 未入力時は自動採番"
             />
           </label>
           <label>
@@ -2858,7 +2858,7 @@ function DocumentEditPage() {
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.source_doc_key}</span>
-              <span>version {createdItem.version_no}</span>
+              <span>{`版 v${createdItem.version_no}`}</span>
               <span>{createdItem.status_label}</span>
             </div>
           ) : null}

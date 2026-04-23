@@ -526,7 +526,7 @@ def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData
         ) as connection:
             rows = _fetch_module_detail_rows(connection, module_id)
     except Exception as exception:
-        raise DatabaseConnectionError("Module detail query failed.") from exception
+        raise DatabaseConnectionError("モジュール詳細の取得に失敗しました。") from exception
 
     return _map_module_detail_rows(rows)
 

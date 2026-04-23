@@ -79,7 +79,7 @@ def test_read_modules_returns_success_response(
                 }
             ]
         },
-        "message": "Modules are available.",
+        "message": "モジュール一覧を取得しました。",
     }
 
 
@@ -255,7 +255,7 @@ def test_read_module_detail_returns_success_response(
                 }
             ],
         },
-        "message": "Module detail is available.",
+        "message": "モジュール詳細を取得しました。",
     }
 
 
@@ -279,7 +279,7 @@ def test_read_module_detail_returns_not_found_response(
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "Module was not found.",
+        "message": "モジュールが見つかりませんでした。",
     }
 
 
@@ -293,7 +293,7 @@ def test_read_module_detail_returns_error_response(
         """Raise a deterministic database error."""
 
         del settings, module_id
-        raise DatabaseConnectionError("Module detail query failed.")
+        raise DatabaseConnectionError("モジュール詳細の取得に失敗しました。")
 
     monkeypatch.setattr(modules, "get_module_detail", fake_get_module_detail)
 
@@ -303,7 +303,7 @@ def test_read_module_detail_returns_error_response(
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "Module detail query failed.",
+        "message": "モジュール詳細の取得に失敗しました。",
     }
 
 
@@ -436,7 +436,7 @@ def test_create_module_returns_success_response(
 
     assert response.status_code == status.HTTP_201_CREATED
     assert response.json()["result"] == "success"
-    assert response.json()["message"] == "Module was created."
+    assert response.json()["message"] == "モジュールを登録しました。"
     assert response.json()["data"]["module_key"] == "MOD-004"
     assert response.json()["data"]["row_count"] == 2
 
@@ -655,7 +655,7 @@ def test_normalize_module_sheet_returns_success_response(
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"] == "success"
-    assert response.json()["message"] == "Excel sheet input was normalized."
+    assert response.json()["message"] == "Excel取込プレビューを正規化しました。"
     assert response.json()["data"]["module_name"] == "Excel import module"
     assert len(response.json()["data"]["device_headers"]) == 2
     assert response.json()["data"]["rows"][0]["device_entries"][1]["slot_no"] == 2
@@ -752,7 +752,7 @@ def test_import_module_workbook_returns_success_response(
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"] == "success"
-    assert response.json()["message"] == "Workbook upload was normalized."
+    assert response.json()["message"] == "ワークブック取込結果を正規化しました。"
     assert response.json()["data"]["module_name"] == "Workbook module"
 
 

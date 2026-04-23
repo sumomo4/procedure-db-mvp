@@ -36,7 +36,7 @@ def read_statuses(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "Approval statuses are available.")
+    return success_response(data, "承認状態一覧を取得しました。")
 
 
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
@@ -48,12 +48,12 @@ def read_status_router_foundation() -> ApiResponse[RouterFoundationData]:
         sprint="Sprint 3",
         status="foundation-ready",
         planned_endpoints=[
-            RouterEndpointData(method="GET", path="/api/v1/statuses", purpose="承認状態一覧取得"),
-            RouterEndpointData(method="GET", path="/api/v1/statuses/{target_id}", purpose="対象別承認状態取得"),
+            RouterEndpointData(method="GET", path="/api/v1/statuses", purpose="承認状態一覧参照"),
+            RouterEndpointData(method="GET", path="/api/v1/statuses/{target_id}", purpose="承認状態詳細取得"),
             RouterEndpointData(method="PATCH", path="/api/v1/statuses/{target_id}", purpose="承認状態変更"),
         ],
     )
-    return success_response(data, "Status router foundation is available.")
+    return success_response(data, "承認状態 API 構成情報を取得しました。")
 
 
 @router.get("/{target_id}", response_model=ApiResponse[ApprovalStatusDetailData])
@@ -74,10 +74,10 @@ def read_status_detail(
     if data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Approval target was not found.",
+            detail="承認対象が見つかりませんでした。",
         )
 
-    return success_response(data, "Approval status detail is available.")
+    return success_response(data, "承認状態詳細を取得しました。")
 
 
 @router.patch("/{target_id}", response_model=ApiResponse[ApprovalStatusDetailData])
@@ -104,7 +104,7 @@ def patch_status_detail(
     if data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Approval target was not found.",
+            detail="承認対象が見つかりませんでした。",
         )
 
-    return success_response(data, "Approval status was updated.")
+    return success_response(data, "承認状態を更新しました。")

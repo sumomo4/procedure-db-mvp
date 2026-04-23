@@ -8,14 +8,14 @@ from fastapi.testclient import TestClient
 @pytest.mark.parametrize(
     ("path", "resource", "message", "sprint"),
     [
-        ("/api/v1/modules/foundation", "modules", "Module router foundation is available.", "Sprint 2"),
+        ("/api/v1/modules/foundation", "modules", "モジュール API 構成情報を取得しました。", "Sprint 2"),
         (
             "/api/v1/source-docs/foundation",
             "source-docs",
-            "Source document router foundation is available.",
+            "原本 API 構成情報を取得しました。",
             "Sprint 2",
         ),
-        ("/api/v1/statuses/foundation", "statuses", "Status router foundation is available.", "Sprint 3"),
+        ("/api/v1/statuses/foundation", "statuses", "承認状態 API 構成情報を取得しました。", "Sprint 3"),
     ],
 )
 def test_router_foundation_returns_planned_endpoints(
