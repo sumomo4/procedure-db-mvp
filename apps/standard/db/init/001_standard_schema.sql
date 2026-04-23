@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
     target_text text,
     common_p_text text,
     target_device_text text,
+    device_headers_json jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (module_id, version_no)
@@ -48,6 +49,9 @@ ALTER TABLE proc.module_versions
 ALTER TABLE proc.module_versions
     ADD COLUMN IF NOT EXISTS target_device_text text;
 
+ALTER TABLE proc.module_versions
+    ADD COLUMN IF NOT EXISTS device_headers_json jsonb NOT NULL DEFAULT '[]'::jsonb;
+
 CREATE TABLE IF NOT EXISTS proc.module_rows (
     module_row_id bigserial PRIMARY KEY,
     module_version_id bigint NOT NULL REFERENCES proc.module_versions (module_version_id) ON DELETE CASCADE,
@@ -64,6 +68,7 @@ CREATE TABLE IF NOT EXISTS proc.module_rows (
     window_template_default text,
     p_template_default text,
     command_template_default text,
+    device_entries_json jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (module_version_id, row_order)
@@ -77,6 +82,9 @@ ALTER TABLE proc.module_rows
 
 ALTER TABLE proc.module_rows
     ADD COLUMN IF NOT EXISTS indent_level integer;
+
+ALTER TABLE proc.module_rows
+    ADD COLUMN IF NOT EXISTS device_entries_json jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS proc.blueprints (
     blueprint_id bigserial PRIMARY KEY,
@@ -511,8 +519,32 @@ DO UPDATE SET
     enabled = EXCLUDED.enabled,
     updated_at = now();
 
+UPDATE proc.module_versions
+SET device_headers_json = jsonb_build_array(
+    jsonb_build_object(
+        'slot_no', 1,
+        'header_time_text', header_time_text,
+        'target_text', target_text,
+        'p_text', common_p_text,
+        'target_device_text', target_device_text
+    )
+)
+WHERE device_headers_json = '[]'::jsonb;
+
+UPDATE proc.module_rows
+SET device_entries_json = jsonb_build_array(
+    jsonb_build_object(
+        'slot_no', 1,
+        'time_text', time_text,
+        'window_text', window_template_default,
+        'p_text', p_template_default,
+        'command_text', command_template_default
+    )
+)
+WHERE device_entries_json = '[]'::jsonb;
+
 INSERT INTO app_metadata (key, value)
-VALUES ('schema_version', '0.3.2')
+VALUES ('schema_version', '0.4.0')
 ON CONFLICT (key)
 DO UPDATE SET
     value = EXCLUDED.value,

@@ -6,7 +6,14 @@ import pytest
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.core.responses import ModuleDetailData, ModuleListData, ModuleListItemData, ModuleRowData
+from app.core.responses import (
+    ModuleDetailData,
+    ModuleDeviceHeaderData,
+    ModuleListData,
+    ModuleListItemData,
+    ModuleRowData,
+    ModuleRowDeviceEntryData,
+)
 from app.routers import modules
 
 
@@ -144,6 +151,15 @@ def test_read_module_detail_returns_success_response(
             target_text="CS",
             common_p_text=">",
             target_device_text="device-01",
+            device_headers=[
+                ModuleDeviceHeaderData(
+                    slot_no=1,
+                    header_time_text="09:00",
+                    target_text="CS",
+                    p_text=">",
+                    target_device_text="device-01",
+                )
+            ],
             created_at="2026-04-22",
             updated_at="2026-04-22",
             rows=[
@@ -163,6 +179,15 @@ def test_read_module_detail_returns_success_response(
                     p_text="TT",
                     command_text="show status",
                     note=None,
+                    device_entries=[
+                        ModuleRowDeviceEntryData(
+                            slot_no=1,
+                            time_text="□",
+                            window_text=None,
+                            p_text="TT",
+                            command_text="show status",
+                        )
+                    ],
                 )
             ],
         )
@@ -190,6 +215,15 @@ def test_read_module_detail_returns_success_response(
             "target_text": "CS",
             "common_p_text": ">",
             "target_device_text": "device-01",
+            "device_headers": [
+                {
+                    "slot_no": 1,
+                    "header_time_text": "09:00",
+                    "target_text": "CS",
+                    "p_text": ">",
+                    "target_device_text": "device-01",
+                }
+            ],
             "created_at": "2026-04-22",
             "updated_at": "2026-04-22",
             "rows": [
@@ -209,6 +243,15 @@ def test_read_module_detail_returns_success_response(
                     "p_text": "TT",
                     "command_text": "show status",
                     "note": None,
+                    "device_entries": [
+                        {
+                            "slot_no": 1,
+                            "time_text": "□",
+                            "window_text": None,
+                            "p_text": "TT",
+                            "command_text": "show status",
+                        }
+                    ],
                 }
             ],
         },
@@ -292,6 +335,15 @@ def test_create_module_returns_success_response(
             target_text="CS",
             common_p_text=">",
             target_device_text="device-01",
+            device_headers=[
+                ModuleDeviceHeaderData(
+                    slot_no=1,
+                    header_time_text="09:00",
+                    target_text="CS",
+                    p_text=">",
+                    target_device_text="device-01",
+                )
+            ],
             created_at="2026-04-22",
             updated_at="2026-04-22",
             rows=[
@@ -311,6 +363,7 @@ def test_create_module_returns_success_response(
                     p_text=None,
                     command_text=None,
                     note=None,
+                    device_entries=[],
                 ),
                 ModuleRowData(
                     module_row_id=401,
@@ -328,6 +381,15 @@ def test_create_module_returns_success_response(
                     p_text=">",
                     command_text="show version",
                     note=None,
+                    device_entries=[
+                        ModuleRowDeviceEntryData(
+                            slot_no=1,
+                            time_text="5分",
+                            window_text="console",
+                            p_text=">",
+                            command_text="show version",
+                        )
+                    ],
                 ),
             ],
         )

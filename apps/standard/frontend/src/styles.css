@@ -646,6 +646,13 @@ th {
   margin: 0;
 }
 
+.register-section-copy {
+  margin: 6px 0 0;
+  color: #56636c;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .register-step-header,
 .register-row-editor-header {
   display: flex;
@@ -680,6 +687,54 @@ th {
 .register-rows {
   display: grid;
   gap: 16px;
+}
+
+.register-device-header-list,
+.register-device-row-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.register-device-header-list {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.register-device-header-card,
+.register-device-row-group {
+  padding: 16px;
+  border: 1px solid #ded6c8;
+  border-radius: 8px;
+  background: #ffffff;
+  display: grid;
+  gap: 12px;
+}
+
+.register-device-header-card-header,
+.register-device-row-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.register-device-header-card-header strong,
+.register-device-row-group-header strong {
+  color: #172026;
+}
+
+.register-device-header-card-header span,
+.register-device-row-group-header span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.register-device-header-grid,
+.register-device-row-group-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .register-row-editor {
@@ -864,6 +919,64 @@ th {
   gap: 10px;
 }
 
+.excel-device-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.excel-device-summary-card {
+  padding: 14px 16px;
+  border: 1px solid #9aa6ac;
+  background: #ffffff;
+  display: grid;
+  gap: 8px;
+}
+
+.excel-device-summary-title {
+  background: #f8fbfc;
+}
+
+.excel-device-summary-card span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.excel-device-summary-card strong {
+  color: #172026;
+  font-size: 17px;
+}
+
+.excel-device-summary-card dl {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.excel-device-summary-card dl div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.excel-device-summary-card dt,
+.excel-device-summary-card dd {
+  margin: 0;
+}
+
+.excel-device-summary-card dt {
+  color: #56636c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.excel-device-summary-card dd {
+  color: #172026;
+  font-weight: 700;
+}
+
 .excel-title-grid {
   display: grid;
   grid-template-columns: minmax(460px, 1fr) 72px 96px 64px 160px;
@@ -927,6 +1040,10 @@ th {
   table-layout: fixed;
 }
 
+.excel-sheet-multi-device {
+  min-width: max-content;
+}
+
 .excel-sheet th,
 .excel-sheet td {
   border: 1px solid #9aa6ac;
@@ -945,6 +1062,10 @@ th {
   background: #d9eaf7;
   text-align: center;
   font-weight: 900;
+}
+
+.excel-device-group-heading {
+  background: #eef4f6 !important;
 }
 
 .excel-col-small {

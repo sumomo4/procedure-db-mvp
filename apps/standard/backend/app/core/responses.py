@@ -163,6 +163,47 @@ class ModuleRowData(BaseModel):
     p_text: str | None
     command_text: str | None
     note: str | None
+    device_entries: list["ModuleRowDeviceEntryData"] = Field(default_factory=list)
+
+
+class ModuleRowDeviceEntryData(BaseModel):
+    """Device-specific command columns for one module row."""
+
+    slot_no: int = Field(ge=1, le=20)
+    time_text: str | None = None
+    window_text: str | None = None
+    p_text: str | None = None
+    command_text: str | None = None
+
+
+class ModuleDeviceHeaderData(BaseModel):
+    """Device-specific header columns for one module version."""
+
+    slot_no: int = Field(ge=1, le=20)
+    header_time_text: str | None = None
+    target_text: str | None = None
+    p_text: str | None = None
+    target_device_text: str | None = None
+
+
+class ModuleCreateRowDeviceEntryInput(BaseModel):
+    """Device-specific input payload for one module row."""
+
+    slot_no: int = Field(ge=1, le=20)
+    time_text: str | None = None
+    window_text: str | None = None
+    p_text: str | None = None
+    command_text: str | None = None
+
+
+class ModuleCreateDeviceHeaderInput(BaseModel):
+    """Device-specific header input payload for a module version."""
+
+    slot_no: int = Field(ge=1, le=20)
+    header_time_text: str | None = None
+    target_text: str | None = None
+    p_text: str | None = None
+    target_device_text: str | None = None
 
 
 class ModuleCreateRowInput(BaseModel):
@@ -182,6 +223,7 @@ class ModuleCreateRowInput(BaseModel):
     p_text: str | None = None
     command_text: str | None = None
     note: str | None = None
+    device_entries: list[ModuleCreateRowDeviceEntryInput] = Field(default_factory=list)
 
 
 class ModuleCreateRequest(BaseModel):
@@ -198,6 +240,7 @@ class ModuleCreateRequest(BaseModel):
     target_text: str | None = None
     common_p_text: str | None = None
     target_device_text: str | None = None
+    device_headers: list[ModuleCreateDeviceHeaderInput] = Field(default_factory=list)
     rows: list[ModuleCreateRowInput] = Field(min_length=1)
 
 
@@ -236,6 +279,7 @@ class ModuleDetailData(BaseModel):
     target_text: str | None
     common_p_text: str | None
     target_device_text: str | None
+    device_headers: list[ModuleDeviceHeaderData] = Field(default_factory=list)
     created_at: str
     updated_at: str
     rows: list[ModuleRowData]

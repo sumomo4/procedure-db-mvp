@@ -2,16 +2,21 @@
 
 from collections.abc import Sequence
 from datetime import date, datetime
+import json
 from typing import Any
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    ModuleCreateDeviceHeaderInput,
     ModuleCreateRequest,
+    ModuleCreateRowDeviceEntryInput,
+    ModuleDeviceHeaderData,
     ModuleDetailData,
     ModuleListData,
     ModuleListItemData,
     ModuleRowData,
+    ModuleRowDeviceEntryData,
 )
 
 
@@ -131,6 +136,7 @@ def _build_module_detail_query() -> str:
                 mv.target_text,
                 mv.common_p_text,
                 mv.target_device_text,
+                mv.device_headers_json,
                 mv.created_at,
                 mv.updated_at
             FROM proc.module_versions mv
@@ -167,7 +173,8 @@ def _build_module_detail_query() -> str:
             r.time_text,
             r.window_template_default,
             r.p_template_default,
-            r.command_template_default
+            r.command_template_default,
+            r.device_entries_json
         FROM proc.modules m
         JOIN selected_version sv
             ON sv.module_id = m.module_id
@@ -186,53 +193,218 @@ def _fetch_module_detail_rows(connection: Any, module_id: int) -> list[tuple[Any
         return cursor.fetchall()
 
 
+def _coerce_json_array(value: Any) -> list[dict[str, Any]]:
+    """Convert psycopg JSONB values or test strings to a list of dictionaries."""
+
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        parsed = json.loads(value)
+    else:
+        parsed = value
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def _build_legacy_device_header(
+    header_time_text: str | None,
+    target_text: str | None,
+    common_p_text: str | None,
+    target_device_text: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "slot_no": 1,
+            "header_time_text": header_time_text,
+            "target_text": target_text,
+            "p_text": common_p_text,
+            "target_device_text": target_device_text,
+        }
+    ]
+
+
+def _build_legacy_device_entry(
+    time_text: str | None,
+    window_text: str | None,
+    p_text: str | None,
+    command_text: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "slot_no": 1,
+            "time_text": time_text,
+            "window_text": window_text,
+            "p_text": p_text,
+            "command_text": command_text,
+        }
+    ]
+
+
+def _map_device_headers(
+    value: Any,
+    header_time_text: str | None,
+    target_text: str | None,
+    common_p_text: str | None,
+    target_device_text: str | None,
+) -> list[ModuleDeviceHeaderData]:
+    raw_headers = _coerce_json_array(value) or _build_legacy_device_header(
+        header_time_text,
+        target_text,
+        common_p_text,
+        target_device_text,
+    )
+    return [
+        ModuleDeviceHeaderData(
+            slot_no=int(item.get("slot_no", 1)),
+            header_time_text=item.get("header_time_text"),
+            target_text=item.get("target_text"),
+            p_text=item.get("p_text"),
+            target_device_text=item.get("target_device_text"),
+        )
+        for item in sorted(raw_headers, key=lambda item: int(item.get("slot_no", 1)))
+    ]
+
+
+def _map_device_entries(
+    value: Any,
+    time_text: str | None,
+    window_text: str | None,
+    p_text: str | None,
+    command_text: str | None,
+) -> list[ModuleRowDeviceEntryData]:
+    raw_entries = _coerce_json_array(value) or _build_legacy_device_entry(
+        time_text,
+        window_text,
+        p_text,
+        command_text,
+    )
+    return [
+        ModuleRowDeviceEntryData(
+            slot_no=int(item.get("slot_no", 1)),
+            time_text=item.get("time_text"),
+            window_text=item.get("window_text"),
+            p_text=item.get("p_text"),
+            command_text=item.get("command_text"),
+        )
+        for item in sorted(raw_entries, key=lambda item: int(item.get("slot_no", 1)))
+    ]
+
+
+def _normalize_device_headers(payload: ModuleCreateRequest) -> list[ModuleCreateDeviceHeaderInput]:
+    """Return normalized device header inputs with a slot 1 fallback."""
+
+    if payload.device_headers:
+        return sorted(payload.device_headers, key=lambda item: item.slot_no)
+    return [
+        ModuleCreateDeviceHeaderInput(
+            slot_no=1,
+            header_time_text=payload.header_time_text,
+            target_text=payload.target_text,
+            p_text=payload.common_p_text,
+            target_device_text=payload.target_device_text,
+        )
+    ]
+
+
+def _normalize_row_device_entries(
+    row: Any,
+    device_slot_nos: set[int],
+) -> list[ModuleCreateRowDeviceEntryInput]:
+    """Return normalized row device entries with a slot 1 fallback."""
+
+    entries = (
+        sorted(row.device_entries, key=lambda item: item.slot_no)
+        if row.device_entries
+        else [
+            ModuleCreateRowDeviceEntryInput(
+                slot_no=1,
+                time_text=row.time_text,
+                window_text=row.window_text,
+                p_text=row.p_text,
+                command_text=row.command_text,
+            )
+        ]
+    )
+
+    invalid_slot_nos = [entry.slot_no for entry in entries if entry.slot_no not in device_slot_nos]
+    if invalid_slot_nos:
+        raise ValueError("row device_entries must reference configured device_headers.")
+    return entries
+
+
 def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData | None:
     """Convert raw module detail rows to response data."""
 
     if not rows:
         return None
 
+    def field(row: tuple[Any, ...], index: int, default: Any = None) -> Any:
+        if index < 0 or index >= len(row):
+            return default
+        return row[index]
+
     first_row = rows[0]
+    uses_json_columns = len(first_row) >= 31
+    device_headers_index = 13 if uses_json_columns else -1
+    created_at_index = 14 if uses_json_columns else 13
+    updated_at_index = 15 if uses_json_columns else 14
+    row_base_index = 16 if uses_json_columns else 15
+    device_headers = _map_device_headers(
+        field(first_row, device_headers_index),
+        field(first_row, 9),
+        field(first_row, 10),
+        field(first_row, 11),
+        field(first_row, 12),
+    )
     module_rows = [
         ModuleRowData(
-            module_row_id=row[15],
-            row_order=row[16],
-            row_type=row[17],
-            major_no=row[18],
-            middle_no=row[19],
-            minor_no=row[20],
-            tech_doc_text=row[21],
-            work_text=row[22],
-            indent_level=row[23],
-            expected_result=row[24],
-            time_text=row[25],
-            window_text=row[26],
-            p_text=row[27],
-            command_text=row[28],
-            note=row[21],
+            module_row_id=field(row, row_base_index),
+            row_order=field(row, row_base_index + 1),
+            row_type=field(row, row_base_index + 2),
+            major_no=field(row, row_base_index + 3),
+            middle_no=field(row, row_base_index + 4),
+            minor_no=field(row, row_base_index + 5),
+            tech_doc_text=field(row, row_base_index + 6),
+            work_text=field(row, row_base_index + 7),
+            indent_level=field(row, row_base_index + 8),
+            expected_result=field(row, row_base_index + 9),
+            time_text=field(row, row_base_index + 10),
+            window_text=field(row, row_base_index + 11),
+            p_text=field(row, row_base_index + 12),
+            command_text=field(row, row_base_index + 13),
+            note=field(row, row_base_index + 6),
+            device_entries=_map_device_entries(
+                field(row, row_base_index + 14),
+                field(row, row_base_index + 10),
+                field(row, row_base_index + 11),
+                field(row, row_base_index + 12),
+                field(row, row_base_index + 13),
+            ),
         )
         for row in rows
-        if row[15] is not None
+        if field(row, row_base_index) is not None
     ]
 
     return ModuleDetailData(
-        module_id=first_row[0],
-        module_key=first_row[1],
-        module_name=first_row[2],
-        description=first_row[3],
-        module_version_id=first_row[4],
-        version_no=first_row[5],
-        status=first_row[6],
-        status_label=MODULE_STATUS_LABELS.get(first_row[6], first_row[6]),
+        module_id=field(first_row, 0),
+        module_key=field(first_row, 1),
+        module_name=field(first_row, 2),
+        description=field(first_row, 3),
+        module_version_id=field(first_row, 4),
+        version_no=field(first_row, 5),
+        status=field(first_row, 6),
+        status_label=MODULE_STATUS_LABELS.get(field(first_row, 6), field(first_row, 6)),
         row_count=len(module_rows),
-        source_xlsx_path=first_row[7],
-        created_by=first_row[8],
-        header_time_text=first_row[9],
-        target_text=first_row[10],
-        common_p_text=first_row[11],
-        target_device_text=first_row[12],
-        created_at=_format_updated_at(first_row[13]),
-        updated_at=_format_updated_at(first_row[14]),
+        source_xlsx_path=field(first_row, 7),
+        created_by=field(first_row, 8),
+        header_time_text=field(first_row, 9),
+        target_text=field(first_row, 10),
+        common_p_text=field(first_row, 11),
+        target_device_text=field(first_row, 12),
+        device_headers=device_headers,
+        created_at=_format_updated_at(field(first_row, created_at_index)),
+        updated_at=_format_updated_at(field(first_row, updated_at_index)),
         rows=module_rows,
     )
 
@@ -258,6 +430,19 @@ def _validate_module_create_request(payload: ModuleCreateRequest) -> None:
     row_orders = [row.row_order for row in payload.rows]
     if len(row_orders) != len(set(row_orders)):
         raise ValueError("row_order must be unique within rows.")
+
+    device_headers = _normalize_device_headers(payload)
+    device_slot_nos = [header.slot_no for header in device_headers]
+    if len(device_slot_nos) != len(set(device_slot_nos)):
+        raise ValueError("slot_no must be unique within device_headers.")
+    if len(device_slot_nos) > 20:
+        raise ValueError("device_headers must not exceed 20 slots.")
+
+    allowed_slot_nos = set(device_slot_nos)
+    for row in payload.rows:
+        row_slot_nos = [entry.slot_no for entry in _normalize_row_device_entries(row, allowed_slot_nos)]
+        if len(row_slot_nos) != len(set(row_slot_nos)):
+            raise ValueError("slot_no must be unique within row device_entries.")
 
 
 def _generate_next_module_key(cursor: Any) -> str:
@@ -362,6 +547,9 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             module_id: int | None = None
+            normalized_device_headers = _normalize_device_headers(payload)
+            primary_device_header = normalized_device_headers[0]
+            device_slot_nos = {header.slot_no for header in normalized_device_headers}
 
             with connection.cursor() as cursor:
                 normalized_module_key = _normalize_module_key(payload.module_key)
@@ -406,7 +594,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                         header_time_text,
                         target_text,
                         common_p_text,
-                        target_device_text
+                        target_device_text,
+                        device_headers_json
                     )
                     VALUES (
                         %(module_id)s,
@@ -419,7 +608,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                         %(header_time_text)s,
                         %(target_text)s,
                         %(common_p_text)s,
-                        %(target_device_text)s
+                        %(target_device_text)s,
+                        %(device_headers_json)s
                     )
                     RETURNING module_version_id;
                     """,
@@ -429,10 +619,22 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                         "source_xlsx_path": payload.source_xlsx_path,
                         "source_sha256": payload.source_sha256,
                         "created_by": payload.created_by,
-                        "header_time_text": payload.header_time_text,
-                        "target_text": payload.target_text,
-                        "common_p_text": payload.common_p_text,
-                        "target_device_text": payload.target_device_text,
+                        "header_time_text": primary_device_header.header_time_text,
+                        "target_text": primary_device_header.target_text,
+                        "common_p_text": primary_device_header.p_text,
+                        "target_device_text": primary_device_header.target_device_text,
+                        "device_headers_json": json.dumps(
+                            [
+                                {
+                                    "slot_no": header.slot_no,
+                                    "header_time_text": header.header_time_text,
+                                    "target_text": header.target_text,
+                                    "p_text": header.p_text,
+                                    "target_device_text": header.target_device_text,
+                                }
+                                for header in normalized_device_headers
+                            ]
+                        ),
                     },
                 )
                 inserted_version = cursor.fetchone()
@@ -441,6 +643,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                 module_version_id = int(inserted_version[0])
 
                 for row in sorted(payload.rows, key=lambda item: item.row_order):
+                    normalized_row_device_entries = _normalize_row_device_entries(row, device_slot_nos)
+                    primary_row_device_entry = normalized_row_device_entries[0]
                     cursor.execute(
                         """
                         INSERT INTO proc.module_rows (
@@ -457,7 +661,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                             time_text,
                             window_template_default,
                             p_template_default,
-                            command_template_default
+                            command_template_default,
+                            device_entries_json
                         )
                         VALUES (
                             %(module_version_id)s,
@@ -473,7 +678,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                             %(time_text)s,
                             %(window_text)s,
                             %(p_text)s,
-                            %(command_text)s
+                            %(command_text)s,
+                            %(device_entries_json)s
                         )
                         RETURNING module_row_id;
                         """,
@@ -488,10 +694,22 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                             "work_text": row.work_text,
                             "indent_level": row.indent_level,
                             "expected_result": row.expected_result,
-                            "time_text": row.time_text,
-                            "window_text": row.window_text,
-                            "p_text": row.p_text,
-                            "command_text": row.command_text,
+                            "time_text": primary_row_device_entry.time_text,
+                            "window_text": primary_row_device_entry.window_text,
+                            "p_text": primary_row_device_entry.p_text,
+                            "command_text": primary_row_device_entry.command_text,
+                            "device_entries_json": json.dumps(
+                                [
+                                    {
+                                        "slot_no": entry.slot_no,
+                                        "time_text": entry.time_text,
+                                        "window_text": entry.window_text,
+                                        "p_text": entry.p_text,
+                                        "command_text": entry.command_text,
+                                    }
+                                    for entry in normalized_row_device_entries
+                                ]
+                            ),
                         },
                     )
                     cursor.fetchone()

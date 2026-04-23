@@ -237,9 +237,9 @@ def test_read_source_doc_detail_returns_success_response(
                     "module_status": "draft",
                     "module_status_label": "作成中",
                     "rows": [
-                        {
-                            "module_row_id": 1000,
-                            "row_order": 1,
+                            {
+                                "module_row_id": 1000,
+                                "row_order": 1,
                             "row_type": "step",
                             "major_no": "1",
                             "middle_no": "1",
@@ -250,12 +250,13 @@ def test_read_source_doc_detail_returns_success_response(
                             "expected_result": "Ready.",
                             "time_text": "※",
                             "window_text": None,
-                            "p_text": "TT",
-                            "command_text": "show status",
-                            "note": "Tech doc",
-                        }
-                    ],
-                },
+                                "p_text": "TT",
+                                "command_text": "show status",
+                                "note": "Tech doc",
+                                "device_entries": [],
+                            }
+                        ],
+                    },
                 {
                     "blueprint_item_id": 101,
                     "item_order": 2,

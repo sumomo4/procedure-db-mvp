@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 
 type Status = "Draft" | "approval" | "archive";
 
@@ -66,6 +66,23 @@ type ModuleDetailRowData = {
   p_text: string | null;
   command_text: string | null;
   note: string | null;
+  device_entries: ModuleRowDeviceEntryData[];
+};
+
+type ModuleRowDeviceEntryData = {
+  slot_no: number;
+  time_text: string | null;
+  window_text: string | null;
+  p_text: string | null;
+  command_text: string | null;
+};
+
+type ModuleDeviceHeaderData = {
+  slot_no: number;
+  header_time_text: string | null;
+  target_text: string | null;
+  p_text: string | null;
+  target_device_text: string | null;
 };
 
 type ModuleDetailData = {
@@ -84,6 +101,7 @@ type ModuleDetailData = {
   target_text: string | null;
   common_p_text: string | null;
   target_device_text: string | null;
+  device_headers: ModuleDeviceHeaderData[];
   created_at: string;
   updated_at: string;
   rows: ModuleDetailRowData[];
@@ -129,6 +147,19 @@ type ModuleRegisterRowDraft = {
   techDocText: string;
   workText: string;
   expectedResult: string;
+  deviceEntries: ModuleRegisterDeviceEntryDraft[];
+};
+
+type ModuleRegisterDeviceHeaderDraft = {
+  slotNo: number;
+  headerTimeText: string;
+  targetText: string;
+  pText: string;
+  targetDeviceText: string;
+};
+
+type ModuleRegisterDeviceEntryDraft = {
+  slotNo: number;
   timeText: string;
   windowText: string;
   pText: string;
@@ -976,22 +1007,39 @@ function ModuleDetailPage() {
 
 function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
   const rowsWithIndent = buildIndentedRows(item.rows);
+  const deviceHeaders = getModuleDeviceHeaders(item);
 
   return (
-    <section className="excel-preview" aria-label="Excel風モジュールプレビュー">
-      <div className="excel-title-grid">
-        <div className="excel-cell excel-title-cell">{item.module_name.replace("_CS ", " ")}</div>
-        <div className="excel-cell excel-small-heading">時刻</div>
-        <div className="excel-cell excel-small-heading">target</div>
-        <div className="excel-cell excel-small-heading">P</div>
-        <div className="excel-cell excel-device-cell">対象装置</div>
-        <div className="excel-cell excel-sequence-cell">通番</div>
-        <div className="excel-cell excel-target-value">1</div>
-        <div className="excel-cell excel-device-value">{"{{DEVICE_NAME}}"}</div>
+    <section className="excel-preview" aria-label="Excel-like module preview">
+      <div className="excel-device-summary">
+        <div className="excel-device-summary-card excel-device-summary-title">
+          <span>Module</span>
+          <strong>{item.module_name.replace("_CS ", " ")}</strong>
+        </div>
+        {deviceHeaders.map((header) => (
+          <div key={header.slot_no} className="excel-device-summary-card">
+            <span>{`Device ${header.slot_no}`}</span>
+            <strong>{header.target_device_text ?? "-"}</strong>
+            <dl>
+              <div>
+                <dt>Time</dt>
+                <dd>{header.header_time_text ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>target</dt>
+                <dd>{header.target_text ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>P</dt>
+                <dd>{header.p_text ?? "-"}</dd>
+              </div>
+            </dl>
+          </div>
+        ))}
       </div>
 
       <div className="excel-sheet-wrap">
-        <table className="excel-sheet">
+        <table className="excel-sheet excel-sheet-multi-device">
           <colgroup>
             <col className="excel-col-small" />
             <col className="excel-col-small" />
@@ -999,23 +1047,38 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
             <col className="excel-col-doc" />
             <col className="excel-col-work" />
             <col className="excel-col-check" />
-            <col className="excel-col-time" />
-            <col className="excel-col-window" />
-            <col className="excel-col-prompt" />
-            <col className="excel-col-command" />
+            {deviceHeaders.map((header) => (
+              <Fragment key={header.slot_no}>
+                <col className="excel-col-time" />
+                <col className="excel-col-window" />
+                <col className="excel-col-prompt" />
+                <col className="excel-col-command" />
+              </Fragment>
+            ))}
           </colgroup>
           <thead>
             <tr>
-              <th>大</th>
-              <th>中</th>
-              <th>小</th>
-              <th>技術資料名</th>
-              <th>作業内容</th>
-              <th>確認事項 or 項目</th>
-              <th>時刻</th>
-              <th>window</th>
-              <th>P</th>
-              <th>コマンド</th>
+              <th rowSpan={2}>Major</th>
+              <th rowSpan={2}>Middle</th>
+              <th rowSpan={2}>Minor</th>
+              <th rowSpan={2}>Tech Doc</th>
+              <th rowSpan={2}>Work Text</th>
+              <th rowSpan={2}>Expected Result / Item</th>
+              {deviceHeaders.map((header) => (
+                <th key={header.slot_no} colSpan={4} className="excel-device-group-heading">
+                  {`Device ${header.slot_no}`}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              {deviceHeaders.map((header) => (
+                <Fragment key={`labels-${header.slot_no}`}>
+                  <th>Time</th>
+                  <th>window</th>
+                  <th>P</th>
+                  <th>Command</th>
+                </Fragment>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -1029,10 +1092,17 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
                   <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
                 </td>
                 <td>{row.expected_result ?? ""}</td>
-                <td className="excel-center">{row.time_text ?? ""}</td>
-                <td>{row.window_text ?? ""}</td>
-                <td>{row.p_text ?? ""}</td>
-                <td className="excel-command-cell">{row.command_text ?? ""}</td>
+                {deviceHeaders.map((header) => {
+                  const entry = getModuleDeviceEntry(row, header.slot_no);
+                  return (
+                    <Fragment key={`${row.module_row_id}-${header.slot_no}`}>
+                      <td className="excel-center">{entry?.time_text ?? ""}</td>
+                      <td>{entry?.window_text ?? ""}</td>
+                      <td>{entry?.p_text ?? ""}</td>
+                      <td className="excel-command-cell">{entry?.command_text ?? ""}</td>
+                    </Fragment>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -1040,8 +1110,8 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
       </div>
 
       <div className="excel-remarks">
-        <strong>連絡事項</strong>
-        <p>Excelの結合セル欄に相当する領域です。Sprint 2では閲覧用の仮表示として扱います。</p>
+        <strong>Remarks</strong>
+        <p>Device columns expand horizontally like the Excel layout. The fixed procedure columns stay on the left, and each device contributes Time / window / P / Command on the right.</p>
       </div>
     </section>
   );
@@ -1117,10 +1187,15 @@ function ModuleRegisterPage() {
   const [descriptionInput, setDescriptionInput] = useState("Created from module register screen.");
   const [sourcePathInput, setSourcePathInput] = useState("imports/manual-module.xlsx");
   const [createdByInput, setCreatedByInput] = useState("webui");
-  const [headerTimeInput, setHeaderTimeInput] = useState("09:00");
-  const [targetInput, setTargetInput] = useState("CS");
-  const [commonPInput, setCommonPInput] = useState(">");
-  const [targetDeviceInput, setTargetDeviceInput] = useState("device-01");
+  const [deviceHeaders, setDeviceHeaders] = useState<ModuleRegisterDeviceHeaderDraft[]>([
+    {
+      slotNo: 1,
+      headerTimeText: "09:00",
+      targetText: "CS",
+      pText: ">",
+      targetDeviceText: "device-01",
+    },
+  ]);
   const [rowSeed, setRowSeed] = useState(2);
   const [rows, setRows] = useState<ModuleRegisterRowDraft[]>([
     {
@@ -1132,22 +1207,108 @@ function ModuleRegisterPage() {
       techDocText: "Tech doc",
       workText: "Check before work.",
       expectedResult: "Ready.",
-      timeText: "5 min",
-      windowText: "console",
-      pText: ">",
-      commandText: "show version",
+      deviceEntries: [
+        {
+          slotNo: 1,
+          timeText: "5 min",
+          windowText: "console",
+          pText: ">",
+          commandText: "show version",
+        },
+      ],
     },
   ]);
   const [createState, setCreateState] = useState<ModuleCreateState>({
     status: "idle",
     item: null,
-    message: "Fill in the minimum fields and save the first module version.",
+    message: "Fill in device columns and step rows, then save the first module version.",
   });
 
   function updateRow(rowId: number, field: keyof ModuleRegisterRowDraft, value: string | number): void {
     setRows((currentRows) =>
       currentRows.map((row) => (row.rowId === rowId ? { ...row, [field]: value } : row)),
     );
+  }
+
+  function updateDeviceHeader(
+    slotNo: number,
+    field: keyof Omit<ModuleRegisterDeviceHeaderDraft, "slotNo">,
+    value: string,
+  ): void {
+    setDeviceHeaders((currentHeaders) =>
+      currentHeaders.map((header) => (header.slotNo === slotNo ? { ...header, [field]: value } : header)),
+    );
+  }
+
+  function updateRowDeviceEntry(
+    rowId: number,
+    slotNo: number,
+    field: keyof Omit<ModuleRegisterDeviceEntryDraft, "slotNo">,
+    value: string,
+  ): void {
+    setRows((currentRows) =>
+      currentRows.map((row) =>
+        row.rowId === rowId
+          ? {
+              ...row,
+              deviceEntries: row.deviceEntries.map((entry) =>
+                entry.slotNo === slotNo ? { ...entry, [field]: value } : entry,
+              ),
+            }
+          : row,
+      ),
+    );
+  }
+
+  function addDeviceSlot(): void {
+    setDeviceHeaders((currentHeaders) => {
+      if (currentHeaders.length >= 20) {
+        return currentHeaders;
+      }
+
+      const nextSlotNo = Math.max(...currentHeaders.map((header) => header.slotNo)) + 1;
+      setRows((currentRows) =>
+        currentRows.map((row) => ({
+          ...row,
+          deviceEntries: [
+            ...row.deviceEntries,
+            {
+              slotNo: nextSlotNo,
+              timeText: "",
+              windowText: "",
+              pText: "",
+              commandText: "",
+            },
+          ],
+        })),
+      );
+      return [
+        ...currentHeaders,
+        {
+          slotNo: nextSlotNo,
+          headerTimeText: "",
+          targetText: "",
+          pText: "",
+          targetDeviceText: `device-${String(nextSlotNo).padStart(2, "0")}`,
+        },
+      ];
+    });
+  }
+
+  function removeDeviceSlot(slotNo: number): void {
+    setDeviceHeaders((currentHeaders) => {
+      if (currentHeaders.length === 1) {
+        return currentHeaders;
+      }
+
+      setRows((currentRows) =>
+        currentRows.map((row) => ({
+          ...row,
+          deviceEntries: row.deviceEntries.filter((entry) => entry.slotNo !== slotNo),
+        })),
+      );
+      return currentHeaders.filter((header) => header.slotNo !== slotNo);
+    });
   }
 
   function addRow(): void {
@@ -1162,10 +1323,13 @@ function ModuleRegisterPage() {
         techDocText: "",
         workText: "",
         expectedResult: "",
-        timeText: "",
-        windowText: "",
-        pText: "",
-        commandText: "",
+        deviceEntries: deviceHeaders.map((header) => ({
+          slotNo: header.slotNo,
+          timeText: "",
+          windowText: "",
+          pText: "",
+          commandText: "",
+        })),
       },
     ]);
     setRowSeed((currentSeed) => currentSeed + 1);
@@ -1181,7 +1345,7 @@ function ModuleRegisterPage() {
     setCreateState({
       status: "submitting",
       item: null,
-      message: "Creating module and first version...",
+      message: "Saving module with multi-device columns...",
     });
 
     try {
@@ -1196,10 +1360,13 @@ function ModuleRegisterPage() {
           description: descriptionInput.trim() || undefined,
           source_xlsx_path: sourcePathInput.trim() || undefined,
           created_by: createdByInput.trim() || undefined,
-          header_time_text: headerTimeInput.trim() || undefined,
-          target_text: targetInput.trim() || undefined,
-          common_p_text: commonPInput.trim() || undefined,
-          target_device_text: targetDeviceInput.trim() || undefined,
+          device_headers: deviceHeaders.map((header) => ({
+            slot_no: header.slotNo,
+            header_time_text: header.headerTimeText.trim() || undefined,
+            target_text: header.targetText.trim() || undefined,
+            p_text: header.pText.trim() || undefined,
+            target_device_text: header.targetDeviceText.trim() || undefined,
+          })),
           rows: rows.map((row, index) => ({
             row_order: index + 1,
             row_type: "step",
@@ -1210,10 +1377,13 @@ function ModuleRegisterPage() {
             work_text: row.workText.trim() || moduleNameInput.trim(),
             indent_level: row.indentLevel,
             expected_result: row.expectedResult.trim() || undefined,
-            time_text: row.timeText.trim() || undefined,
-            window_text: row.windowText.trim() || undefined,
-            p_text: row.pText.trim() || undefined,
-            command_text: row.commandText.trim() || undefined,
+            device_entries: row.deviceEntries.map((entry) => ({
+              slot_no: entry.slotNo,
+              time_text: entry.timeText.trim() || undefined,
+              window_text: entry.windowText.trim() || undefined,
+              p_text: entry.pText.trim() || undefined,
+              command_text: entry.commandText.trim() || undefined,
+            })),
           })),
         }),
       });
@@ -1247,103 +1417,138 @@ function ModuleRegisterPage() {
   const createdItem = createState.item;
 
   return (
-    <Page title="モジュール登録" description="1回だけ入れる項目と複数行の手順行を分けて登録し、POST /api/v1/modules の保存結果を確認します。">
-      <section className="upload-zone" aria-label="モジュール登録の進め方">
-        <span className="upload-icon">⇧</span>
-        <h2>先に登録の芯を固める</h2>
-        <p>ホルダー記法は今は持ち込まず、まずは実務で入れる項目をそのまま登録できる形を先に整えます。</p>
+    <Page
+      title="Module Register"
+      description="Configure device columns and step rows, then save the first module version. Device columns can be added horizontally up to 20 slots."
+    >
+      <section className="upload-zone" aria-label="Module register guidance">
+        <span className="upload-icon">+</span>
+        <h2>Add device columns first, then add step rows</h2>
+        <p>The header fields time / target / P / target device expand horizontally by device. Each row also keeps time / window / P / command for the same device slots.</p>
       </section>
 
       <form className="register-form" onSubmit={handleSubmit}>
         <FormGrid>
           <label>
-            モジュールキー
-            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 または空欄で自動採番" />
+            Module Key
+            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 auto-generated when blank" />
           </label>
           <label>
-            モジュール名
+            Module Name
             <input value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} required />
           </label>
           <label>
-            作成者
+            Created By
             <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
           </label>
           <label>
-            取込元パス
+            Source Path
             <input value={sourcePathInput} onChange={(event) => setSourcePathInput(event.target.value)} placeholder="imports/manual-module.xlsx" />
           </label>
           <label className="wide">
-            説明
+            Description
             <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
           </label>
         </FormGrid>
 
         <section className="register-step-card">
-          <h2>1回だけ入力する項目</h2>
-          <div className="register-step-grid">
-            <label>
-              時刻
-              <input value={headerTimeInput} onChange={(event) => setHeaderTimeInput(event.target.value)} />
-            </label>
-            <label>
-              target
-              <input value={targetInput} onChange={(event) => setTargetInput(event.target.value)} />
-            </label>
-            <label>
-              P
-              <input value={commonPInput} onChange={(event) => setCommonPInput(event.target.value)} />
-            </label>
-            <label>
-              対象装置
-              <input value={targetDeviceInput} onChange={(event) => setTargetDeviceInput(event.target.value)} />
-            </label>
+          <div className="register-step-header">
+            <div>
+              <h2>Device Header Columns</h2>
+              <p className="register-section-copy">Add time / target / P / target device horizontally. Up to 20 device columns are supported.</p>
+            </div>
+            <button className="secondary" type="button" onClick={addDeviceSlot} disabled={deviceHeaders.length >= 20}>
+              <span aria-hidden="true">+</span>
+              Add Device Column
+            </button>
+          </div>
+          <div className="register-device-header-list">
+            {deviceHeaders.map((header) => (
+              <section key={header.slotNo} className="register-device-header-card">
+                <div className="register-device-header-card-header">
+                  <strong>{`Device ${header.slotNo}`}</strong>
+                  <button
+                    className="text-button"
+                    type="button"
+                    onClick={() => removeDeviceSlot(header.slotNo)}
+                    disabled={deviceHeaders.length === 1}
+                  >
+                    <span aria-hidden="true">-</span>
+                    Remove Column
+                  </button>
+                </div>
+                <div className="register-device-header-grid">
+                  <label>
+                    Time
+                    <input value={header.headerTimeText} onChange={(event) => updateDeviceHeader(header.slotNo, "headerTimeText", event.target.value)} />
+                  </label>
+                  <label>
+                    target
+                    <input value={header.targetText} onChange={(event) => updateDeviceHeader(header.slotNo, "targetText", event.target.value)} />
+                  </label>
+                  <label>
+                    P
+                    <input value={header.pText} onChange={(event) => updateDeviceHeader(header.slotNo, "pText", event.target.value)} />
+                  </label>
+                  <label>
+                    Target Device
+                    <input value={header.targetDeviceText} onChange={(event) => updateDeviceHeader(header.slotNo, "targetDeviceText", event.target.value)} />
+                  </label>
+                </div>
+              </section>
+            ))}
           </div>
         </section>
 
         <section className="register-step-card">
           <div className="register-step-header">
-            <h2>複数行の手順行</h2>
+            <div>
+              <h2>Step Rows</h2>
+              <p className="register-section-copy">Fill major / middle / minor / tech doc / work text / expected result per row, then fill the device-specific command cells below.</p>
+            </div>
             <button className="secondary" type="button" onClick={addRow}>
-              <span aria-hidden="true">＋</span>行追加
+              <span aria-hidden="true">+</span>
+              Add Row
             </button>
           </div>
           <div className="register-rows">
             {rows.map((row, index) => (
               <section key={row.rowId} className="register-row-editor">
                 <div className="register-row-editor-header">
-                  <strong>行 {index + 1}</strong>
+                  <strong>{`Row ${index + 1}`}</strong>
                   <button className="text-button" type="button" onClick={() => removeRow(row.rowId)} disabled={rows.length === 1}>
-                    <span aria-hidden="true">−</span>削除
+                    <span aria-hidden="true">-</span>
+                    Remove Row
                   </button>
                 </div>
                 <div className="register-row-grid">
                   <label>
-                    段落
+                    Paragraph
                     <select value={row.indentLevel} onChange={(event) => updateRow(row.rowId, "indentLevel", Number(event.target.value))}>
-                      <option value={0}>1段</option>
-                      <option value={1}>2段</option>
-                      <option value={2}>3段</option>
-                      <option value={3}>4段</option>
+                      <option value={0}>Level 1</option>
+                      <option value={1}>Level 2</option>
+                      <option value={2}>Level 3</option>
+                      <option value={3}>Level 4</option>
                     </select>
                   </label>
                   <label>
-                    大
+                    Major
                     <input value={row.majorNo} onChange={(event) => updateRow(row.rowId, "majorNo", event.target.value)} />
                   </label>
                   <label>
-                    中
+                    Middle
                     <input value={row.middleNo} onChange={(event) => updateRow(row.rowId, "middleNo", event.target.value)} />
                   </label>
                   <label>
-                    小
+                    Minor
                     <input value={row.minorNo} onChange={(event) => updateRow(row.rowId, "minorNo", event.target.value)} />
                   </label>
                   <label>
-                    技術資料名
+                    Tech Doc
                     <input value={row.techDocText} onChange={(event) => updateRow(row.rowId, "techDocText", event.target.value)} />
                   </label>
                   <label className="wide">
-                    作業内容
+                    Work Text
                     <textarea
                       className={`register-work-indent-${row.indentLevel}`}
                       value={row.workText}
@@ -1352,25 +1557,58 @@ function ModuleRegisterPage() {
                     />
                   </label>
                   <label className="wide">
-                    確認事項 or 項目
+                    Expected Result / Item
                     <input value={row.expectedResult} onChange={(event) => updateRow(row.rowId, "expectedResult", event.target.value)} />
                   </label>
-                  <label>
-                    時刻
-                    <input value={row.timeText} onChange={(event) => updateRow(row.rowId, "timeText", event.target.value)} />
-                  </label>
-                  <label>
-                    window
-                    <input value={row.windowText} onChange={(event) => updateRow(row.rowId, "windowText", event.target.value)} />
-                  </label>
-                  <label>
-                    P
-                    <input value={row.pText} onChange={(event) => updateRow(row.rowId, "pText", event.target.value)} />
-                  </label>
-                  <label>
-                    コマンド
-                    <input value={row.commandText} onChange={(event) => updateRow(row.rowId, "commandText", event.target.value)} />
-                  </label>
+                  <div className="wide register-device-row-groups">
+                    {deviceHeaders.map((header) => {
+                      const entry =
+                        row.deviceEntries.find((candidate) => candidate.slotNo === header.slotNo) ??
+                        {
+                          slotNo: header.slotNo,
+                          timeText: "",
+                          windowText: "",
+                          pText: "",
+                          commandText: "",
+                        };
+
+                      return (
+                        <section key={`${row.rowId}-${header.slotNo}`} className="register-device-row-group">
+                          <div className="register-device-row-group-header">
+                            <strong>{`Device ${header.slotNo}`}</strong>
+                            <span>{header.targetDeviceText || "No device label"}</span>
+                          </div>
+                          <div className="register-device-row-group-grid">
+                            <label>
+                              Time
+                              <input
+                                value={entry.timeText}
+                                onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "timeText", event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              window
+                              <input
+                                value={entry.windowText}
+                                onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "windowText", event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              P
+                              <input value={entry.pText} onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "pText", event.target.value)} />
+                            </label>
+                            <label>
+                              Command
+                              <input
+                                value={entry.commandText}
+                                onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "commandText", event.target.value)}
+                              />
+                            </label>
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
                 </div>
               </section>
             ))}
@@ -1388,22 +1626,23 @@ function ModuleRegisterPage() {
                   : ""
           }`}
         >
-          <span>保存状態</span>
+          <span>Save Status</span>
           <strong>
             {createState.status === "success"
-              ? "保存成功"
+              ? "Saved"
               : createState.status === "error"
-                ? "保存失敗"
+                ? "Failed"
                 : createState.status === "submitting"
-                  ? "保存中"
-                  : "入力待ち"}
+                  ? "Saving"
+                  : "Waiting"}
           </strong>
           <p>{createState.message}</p>
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.module_key}</span>
-              <span>version {createdItem.version_no}</span>
+              <span>{`version ${createdItem.version_no}`}</span>
               <span>{createdItem.status_label}</span>
+              <span>{`${createdItem.device_headers.length} device slots`}</span>
             </div>
           ) : null}
         </section>
@@ -1411,11 +1650,13 @@ function ModuleRegisterPage() {
         <Toolbar>
           {createdItem ? (
             <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}`)}>
-              <span aria-hidden="true">↗</span>詳細を開く
+              <span aria-hidden="true">&lt;-</span>
+              Open Detail
             </button>
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting"}>
-            <span aria-hidden="true">✓</span>{createState.status === "submitting" ? "登録中..." : "登録実行"}
+            <span aria-hidden="true">save</span>
+            {createState.status === "submitting" ? "Saving..." : "Save"}
           </button>
         </Toolbar>
       </form>
@@ -2591,6 +2832,40 @@ function ExcelSourceDocPreview({
       ))}
     </section>
   );
+}
+
+function getModuleDeviceHeaders(item: ModuleDetailData): ModuleDeviceHeaderData[] {
+  if (item.device_headers.length > 0) {
+    return [...item.device_headers].sort((left, right) => left.slot_no - right.slot_no);
+  }
+
+  return [
+    {
+      slot_no: 1,
+      header_time_text: item.header_time_text,
+      target_text: item.target_text,
+      p_text: item.common_p_text,
+      target_device_text: item.target_device_text,
+    },
+  ];
+}
+
+function getModuleDeviceEntry(row: ModuleDetailRowData, slotNo: number): ModuleRowDeviceEntryData | null {
+  if (row.device_entries.length > 0) {
+    return row.device_entries.find((entry) => entry.slot_no === slotNo) ?? null;
+  }
+
+  if (slotNo !== 1) {
+    return null;
+  }
+
+  return {
+    slot_no: 1,
+    time_text: row.time_text,
+    window_text: row.window_text,
+    p_text: row.p_text,
+    command_text: row.command_text,
+  };
 }
 
 function buildIndentedRows(rows: ModuleDetailRowData[]): Array<{ row: ModuleDetailRowData; indentLevel: 0 | 1 | 2 | 3 | 4 }> {
