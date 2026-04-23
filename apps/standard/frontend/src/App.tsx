@@ -1038,13 +1038,50 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
         ))}
       </div>
 
+      <div className="excel-sheet-wrap">
+        <table className="excel-sheet">
+          <colgroup>
+            <col className="excel-col-small" />
+            <col className="excel-col-small" />
+            <col className="excel-col-small" />
+            <col className="excel-col-doc" />
+            <col className="excel-col-work" />
+            <col className="excel-col-check" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Major</th>
+              <th>Middle</th>
+              <th>Minor</th>
+              <th>Tech Doc</th>
+              <th>Work Text</th>
+              <th>Expected Result / Item</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rowsWithIndent.map(({ row, indentLevel }) => (
+              <tr key={row.module_row_id} className={`excel-row excel-row-${row.row_type}`}>
+                <td className="excel-number">{row.major_no ?? ""}</td>
+                <td className="excel-number">{row.middle_no ?? ""}</td>
+                <td className="excel-number">{row.minor_no ?? ""}</td>
+                <td>{row.tech_doc_text ?? ""}</td>
+                <td className="excel-work-cell">
+                  <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                </td>
+                <td>{row.expected_result ?? ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       <div className="excel-device-accordion-list">
         {deviceHeaders.map((header, index) => (
           <details key={header.slot_no} className="excel-device-accordion" open={index === 0}>
             <summary className="excel-device-accordion-summary">
               <div className="excel-device-accordion-title">
                 <strong>{`Device ${header.slot_no}`}</strong>
-                <span>{header.target_device_text ?? "-"}</span>
+                <span>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</span>
               </div>
               <div className="excel-device-accordion-meta">
                 <span>{`Time ${header.header_time_text ?? "-"}`}</span>
@@ -1055,14 +1092,9 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
 
             <div className="excel-device-accordion-body">
               <div className="excel-sheet-wrap">
-                <table className="excel-sheet">
+                <table className="excel-sheet excel-device-command-sheet">
                   <colgroup>
                     <col className="excel-col-small" />
-                    <col className="excel-col-small" />
-                    <col className="excel-col-small" />
-                    <col className="excel-col-doc" />
-                    <col className="excel-col-work" />
-                    <col className="excel-col-check" />
                     <col className="excel-col-time" />
                     <col className="excel-col-window" />
                     <col className="excel-col-prompt" />
@@ -1070,17 +1102,7 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
                   </colgroup>
                   <thead>
                     <tr>
-                      <th rowSpan={2}>Major</th>
-                      <th rowSpan={2}>Middle</th>
-                      <th rowSpan={2}>Minor</th>
-                      <th rowSpan={2}>Tech Doc</th>
-                      <th rowSpan={2}>Work Text</th>
-                      <th rowSpan={2}>Expected Result / Item</th>
-                      <th colSpan={4} className="excel-device-group-heading">
-                        {`Device ${header.slot_no}`}
-                      </th>
-                    </tr>
-                    <tr>
+                      <th>Row</th>
                       <th>Time</th>
                       <th>window</th>
                       <th>P</th>
@@ -1088,19 +1110,12 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {rowsWithIndent.map(({ row, indentLevel }) => {
+                    {rowsWithIndent.map(({ row }) => {
                       const entry = getModuleDeviceEntry(row, header.slot_no);
 
                       return (
                         <tr key={`${row.module_row_id}-${header.slot_no}`} className={`excel-row excel-row-${row.row_type}`}>
-                          <td className="excel-number">{row.major_no ?? ""}</td>
-                          <td className="excel-number">{row.middle_no ?? ""}</td>
-                          <td className="excel-number">{row.minor_no ?? ""}</td>
-                          <td>{row.tech_doc_text ?? ""}</td>
-                          <td className="excel-work-cell">
-                            <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
-                          </td>
-                          <td>{row.expected_result ?? ""}</td>
+                          <td className="excel-number">{row.row_order}</td>
                           <td className="excel-center">{entry?.time_text ?? ""}</td>
                           <td>{entry?.window_text ?? ""}</td>
                           <td>{entry?.p_text ?? ""}</td>
@@ -1118,7 +1133,7 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
 
       <div className="excel-remarks">
         <strong>Remarks</strong>
-        <p>Each device is shown in its own accordion. Open only the devices you need, while the fixed procedure columns stay consistent for comparison.</p>
+        <p>Keep the common procedure table visible, then open only the device command blocks you need. This keeps the Excel-style comparison readable even when devices increase.</p>
       </div>
     </section>
   );
@@ -2896,19 +2911,37 @@ function ExcelSourceDocPreview({
 }
 
 function getModuleDeviceHeaders(item: ModuleDetailData): ModuleDeviceHeaderData[] {
-  if (item.device_headers.length > 0) {
-    return [...item.device_headers].sort((left, right) => left.slot_no - right.slot_no);
-  }
+  const headersBySlot = new Map<number, ModuleDeviceHeaderData>();
 
-  return [
-    {
+  item.device_headers.forEach((header) => {
+    headersBySlot.set(header.slot_no, header);
+  });
+
+  item.rows.forEach((row) => {
+    row.device_entries.forEach((entry) => {
+      if (!headersBySlot.has(entry.slot_no)) {
+        headersBySlot.set(entry.slot_no, {
+          slot_no: entry.slot_no,
+          header_time_text: null,
+          target_text: null,
+          p_text: null,
+          target_device_text: `device-${String(entry.slot_no).padStart(2, "0")}`,
+        });
+      }
+    });
+  });
+
+  if (headersBySlot.size === 0) {
+    headersBySlot.set(1, {
       slot_no: 1,
       header_time_text: item.header_time_text,
       target_text: item.target_text,
       p_text: item.common_p_text,
       target_device_text: item.target_device_text,
-    },
-  ];
+    });
+  }
+
+  return [...headersBySlot.values()].sort((left, right) => left.slot_no - right.slot_no);
 }
 
 function getModuleDeviceEntry(row: ModuleDetailRowData, slotNo: number): ModuleRowDeviceEntryData | null {
