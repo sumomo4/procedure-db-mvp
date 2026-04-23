@@ -710,3 +710,77 @@ def test_normalize_module_sheet_rejects_invalid_payload(client: TestClient) -> N
         "data": None,
         "message": "Request validation failed: 1 error(s).",
     }
+
+
+def test_import_module_workbook_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workbook import API should normalize uploaded bytes into create payload."""
+
+    def fake_build_module_create_request_from_workbook_bytes(**kwargs: object) -> object:
+        assert kwargs["filename"] == "sample.xlsx"
+        assert kwargs["created_by"] == "codex"
+        assert kwargs["workbook_bytes"] == b"sample-bytes"
+        return {
+            "module_key": None,
+            "module_name": "Workbook module",
+            "description": None,
+            "change_note": "imported from workbook upload",
+            "source_xlsx_path": "sample.xlsx",
+            "source_sha256": "abc123",
+            "created_by": "codex",
+            "header_time_text": None,
+            "target_text": None,
+            "common_p_text": None,
+            "target_device_text": None,
+            "device_headers": [{"slot_no": 1, "target_device_text": "device-01"}],
+            "rows": [{"row_order": 1, "row_type": "step", "device_entries": []}],
+        }
+
+    monkeypatch.setattr(
+        modules,
+        "build_module_create_request_from_workbook_bytes",
+        fake_build_module_create_request_from_workbook_bytes,
+    )
+
+    response = client.post(
+        "/api/v1/modules/import?filename=sample.xlsx&created_by=codex",
+        content=b"sample-bytes",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["result"] == "success"
+    assert response.json()["message"] == "Workbook upload was normalized."
+    assert response.json()["data"]["module_name"] == "Workbook module"
+
+
+def test_import_module_workbook_rejects_business_validation_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workbook import API should return 400 for parser validation errors."""
+
+    def fake_build_module_create_request_from_workbook_bytes(**kwargs: object) -> object:
+        del kwargs
+        raise ValueError("filename must end with .xlsx or .xlsm.")
+
+    monkeypatch.setattr(
+        modules,
+        "build_module_create_request_from_workbook_bytes",
+        fake_build_module_create_request_from_workbook_bytes,
+    )
+
+    response = client.post(
+        "/api/v1/modules/import?filename=sample.txt",
+        content=b"sample-bytes",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "filename must end with .xlsx or .xlsm.",
+    }

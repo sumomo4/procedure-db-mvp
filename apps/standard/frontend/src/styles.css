@@ -926,6 +926,31 @@ th {
   font-weight: 800;
 }
 
+.json-preview-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.json-preview-wrap summary {
+  cursor: pointer;
+  color: #1f6f78;
+  font-weight: 800;
+}
+
+.json-preview {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #d6cdbc;
+  border-radius: 8px;
+  background: #f8fbfc;
+  color: #172026;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);

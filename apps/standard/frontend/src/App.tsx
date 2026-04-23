@@ -138,6 +138,62 @@ type ModuleCreateState = {
   message: string;
 };
 
+type ModuleImportPreviewDeviceHeaderData = {
+  slot_no: number;
+  header_time_text: string | null;
+  target_text: string | null;
+  p_text: string | null;
+  target_device_text: string | null;
+};
+
+type ModuleImportPreviewRowDeviceEntryData = {
+  slot_no: number;
+  time_text: string | null;
+  window_text: string | null;
+  p_text: string | null;
+  command_text: string | null;
+};
+
+type ModuleImportPreviewRowData = {
+  row_order: number;
+  row_type: string;
+  major_no: string | null;
+  middle_no: string | null;
+  minor_no: string | null;
+  tech_doc_text: string | null;
+  work_text: string | null;
+  indent_level: number | null;
+  expected_result: string | null;
+  time_text: string | null;
+  window_text: string | null;
+  p_text: string | null;
+  command_text: string | null;
+  note: string | null;
+  device_entries: ModuleImportPreviewRowDeviceEntryData[];
+};
+
+type ModuleImportPreviewData = {
+  module_key: string | null;
+  module_name: string;
+  description: string | null;
+  change_note: string | null;
+  source_xlsx_path: string | null;
+  source_sha256: string | null;
+  created_by: string | null;
+  header_time_text: string | null;
+  target_text: string | null;
+  common_p_text: string | null;
+  target_device_text: string | null;
+  device_headers: ModuleImportPreviewDeviceHeaderData[];
+  rows: ModuleImportPreviewRowData[];
+};
+
+type ModuleImportPreviewState = {
+  status: "idle" | "submitting" | "success" | "error";
+  item: ModuleImportPreviewData | null;
+  message: string;
+};
+
 type ModuleRegisterRowDraft = {
   rowId: number;
   indentLevel: number;
@@ -1251,6 +1307,12 @@ function ModuleRegisterPage() {
     message: "装置ブロックと手順行を入力して、初版モジュールを保存してください。",
   });
 
+  const [importPreviewState, setImportPreviewState] = useState<ModuleImportPreviewState>({
+    status: "idle",
+    item: null,
+    message: "import-sheet 入口の確認はまだ実行していません。",
+  });
+
   function updateRow(rowId: number, field: keyof ModuleRegisterRowDraft, value: string | number): void {
     setRows((currentRows) =>
       currentRows.map((row) => (row.rowId === rowId ? { ...row, [field]: value } : row)),
@@ -1456,7 +1518,78 @@ function ModuleRegisterPage() {
     }
   }
 
+  async function handleImportPreview(): Promise<void> {
+    setImportPreviewState({
+      status: "submitting",
+      item: null,
+      message: "import-sheet へ現在の入力を送信しています。",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/import-sheet"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          module_key: moduleKeyInput.trim() || undefined,
+          module_name: moduleNameInput.trim(),
+          description: descriptionInput.trim() || undefined,
+          change_note: "preview from register screen",
+          source_xlsx_path: sourcePathInput.trim() || undefined,
+          created_by: createdByInput.trim() || undefined,
+          device_header_cells: deviceHeaders.map((header) => ({
+            slot_no: header.slotNo,
+            header_time_text: header.headerTimeText.trim() || undefined,
+            target_text: header.targetText.trim() || undefined,
+            p_text: header.pText.trim() || undefined,
+            target_device_text: header.targetDeviceText.trim() || undefined,
+          })),
+          row_cells: rows.map((row) => ({
+            A: row.majorNo.trim() || undefined,
+            B: row.middleNo.trim() || undefined,
+            C: row.minorNo.trim() || undefined,
+            D: row.techDocText.trim() || undefined,
+            [["E", "F", "G", "H"][row.indentLevel] ?? "E"]: row.workText.trim() || undefined,
+            I: row.expectedResult.trim() || undefined,
+            device_entries: row.deviceEntries.map((entry) => ({
+              slot_no: entry.slotNo,
+              time_text: entry.timeText.trim() || undefined,
+              window_text: entry.windowText.trim() || undefined,
+              p_text: entry.pText.trim() || undefined,
+              command_text: entry.commandText.trim() || undefined,
+            })),
+          })),
+        }),
+      });
+
+      const responseBody = (await response.json()) as ApiResponse<ModuleImportPreviewData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setImportPreviewState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `import-sheet 変換に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setImportPreviewState({
+        status: "success",
+        item: responseBody.data,
+        message: responseBody.message || "入力内容を ModuleCreateRequest に正規化できました。",
+      });
+    } catch (error) {
+      setImportPreviewState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "import-sheet 変換に失敗しました。",
+      });
+    }
+  }
+
   const createdItem = createState.item;
+  const previewItem = importPreviewState.item;
 
   return (
     <Page
@@ -1694,6 +1827,60 @@ function ModuleRegisterPage() {
               </section>
             ))}
           </div>
+        </section>
+
+        <section className="register-step-card">
+          <div className="register-step-header">
+            <div>
+              <h2>Excel取込プレビュー</h2>
+              <p className="register-section-copy">
+                現在の入力を 1 シート相当の JSON として <code>POST /api/v1/modules/import-sheet</code> に送り、
+                正規化後の内容を確認します。
+              </p>
+            </div>
+            <button className="secondary" type="button" onClick={() => void handleImportPreview()}>
+              <span aria-hidden="true">⇄</span>
+              プレビュー実行
+            </button>
+          </div>
+
+          <section
+            className={`register-status ${
+              importPreviewState.status === "success"
+                ? "register-status-success"
+                : importPreviewState.status === "error"
+                  ? "register-status-error"
+                  : importPreviewState.status === "submitting"
+                    ? "register-status-submitting"
+                    : ""
+            }`}
+          >
+            <span>プレビュー状態</span>
+            <strong>
+              {importPreviewState.status === "success"
+                ? "正規化完了"
+                : importPreviewState.status === "error"
+                  ? "変換失敗"
+                  : importPreviewState.status === "submitting"
+                    ? "変換中"
+                    : "未実行"}
+            </strong>
+            <p>{importPreviewState.message}</p>
+            {previewItem ? (
+              <>
+                <div className="register-result-meta">
+                  <span>{previewItem.module_key ?? "(auto)"}</span>
+                  <span>{previewItem.module_name}</span>
+                  <span>{`装置 ${previewItem.device_headers.length} 台`}</span>
+                  <span>{`手順行 ${previewItem.rows.length} 行`}</span>
+                </div>
+                <details className="json-preview-wrap">
+                  <summary>正規化結果を表示</summary>
+                  <pre className="json-preview">{JSON.stringify(previewItem, null, 2)}</pre>
+                </details>
+              </>
+            ) : null}
+          </section>
         </section>
 
         <section

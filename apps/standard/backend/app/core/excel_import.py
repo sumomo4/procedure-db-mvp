@@ -1,7 +1,12 @@
 """Helpers for future Excel module import processing."""
 
 from collections.abc import Mapping, Sequence
+from hashlib import sha256
+from io import BytesIO
+from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
+from zipfile import BadZipFile, ZipFile
 
 from app.core.responses import (
     ModuleCreateDeviceHeaderInput,
@@ -20,6 +25,29 @@ COMMON_ROW_COLUMN_MAP = {
     "I": "expected_result",
 }
 MAX_DEVICE_SLOTS = 20
+OFFICE_DOCUMENT_NS = {
+    "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "pkgrel": "http://schemas.openxmlformats.org/package/2006/relationships",
+}
+HEADER_LABEL_SKIP_SET = {
+    "時刻",
+    "target",
+    "p",
+    "対象装置",
+    "window",
+    "コマンド",
+    "大",
+    "中",
+    "小",
+    "技術資料名",
+    "作業内容",
+    "確認事項or項目",
+    "確認事項",
+    "項目",
+    "expectedresult",
+    "item",
+}
 
 
 def normalize_excel_cell_text(value: object) -> str | None:
@@ -39,6 +67,206 @@ def normalize_excel_cell_text(value: object) -> str | None:
     if not text:
         return None
     return text
+
+
+def _normalize_label_text(value: object | None) -> str:
+    """Normalize header labels for loose worksheet matching."""
+
+    text = normalize_excel_cell_text(value) or ""
+    return "".join(text.lower().split())
+
+
+def _column_letters_to_index(column_letters: str) -> int:
+    """Convert Excel column letters such as ``A`` or ``AA`` to 1-based index."""
+
+    index = 0
+    for letter in column_letters:
+        if not letter.isalpha():
+            break
+        index = index * 26 + (ord(letter.upper()) - ord("A") + 1)
+    return index
+
+
+def _column_index_to_letters(column_index: int) -> str:
+    """Convert a 1-based Excel column index to letters."""
+
+    letters: list[str] = []
+    current = column_index
+    while current > 0:
+        current, remainder = divmod(current - 1, 26)
+        letters.append(chr(ord("A") + remainder))
+    return "".join(reversed(letters))
+
+
+def _split_cell_reference(cell_reference: str) -> tuple[str, int]:
+    """Split an Excel cell reference such as ``J12``."""
+
+    column_letters = "".join(character for character in cell_reference if character.isalpha())
+    row_digits = "".join(character for character in cell_reference if character.isdigit())
+    if not column_letters or not row_digits:
+        raise ValueError(f"Unsupported Excel cell reference: {cell_reference}")
+    return column_letters, int(row_digits)
+
+
+def _read_xlsx_shared_strings(archive: ZipFile) -> list[str]:
+    """Read shared strings from an XLSX/XLSM archive when present."""
+
+    shared_strings_path = "xl/sharedStrings.xml"
+    if shared_strings_path not in archive.namelist():
+        return []
+
+    root = ElementTree.fromstring(archive.read(shared_strings_path))
+    values: list[str] = []
+    for item in root.findall("main:si", OFFICE_DOCUMENT_NS):
+        text_parts = [text_node.text or "" for text_node in item.findall(".//main:t", OFFICE_DOCUMENT_NS)]
+        values.append("".join(text_parts))
+    return values
+
+
+def _extract_sheet_rows(archive: ZipFile, sheet_path: str) -> tuple[str | None, list[tuple[int, dict[str, str | None]]]]:
+    """Extract one worksheet into row-wise cell mappings."""
+
+    shared_strings = _read_xlsx_shared_strings(archive)
+    root = ElementTree.fromstring(archive.read(sheet_path))
+    rows: list[tuple[int, dict[str, str | None]]] = []
+
+    for row_node in root.findall("main:sheetData/main:row", OFFICE_DOCUMENT_NS):
+        row_index = int(row_node.attrib.get("r", "0"))
+        cell_map: dict[str, str | None] = {}
+
+        for cell_node in row_node.findall("main:c", OFFICE_DOCUMENT_NS):
+            reference = cell_node.attrib.get("r")
+            if not reference:
+                continue
+            column_letters, _ = _split_cell_reference(reference)
+            cell_type = cell_node.attrib.get("t")
+            value: str | None
+
+            if cell_type == "inlineStr":
+                inline_texts = [text_node.text or "" for text_node in cell_node.findall(".//main:t", OFFICE_DOCUMENT_NS)]
+                value = "".join(inline_texts)
+            else:
+                value_node = cell_node.find("main:v", OFFICE_DOCUMENT_NS)
+                if value_node is None or value_node.text is None:
+                    value = None
+                elif cell_type == "s":
+                    value = shared_strings[int(value_node.text)]
+                else:
+                    value = value_node.text
+
+            cell_map[column_letters] = normalize_excel_cell_text(value)
+
+        rows.append((row_index, cell_map))
+
+    sheet_name = root.attrib.get("name")
+    return sheet_name, rows
+
+
+def _resolve_workbook_sheet_path(archive: ZipFile, sheet_name: str | None = None) -> tuple[str, str]:
+    """Resolve the first or named sheet path inside the workbook archive."""
+
+    workbook_root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+    workbook_rels_root = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+    relationship_map = {
+        rel.attrib["Id"]: rel.attrib["Target"]
+        for rel in workbook_rels_root.findall("pkgrel:Relationship", OFFICE_DOCUMENT_NS)
+    }
+
+    sheets = workbook_root.findall("main:sheets/main:sheet", OFFICE_DOCUMENT_NS)
+    if not sheets:
+        raise ValueError("Workbook does not contain any sheets.")
+
+    selected_sheet = None
+    if sheet_name:
+        normalized_sheet_name = _normalize_label_text(sheet_name)
+        for candidate in sheets:
+            if _normalize_label_text(candidate.attrib.get("name")) == normalized_sheet_name:
+                selected_sheet = candidate
+                break
+        if selected_sheet is None:
+            raise ValueError("Requested sheet_name was not found in workbook.")
+    else:
+        selected_sheet = sheets[0]
+
+    relation_id = selected_sheet.attrib.get(f"{{{OFFICE_DOCUMENT_NS['rel']}}}id")
+    if relation_id is None or relation_id not in relationship_map:
+        raise ValueError("Workbook sheet relationship is missing.")
+
+    target_path = relationship_map[relation_id].replace("\\", "/")
+    if not target_path.startswith("xl/"):
+        target_path = f"xl/{target_path.lstrip('/')}"
+    return selected_sheet.attrib.get("name", "sheet"), target_path
+
+
+def _find_header_row_index(rows: Sequence[tuple[int, dict[str, str | None]]]) -> int | None:
+    """Find the table header row by matching common procedure labels."""
+
+    required_labels = {"大", "中", "小", "作業内容"}
+    for row_index, cell_map in rows:
+        normalized_values = {_normalize_label_text(value) for value in cell_map.values() if value}
+        if all(_normalize_label_text(label) in normalized_values for label in required_labels):
+            return row_index
+    return None
+
+
+def _extract_device_headers_from_rows(
+    rows_before_header: Sequence[tuple[int, dict[str, str | None]]],
+    device_count: int,
+) -> list[dict[str, str | int | None]]:
+    """Extract device header blocks from worksheet rows before the table header."""
+
+    headers: list[dict[str, str | int | None]] = []
+    for slot_no in range(1, device_count + 1):
+        start_index = 10 + ((slot_no - 1) * 4)
+        field_names = ("header_time_text", "target_text", "p_text", "target_device_text")
+        header_values: dict[str, str | int | None] = {"slot_no": slot_no}
+
+        for offset, field_name in enumerate(field_names):
+            column_name = _column_index_to_letters(start_index + offset)
+            candidates = [
+                value
+                for _, cell_map in rows_before_header
+                if (value := cell_map.get(column_name)) is not None
+                and _normalize_label_text(value) not in HEADER_LABEL_SKIP_SET
+            ]
+            header_values[field_name] = candidates[-1] if candidates else None
+
+        if header_values["target_device_text"] is None:
+            header_values["target_device_text"] = f"device-{slot_no:02d}"
+        headers.append(header_values)
+
+    return headers
+
+
+def _build_sheet_rows_from_cells(
+    rows_after_header: Sequence[tuple[int, dict[str, str | None]]],
+    device_count: int,
+) -> list[dict[str, Any]]:
+    """Convert worksheet rows after the header into helper-compatible row cells."""
+
+    normalized_rows: list[dict[str, Any]] = []
+
+    for _, cell_map in rows_after_header:
+        row_payload: dict[str, Any] = {column_name: cell_map.get(column_name) for column_name in COMMON_ROW_COLUMN_MAP}
+        row_payload.update({column_name: cell_map.get(column_name) for column_name in WORK_TEXT_COLUMNS})
+
+        device_entries: list[dict[str, str | int | None]] = []
+        for slot_no in range(1, device_count + 1):
+            start_index = 10 + ((slot_no - 1) * 4)
+            device_entries.append(
+                {
+                    "slot_no": slot_no,
+                    "time_text": cell_map.get(_column_index_to_letters(start_index)),
+                    "window_text": cell_map.get(_column_index_to_letters(start_index + 1)),
+                    "p_text": cell_map.get(_column_index_to_letters(start_index + 2)),
+                    "command_text": cell_map.get(_column_index_to_letters(start_index + 3)),
+                }
+            )
+
+        row_payload["device_entries"] = device_entries
+        normalized_rows.append(row_payload)
+
+    return normalized_rows
 
 
 def extract_work_text_and_indent_level(
@@ -223,4 +451,70 @@ def build_module_create_request_from_sheet_data(
         created_by=normalize_excel_cell_text(created_by),
         device_headers=normalized_headers,
         rows=normalized_rows,
+    )
+
+
+def build_module_create_request_from_workbook_bytes(
+    *,
+    workbook_bytes: bytes,
+    filename: str,
+    created_by: str | None = None,
+    sheet_name: str | None = None,
+) -> ModuleCreateRequest:
+    """Convert an uploaded XLSX/XLSM workbook into ``ModuleCreateRequest``.
+
+    The current Sprint 3 scope reads only one sheet and normalizes it using the
+    same helper path as the JSON-based ``import-sheet`` endpoint.
+    """
+
+    if not workbook_bytes:
+        raise ValueError("Workbook bytes must not be empty.")
+
+    extension = Path(filename).suffix.lower()
+    if extension not in {".xlsx", ".xlsm"}:
+        raise ValueError("filename must end with .xlsx or .xlsm.")
+
+    try:
+        with ZipFile(BytesIO(workbook_bytes)) as archive:
+            selected_sheet_name, sheet_path = _resolve_workbook_sheet_path(archive, sheet_name=sheet_name)
+            _, extracted_rows = _extract_sheet_rows(archive, sheet_path)
+    except BadZipFile as exception:
+        raise ValueError("Uploaded file is not a valid XLSX/XLSM workbook.") from exception
+    except KeyError as exception:
+        raise ValueError("Workbook structure is incomplete.") from exception
+    except ElementTree.ParseError as exception:
+        raise ValueError("Workbook XML could not be parsed.") from exception
+
+    header_row_index = _find_header_row_index(extracted_rows)
+    if header_row_index is None:
+        raise ValueError("Worksheet header row was not found.")
+
+    rows_before_header = [row for row in extracted_rows if row[0] < header_row_index]
+    rows_after_header = [row for row in extracted_rows if row[0] > header_row_index]
+    if not rows_after_header:
+        raise ValueError("Worksheet does not contain any data rows.")
+
+    max_column_index = max(
+        (
+            _column_letters_to_index(column_name)
+            for _, cell_map in rows_after_header
+            for column_name, value in cell_map.items()
+            if value is not None
+        ),
+        default=9,
+    )
+    device_count = max(1, ((max_column_index - 10) // 4) + 1) if max_column_index >= 10 else 1
+    if device_count > MAX_DEVICE_SLOTS:
+        raise ValueError("Excel device headers must not exceed 20 slots.")
+
+    return build_module_create_request_from_sheet_data(
+        module_key=None,
+        module_name=selected_sheet_name,
+        description=None,
+        change_note="imported from workbook upload",
+        source_xlsx_path=filename,
+        source_sha256=sha256(workbook_bytes).hexdigest(),
+        created_by=created_by,
+        device_header_cells=_extract_device_headers_from_rows(rows_before_header, device_count),
+        row_cells=_build_sheet_rows_from_cells(rows_after_header, device_count),
     )

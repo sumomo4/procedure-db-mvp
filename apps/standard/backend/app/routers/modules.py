@@ -2,10 +2,13 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 
 from app.core.config import AppSettings
-from app.core.excel_import import build_module_create_request_from_sheet_data
+from app.core.excel_import import (
+    build_module_create_request_from_sheet_data,
+    build_module_create_request_from_workbook_bytes,
+)
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ApiResponse,
@@ -176,3 +179,32 @@ def normalize_module_sheet_resource(
         ) from exception
 
     return success_response(data, "Excel sheet input was normalized.")
+
+
+@router.post("/import", response_model=ApiResponse[ModuleCreateRequest])
+def import_module_workbook_resource(
+    payload: bytes = Body(),
+    filename: Annotated[str, Query(min_length=1)] = "",
+    created_by: Annotated[str | None, Query()] = None,
+    sheet_name: Annotated[str | None, Query()] = None,
+) -> ApiResponse[ModuleCreateRequest]:
+    """Normalize one uploaded workbook into ``ModuleCreateRequest``.
+
+    Sprint 3 first exposes raw binary upload so we can validate the workbook
+    parser before wiring multipart upload in the UI.
+    """
+
+    try:
+        data = build_module_create_request_from_workbook_bytes(
+            workbook_bytes=payload,
+            filename=filename,
+            created_by=created_by,
+            sheet_name=sheet_name,
+        )
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "Workbook upload was normalized.")

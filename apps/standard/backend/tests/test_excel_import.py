@@ -1,12 +1,68 @@
 """Tests for future Excel import helpers."""
 
+from io import BytesIO
+from zipfile import ZipFile
+
 import pytest
 
 from app.core.excel_import import (
     build_module_create_request_from_sheet_data,
+    build_module_create_request_from_workbook_bytes,
     extract_work_text_and_indent_level,
     normalize_excel_cell_text,
 )
+
+
+def _create_test_workbook_bytes(
+    sheet_name: str,
+    rows: list[dict[str, str]],
+) -> bytes:
+    """Build a minimal XLSX archive for parser tests."""
+
+    row_xml_parts: list[str] = []
+    for row_index, row in enumerate(rows, start=1):
+        cell_xml_parts = []
+        for cell_reference, value in row.items():
+            escaped = (
+                value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            cell_xml_parts.append(
+                f'<c r="{cell_reference}" t="inlineStr"><is><t>{escaped}</t></is></c>'
+            )
+        row_xml_parts.append(f'<row r="{row_index}">{"".join(cell_xml_parts)}</row>')
+
+    worksheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"<sheetData>{''.join(row_xml_parts)}</sheetData>"
+        "</worksheet>"
+    )
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="'
+        f"{sheet_name}"
+        '" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    workbook_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/>'
+        "</Relationships>"
+    )
+
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
+
+    return buffer.getvalue()
 
 
 def test_normalize_excel_cell_text_trims_string_values() -> None:
@@ -204,3 +260,60 @@ def test_build_module_create_request_from_sheet_data_skips_empty_rows() -> None:
     assert [row.row_order for row in payload.rows] == [1, 2]
     assert [row.work_text for row in payload.rows] == ["first", "second"]
     assert [row.indent_level for row in payload.rows] == [0, 1]
+
+
+def test_build_module_create_request_from_workbook_bytes_supports_minimal_xlsx() -> None:
+    """A minimal workbook should normalize into the create request model."""
+
+    workbook_bytes = _create_test_workbook_bytes(
+        "SheetImport",
+        rows=[
+            {
+                "A1": "大",
+                "B1": "中",
+                "C1": "小",
+                "D1": "技術資料名",
+                "F1": "作業内容",
+                "I1": "確認事項",
+                "J1": "時刻",
+                "K1": "window",
+                "L1": "P",
+                "M1": "コマンド",
+            },
+            {
+                "A2": "1",
+                "B2": "1",
+                "C2": "1",
+                "D2": "Tech doc",
+                "F2": "Check command",
+                "I2": "Ready",
+                "J2": "10:00",
+                "K2": "STOP",
+                "L2": ">",
+                "M2": "show version",
+            },
+        ],
+    )
+
+    payload = build_module_create_request_from_workbook_bytes(
+        workbook_bytes=workbook_bytes,
+        filename="sample.xlsx",
+        created_by="tester",
+    )
+
+    assert payload.module_name == "SheetImport"
+    assert payload.source_xlsx_path == "sample.xlsx"
+    assert payload.created_by == "tester"
+    assert len(payload.device_headers) == 1
+    assert payload.rows[0].work_text == "Check command"
+    assert payload.rows[0].device_entries[0].command_text == "show version"
+
+
+def test_build_module_create_request_from_workbook_bytes_rejects_invalid_extension() -> None:
+    """Only XLSX/XLSM uploads should be accepted."""
+
+    with pytest.raises(ValueError, match="filename must end with .xlsx or .xlsm"):
+        build_module_create_request_from_workbook_bytes(
+            workbook_bytes=b"sample",
+            filename="sample.txt",
+        )

@@ -27,7 +27,7 @@ Sprint 3 では、Sprint 2 で整えた参照系の土台をもとに、standard
 | SB3-09 | API | 承認状態変更APIを実装する | Medium | [済] | `PATCH /api/v1/statuses/{target_id}` で状態変更できる | SB3-08 |
 | SB3-10 | WebUI | 承認状態変更操作を画面から実行できるようにする | Medium | [済] | 承認状態確認画面から状態変更APIを呼べる | SB3-09 |
 | SB3-11 | 設計 | Excel取込の最小入力設計を整理する | Medium | [済] | `excel_import.py` と整合する最小入力仕様が整理されている | SB3-01 |
-| SB3-12 | API | Excel取込の最小実装を行う | Medium | [進行中] | Excel取込の入口を API / helper で確認できる | SB3-11 |
+| SB3-12 | API | Excel取込の最小実装を行う | Medium | [済] | Excel取込の入口を API / helper で確認できる | SB3-11 |
 | SB3-13 | CI | 追加API / 画面変更に合わせた確認を整理する | Medium | [未] | pytest / build / deploy script check の観点が揃っている | SB3-02, SB3-05, SB3-09 |
 | SB3-14 | Deploy | Sprint 3 の中間成果をテストサーバーで確認する | Medium | [進行中] | 実装済み機能がテストサーバーで確認できる | SB3-03, SB3-07, SB3-10 |
 | SB3-15 | Review | Sprint 3 レビュー観点を整理する | Medium | [未] | レビュー時に確認すべき項目がまとまっている | SB3-14 |
@@ -69,7 +69,8 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
   - `excel_import.py` に 1シート分を `ModuleCreateRequest` へ変換する helper を追加
   - pytest で 1台 / 2台 / 20台境界 / 段落 / 空行 を確認
   - helper を呼ぶ薄い入口として `POST /api/v1/modules/import-sheet` を追加
-  - upload API や実ファイル読込の入口は次段で継続
+  - raw binary upload の `POST /api/v1/modules/import` を追加
+  - モジュール登録画面に `import-sheet` プレビュー導線を追加
 - 詳細画面改善
   - モジュール詳細の Excel 風表示
   - 作業内容段落の DB 保持 (`indent_level`)
