@@ -857,7 +857,7 @@ function ModuleListPage() {
         </section>
       ) : (
         <DataTable
-          columns={["モジュールID", "モジュール名", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "操作"]}
+          columns={["モジュールID", "モジュール名", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "é¸æ"]}
           rows={moduleListState.items.map((item) => [
             item.module_key,
             item.module_name,
@@ -3260,7 +3260,7 @@ function ApprovalPage() {
         </section>
       ) : (
         <DataTable
-          columns={["対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "詳細"]}
+          columns={["対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "選択"]}
           rows={approvalListState.items.map((item) => [
             `${item.target_key} ${item.target_name}`,
             `v${item.version_no}`,
@@ -3269,15 +3269,14 @@ function ApprovalPage() {
             `${item.enabled_module_count}/${item.module_count}`,
             item.updated_at,
             <button className="text-button" onClick={() => setSelectedTargetId(item.target_id)}>
-              詳細表示
-            </button>,
+              å¯¾è±¡ãé¸ã¶</button>,
           ])}
         />
       )}
 
       <section className={`list-status list-status-${detailStatusClass}`} aria-live="polite">
         <div>
-          <span>詳細取得状態</span>
+          <span>é¸æç¶æ</span>
           <strong>
             {approvalDetailState.status === "idle"
               ? "未選択"
