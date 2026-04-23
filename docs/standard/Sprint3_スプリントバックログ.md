@@ -68,6 +68,7 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
 - SB3-12
   - `excel_import.py` に 1シート分を `ModuleCreateRequest` へ変換する helper を追加
   - pytest で 1台 / 2台 / 20台境界 / 段落 / 空行 を確認
+  - helper を呼ぶ薄い入口として `POST /api/v1/modules/import-sheet` を追加
   - upload API や実ファイル読込の入口は次段で継続
 - 詳細画面改善
   - モジュール詳細の Excel 風表示
@@ -114,3 +115,8 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
 2. 原本詳細側も多装置表示方針をそろえる
 3. Sprint 3 レビュー観点を整理する
 4. 承認状態変更の利用手順を確認する
+
+### SB3-12 進め方メモ
+- 先行方針は `helper 直呼び確認 -> 薄い backend 入口 -> upload API` とする
+- まずは 1シート相当の JSON を `POST /api/v1/modules/import-sheet` へ渡し、`ModuleCreateRequest` へ正規化できることを確認する
+- 実ファイル upload は次段で追加する

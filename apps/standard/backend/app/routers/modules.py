@@ -5,9 +5,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.config import AppSettings
+from app.core.excel_import import build_module_create_request_from_sheet_data
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ApiResponse,
+    ExcelImportSheetRequest,
     ModuleCreateRequest,
     ModuleDetailData,
     ModuleListData,
@@ -142,3 +144,35 @@ def create_module_resource(
         ) from exception
 
     return success_response(data, "Module was created.")
+
+
+@router.post("/import-sheet", response_model=ApiResponse[ModuleCreateRequest])
+def normalize_module_sheet_resource(
+    payload: ExcelImportSheetRequest,
+) -> ApiResponse[ModuleCreateRequest]:
+    """Normalize one Excel sheet worth of input into ``ModuleCreateRequest``.
+
+    This is the thin Sprint 3 entry point before we add real multipart upload.
+    It lets the frontend or tests submit one-sheet JSON and verify the helper
+    output that will later feed the existing create API.
+    """
+
+    try:
+        data = build_module_create_request_from_sheet_data(
+            module_key=payload.module_key,
+            module_name=payload.module_name,
+            description=payload.description,
+            change_note=payload.change_note,
+            source_xlsx_path=payload.source_xlsx_path,
+            source_sha256=payload.source_sha256,
+            created_by=payload.created_by,
+            device_header_cells=[header.model_dump() for header in payload.device_header_cells],
+            row_cells=[row.model_dump() for row in payload.row_cells],
+        )
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "Excel sheet input was normalized.")

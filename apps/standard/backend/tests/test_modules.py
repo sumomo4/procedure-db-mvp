@@ -517,3 +517,196 @@ def test_create_module_returns_error_response(
         "data": None,
         "message": "Module create failed.",
     }
+
+
+def test_normalize_module_sheet_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sheet-normalize API should return a create payload preview."""
+
+    def fake_build_module_create_request_from_sheet_data(**kwargs: object) -> object:
+        assert kwargs["module_name"] == "Excel import module"
+        assert len(kwargs["device_header_cells"]) == 2
+        assert len(kwargs["row_cells"]) == 1
+        return {
+            "module_key": "MOD-900",
+            "module_name": "Excel import module",
+            "description": "Imported from one sheet",
+            "change_note": "Initial import",
+            "source_xlsx_path": "imports/sample.xlsx",
+            "source_sha256": "abc123",
+            "created_by": "codex",
+            "header_time_text": None,
+            "target_text": None,
+            "common_p_text": None,
+            "target_device_text": None,
+            "device_headers": [
+                {
+                    "slot_no": 1,
+                    "header_time_text": "09:00",
+                    "target_text": "target-1",
+                    "p_text": ">",
+                    "target_device_text": "device-01",
+                },
+                {
+                    "slot_no": 2,
+                    "header_time_text": "09:05",
+                    "target_text": "target-2",
+                    "p_text": "#",
+                    "target_device_text": "device-02",
+                },
+            ],
+            "rows": [
+                {
+                    "row_order": 1,
+                    "row_type": "step",
+                    "major_no": "1",
+                    "middle_no": "1",
+                    "minor_no": "1",
+                    "tech_doc_text": "Tech doc",
+                    "work_text": "Check command",
+                    "indent_level": 1,
+                    "expected_result": "Ready.",
+                    "time_text": None,
+                    "window_text": None,
+                    "p_text": None,
+                    "command_text": None,
+                    "note": None,
+                    "device_entries": [
+                        {
+                            "slot_no": 1,
+                            "time_text": "10:00",
+                            "window_text": "STOP",
+                            "p_text": ">",
+                            "command_text": "show version",
+                        },
+                        {
+                            "slot_no": 2,
+                            "time_text": "10:05",
+                            "window_text": "STOP",
+                            "p_text": "#",
+                            "command_text": "show status",
+                        },
+                    ],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        modules,
+        "build_module_create_request_from_sheet_data",
+        fake_build_module_create_request_from_sheet_data,
+    )
+
+    response = client.post(
+        "/api/v1/modules/import-sheet",
+        json={
+            "module_name": "Excel import module",
+            "description": "Imported from one sheet",
+            "change_note": "Initial import",
+            "source_xlsx_path": "imports/sample.xlsx",
+            "source_sha256": "abc123",
+            "created_by": "codex",
+            "device_header_cells": [
+                {
+                    "slot_no": 1,
+                    "header_time_text": "09:00",
+                    "target_text": "target-1",
+                    "p_text": ">",
+                    "target_device_text": "device-01",
+                },
+                {
+                    "slot_no": 2,
+                    "header_time_text": "09:05",
+                    "target_text": "target-2",
+                    "p_text": "#",
+                    "target_device_text": "device-02",
+                },
+            ],
+            "row_cells": [
+                {
+                    "A": "1",
+                    "B": "1",
+                    "C": "1",
+                    "D": "Tech doc",
+                    "F": "Check command",
+                    "I": "Ready.",
+                    "device_entries": [
+                        {
+                            "slot_no": 1,
+                            "time_text": "10:00",
+                            "window_text": "STOP",
+                            "p_text": ">",
+                            "command_text": "show version",
+                        },
+                        {
+                            "slot_no": 2,
+                            "time_text": "10:05",
+                            "window_text": "STOP",
+                            "p_text": "#",
+                            "command_text": "show status",
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["result"] == "success"
+    assert response.json()["message"] == "Excel sheet input was normalized."
+    assert response.json()["data"]["module_name"] == "Excel import module"
+    assert len(response.json()["data"]["device_headers"]) == 2
+    assert response.json()["data"]["rows"][0]["device_entries"][1]["slot_no"] == 2
+
+
+def test_normalize_module_sheet_rejects_business_validation_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sheet-normalize API should return 400 for helper validation errors."""
+
+    def fake_build_module_create_request_from_sheet_data(**kwargs: object) -> object:
+        del kwargs
+        raise ValueError("Excel device headers must not exceed 20 slots.")
+
+    monkeypatch.setattr(
+        modules,
+        "build_module_create_request_from_sheet_data",
+        fake_build_module_create_request_from_sheet_data,
+    )
+
+    response = client.post(
+        "/api/v1/modules/import-sheet",
+        json={
+            "module_name": "Excel import module",
+            "row_cells": [{"A": "1"}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Excel device headers must not exceed 20 slots.",
+    }
+
+
+def test_normalize_module_sheet_rejects_invalid_payload(client: TestClient) -> None:
+    """Sheet-normalize API should reject invalid request bodies."""
+
+    response = client.post(
+        "/api/v1/modules/import-sheet",
+        json={
+            "module_name": "Excel import module",
+            "row_cells": [],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "Request validation failed: 1 error(s).",
+    }

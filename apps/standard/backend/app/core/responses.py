@@ -244,6 +244,55 @@ class ModuleCreateRequest(BaseModel):
     rows: list[ModuleCreateRowInput] = Field(min_length=1)
 
 
+class ExcelImportSheetDeviceHeaderInput(BaseModel):
+    """Normalized device header cells extracted from one Excel sheet."""
+
+    slot_no: int = Field(ge=1, le=20)
+    header_time_text: str | None = None
+    target_text: str | None = None
+    p_text: str | None = None
+    target_device_text: str | None = None
+
+
+class ExcelImportSheetRowDeviceEntryInput(BaseModel):
+    """Device-specific command cells extracted from one Excel row."""
+
+    slot_no: int = Field(ge=1, le=20)
+    time_text: str | None = None
+    window_text: str | None = None
+    p_text: str | None = None
+    command_text: str | None = None
+
+
+class ExcelImportSheetRowInput(BaseModel):
+    """One Excel row expressed with the minimum tracked cell set."""
+
+    A: str | None = None
+    B: str | None = None
+    C: str | None = None
+    D: str | None = None
+    E: str | None = None
+    F: str | None = None
+    G: str | None = None
+    H: str | None = None
+    I: str | None = None
+    device_entries: list[ExcelImportSheetRowDeviceEntryInput] = Field(default_factory=list)
+
+
+class ExcelImportSheetRequest(BaseModel):
+    """One-sheet Excel import payload normalized before real file upload."""
+
+    module_key: str | None = None
+    module_name: str = Field(min_length=1)
+    description: str | None = None
+    change_note: str | None = None
+    source_xlsx_path: str | None = None
+    source_sha256: str | None = None
+    created_by: str | None = None
+    device_header_cells: list[ExcelImportSheetDeviceHeaderInput] = Field(default_factory=list)
+    row_cells: list[ExcelImportSheetRowInput] = Field(min_length=1)
+
+
 class ModuleDetailData(BaseModel):
     """Module detail response payload.
 
