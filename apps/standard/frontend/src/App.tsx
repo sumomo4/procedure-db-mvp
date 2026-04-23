@@ -1038,80 +1038,87 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
         ))}
       </div>
 
-      <div className="excel-sheet-wrap">
-        <table className="excel-sheet excel-sheet-multi-device">
-          <colgroup>
-            <col className="excel-col-small" />
-            <col className="excel-col-small" />
-            <col className="excel-col-small" />
-            <col className="excel-col-doc" />
-            <col className="excel-col-work" />
-            <col className="excel-col-check" />
-            {deviceHeaders.map((header) => (
-              <Fragment key={header.slot_no}>
-                <col className="excel-col-time" />
-                <col className="excel-col-window" />
-                <col className="excel-col-prompt" />
-                <col className="excel-col-command" />
-              </Fragment>
-            ))}
-          </colgroup>
-          <thead>
-            <tr>
-              <th rowSpan={2}>Major</th>
-              <th rowSpan={2}>Middle</th>
-              <th rowSpan={2}>Minor</th>
-              <th rowSpan={2}>Tech Doc</th>
-              <th rowSpan={2}>Work Text</th>
-              <th rowSpan={2}>Expected Result / Item</th>
-              {deviceHeaders.map((header) => (
-                <th key={header.slot_no} colSpan={4} className="excel-device-group-heading">
-                  {`Device ${header.slot_no}`}
-                </th>
-              ))}
-            </tr>
-            <tr>
-              {deviceHeaders.map((header) => (
-                <Fragment key={`labels-${header.slot_no}`}>
-                  <th>Time</th>
-                  <th>window</th>
-                  <th>P</th>
-                  <th>Command</th>
-                </Fragment>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rowsWithIndent.map(({ row, indentLevel }) => (
-              <tr key={row.module_row_id} className={`excel-row excel-row-${row.row_type}`}>
-                <td className="excel-number">{row.major_no ?? ""}</td>
-                <td className="excel-number">{row.middle_no ?? ""}</td>
-                <td className="excel-number">{row.minor_no ?? ""}</td>
-                <td>{row.tech_doc_text ?? ""}</td>
-                <td className="excel-work-cell">
-                  <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
-                </td>
-                <td>{row.expected_result ?? ""}</td>
-                {deviceHeaders.map((header) => {
-                  const entry = getModuleDeviceEntry(row, header.slot_no);
-                  return (
-                    <Fragment key={`${row.module_row_id}-${header.slot_no}`}>
-                      <td className="excel-center">{entry?.time_text ?? ""}</td>
-                      <td>{entry?.window_text ?? ""}</td>
-                      <td>{entry?.p_text ?? ""}</td>
-                      <td className="excel-command-cell">{entry?.command_text ?? ""}</td>
-                    </Fragment>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="excel-device-accordion-list">
+        {deviceHeaders.map((header, index) => (
+          <details key={header.slot_no} className="excel-device-accordion" open={index === 0}>
+            <summary className="excel-device-accordion-summary">
+              <div className="excel-device-accordion-title">
+                <strong>{`Device ${header.slot_no}`}</strong>
+                <span>{header.target_device_text ?? "-"}</span>
+              </div>
+              <div className="excel-device-accordion-meta">
+                <span>{`Time ${header.header_time_text ?? "-"}`}</span>
+                <span>{`target ${header.target_text ?? "-"}`}</span>
+                <span>{`P ${header.p_text ?? "-"}`}</span>
+              </div>
+            </summary>
+
+            <div className="excel-device-accordion-body">
+              <div className="excel-sheet-wrap">
+                <table className="excel-sheet">
+                  <colgroup>
+                    <col className="excel-col-small" />
+                    <col className="excel-col-small" />
+                    <col className="excel-col-small" />
+                    <col className="excel-col-doc" />
+                    <col className="excel-col-work" />
+                    <col className="excel-col-check" />
+                    <col className="excel-col-time" />
+                    <col className="excel-col-window" />
+                    <col className="excel-col-prompt" />
+                    <col className="excel-col-command" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th rowSpan={2}>Major</th>
+                      <th rowSpan={2}>Middle</th>
+                      <th rowSpan={2}>Minor</th>
+                      <th rowSpan={2}>Tech Doc</th>
+                      <th rowSpan={2}>Work Text</th>
+                      <th rowSpan={2}>Expected Result / Item</th>
+                      <th colSpan={4} className="excel-device-group-heading">
+                        {`Device ${header.slot_no}`}
+                      </th>
+                    </tr>
+                    <tr>
+                      <th>Time</th>
+                      <th>window</th>
+                      <th>P</th>
+                      <th>Command</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rowsWithIndent.map(({ row, indentLevel }) => {
+                      const entry = getModuleDeviceEntry(row, header.slot_no);
+
+                      return (
+                        <tr key={`${row.module_row_id}-${header.slot_no}`} className={`excel-row excel-row-${row.row_type}`}>
+                          <td className="excel-number">{row.major_no ?? ""}</td>
+                          <td className="excel-number">{row.middle_no ?? ""}</td>
+                          <td className="excel-number">{row.minor_no ?? ""}</td>
+                          <td>{row.tech_doc_text ?? ""}</td>
+                          <td className="excel-work-cell">
+                            <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                          </td>
+                          <td>{row.expected_result ?? ""}</td>
+                          <td className="excel-center">{entry?.time_text ?? ""}</td>
+                          <td>{entry?.window_text ?? ""}</td>
+                          <td>{entry?.p_text ?? ""}</td>
+                          <td className="excel-command-cell">{entry?.command_text ?? ""}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+        ))}
       </div>
 
       <div className="excel-remarks">
         <strong>Remarks</strong>
-        <p>Device columns expand horizontally like the Excel layout. The fixed procedure columns stay on the left, and each device contributes Time / window / P / Command on the right.</p>
+        <p>Each device is shown in its own accordion. Open only the devices you need, while the fixed procedure columns stay consistent for comparison.</p>
       </div>
     </section>
   );

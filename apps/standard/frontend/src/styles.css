@@ -1078,6 +1078,71 @@ th {
   font-weight: 700;
 }
 
+.excel-device-accordion-list {
+  display: grid;
+  gap: 14px;
+}
+
+.excel-device-accordion {
+  border: 1px solid #9aa6ac;
+  background: #ffffff;
+}
+
+.excel-device-accordion-summary {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  background: #f8fbfc;
+}
+
+.excel-device-accordion-summary::-webkit-details-marker {
+  display: none;
+}
+
+.excel-device-accordion-title {
+  display: grid;
+  gap: 4px;
+}
+
+.excel-device-accordion-title strong {
+  color: #172026;
+  font-size: 16px;
+}
+
+.excel-device-accordion-title span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.excel-device-accordion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.excel-device-accordion-meta span {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  background: #ffffff;
+  color: #41505a;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid #d7e2e7;
+}
+
+.excel-device-accordion-body {
+  padding: 0;
+}
+
 .excel-title-grid {
   display: grid;
   grid-template-columns: minmax(460px, 1fr) 72px 96px 64px 160px;
