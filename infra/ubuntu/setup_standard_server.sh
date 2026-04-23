@@ -37,6 +37,27 @@ verify_static_asset() {
   fi
 }
 
+wait_for_http() {
+  local url="$1"
+  local label="$2"
+  local max_attempts="${3:-15}"
+  local sleep_seconds="${4:-2}"
+  local attempt
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if curl -fsS "${url}" >/dev/null; then
+      return 0
+    fi
+
+    printf 'Waiting for %s (%s/%s)\n' "${label}" "${attempt}" "${max_attempts}"
+    sleep "${sleep_seconds}"
+  done
+
+  echo "Timed out waiting for ${label}: ${url}" >&2
+  systemctl status "${SYSTEMD_SERVICE_NAME}" --no-pager || true
+  return 1
+}
+
 if [[ ! -d "${BACKEND_DIR}" ]]; then
   echo "Backend directory not found: ${BACKEND_DIR}" >&2
   exit 1
@@ -151,10 +172,13 @@ systemctl restart "${SYSTEMD_SERVICE_NAME}"
 nginx -t
 systemctl reload nginx
 
+wait_for_http "http://127.0.0.1:${API_PORT}/api/v1/health" "standard-api health"
 curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/health"
 echo
+wait_for_http "http://127.0.0.1:${API_PORT}/api/v1/health/db" "standard-api database health"
 curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/health/db"
 echo
+wait_for_http "http://127.0.0.1/api/v1/health" "nginx API proxy health"
 curl -fsS "http://127.0.0.1/api/v1/health"
 echo
 
