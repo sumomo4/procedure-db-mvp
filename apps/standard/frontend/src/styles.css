@@ -690,12 +690,15 @@ th {
 }
 
 .register-device-header-list,
-.register-device-row-groups {
+.register-device-row-groups,
+.register-device-accordion-list,
+.register-device-command-list {
   display: grid;
   gap: 16px;
 }
 
-.register-device-header-list {
+.register-device-header-list,
+.register-device-accordion-list {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
@@ -707,6 +710,104 @@ th {
   background: #ffffff;
   display: grid;
   gap: 12px;
+}
+
+.register-device-accordion {
+  border: 1px solid #ded6c8;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.register-device-accordion-summary {
+  list-style: none;
+  padding: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  background: #f7f3ea;
+}
+
+.register-device-accordion-summary::-webkit-details-marker {
+  display: none;
+}
+
+.register-device-accordion-title {
+  display: grid;
+  gap: 4px;
+}
+
+.register-device-accordion-title strong {
+  color: #172026;
+}
+
+.register-device-accordion-title span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.register-device-accordion-body {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.register-device-subsection {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e7dfd2;
+  border-radius: 8px;
+  background: #fcfbf8;
+}
+
+.register-device-subsection-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.register-device-subsection-header strong {
+  color: #172026;
+}
+
+.register-device-subsection-header span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.register-device-command-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #ded6c8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.register-device-command-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.register-device-command-card-header strong {
+  color: #172026;
+}
+
+.register-device-command-card-header span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .register-device-header-card-header,

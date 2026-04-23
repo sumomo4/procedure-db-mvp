@@ -1260,6 +1260,21 @@ function ModuleRegisterPage() {
     );
   }
 
+  function getRegisterRowDeviceEntry(
+    row: ModuleRegisterRowDraft,
+    slotNo: number,
+  ): ModuleRegisterDeviceEntryDraft {
+    return (
+      row.deviceEntries.find((candidate) => candidate.slotNo === slotNo) ?? {
+        slotNo,
+        timeText: "",
+        windowText: "",
+        pText: "",
+        commandText: "",
+      }
+    );
+  }
+
   function addDeviceSlot(): void {
     setDeviceHeaders((currentHeaders) => {
       if (currentHeaders.length >= 20) {
@@ -1454,48 +1469,134 @@ function ModuleRegisterPage() {
         <section className="register-step-card">
           <div className="register-step-header">
             <div>
-              <h2>Device Header Columns</h2>
-              <p className="register-section-copy">Add time / target / P / target device horizontally. Up to 20 device columns are supported.</p>
+              <h2>Device Units</h2>
+              <p className="register-section-copy">
+                Add device units horizontally. Each unit keeps header fields
+                (time / target / P / target device) and row command fields
+                (time / window / P / command) together.
+              </p>
             </div>
             <button className="secondary" type="button" onClick={addDeviceSlot} disabled={deviceHeaders.length >= 20}>
               <span aria-hidden="true">+</span>
               Add Device Column
             </button>
           </div>
-          <div className="register-device-header-list">
+          <div className="register-device-accordion-list">
             {deviceHeaders.map((header) => (
-              <section key={header.slotNo} className="register-device-header-card">
-                <div className="register-device-header-card-header">
-                  <strong>{`Device ${header.slotNo}`}</strong>
+              <details key={header.slotNo} className="register-device-accordion" open={header.slotNo === 1}>
+                <summary className="register-device-accordion-summary">
+                  <div className="register-device-accordion-title">
+                    <strong>{`Device ${header.slotNo}`}</strong>
+                    <span>{header.targetDeviceText || "No device label"}</span>
+                  </div>
                   <button
                     className="text-button"
                     type="button"
-                    onClick={() => removeDeviceSlot(header.slotNo)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      removeDeviceSlot(header.slotNo);
+                    }}
                     disabled={deviceHeaders.length === 1}
                   >
                     <span aria-hidden="true">-</span>
                     Remove Column
                   </button>
+                </summary>
+
+                <div className="register-device-accordion-body">
+                  <section className="register-device-subsection">
+                    <div className="register-device-subsection-header">
+                      <strong>Header Fields</strong>
+                      <span>Time / target / P / target device</span>
+                    </div>
+                    <div className="register-device-header-grid">
+                      <label>
+                        Time
+                        <input
+                          value={header.headerTimeText}
+                          onChange={(event) => updateDeviceHeader(header.slotNo, "headerTimeText", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        target
+                        <input
+                          value={header.targetText}
+                          onChange={(event) => updateDeviceHeader(header.slotNo, "targetText", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        P
+                        <input value={header.pText} onChange={(event) => updateDeviceHeader(header.slotNo, "pText", event.target.value)} />
+                      </label>
+                      <label>
+                        Target Device
+                        <input
+                          value={header.targetDeviceText}
+                          onChange={(event) => updateDeviceHeader(header.slotNo, "targetDeviceText", event.target.value)}
+                        />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="register-device-subsection">
+                    <div className="register-device-subsection-header">
+                      <strong>Row Command Fields</strong>
+                      <span>Time / window / P / command for each step row</span>
+                    </div>
+                    <div className="register-device-command-list">
+                      {rows.map((row, index) => {
+                        const entry = getRegisterRowDeviceEntry(row, header.slotNo);
+
+                        return (
+                          <section key={`${header.slotNo}-${row.rowId}`} className="register-device-command-card">
+                            <div className="register-device-command-card-header">
+                              <strong>{`Row ${index + 1}`}</strong>
+                              <span>{row.workText.trim() || "No work text yet"}</span>
+                            </div>
+                            <div className="register-device-row-group-grid">
+                              <label>
+                                Time
+                                <input
+                                  value={entry.timeText}
+                                  onChange={(event) =>
+                                    updateRowDeviceEntry(row.rowId, header.slotNo, "timeText", event.target.value)
+                                  }
+                                />
+                              </label>
+                              <label>
+                                window
+                                <input
+                                  value={entry.windowText}
+                                  onChange={(event) =>
+                                    updateRowDeviceEntry(row.rowId, header.slotNo, "windowText", event.target.value)
+                                  }
+                                />
+                              </label>
+                              <label>
+                                P
+                                <input
+                                  value={entry.pText}
+                                  onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "pText", event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                Command
+                                <input
+                                  value={entry.commandText}
+                                  onChange={(event) =>
+                                    updateRowDeviceEntry(row.rowId, header.slotNo, "commandText", event.target.value)
+                                  }
+                                />
+                              </label>
+                            </div>
+                          </section>
+                        );
+                      })}
+                    </div>
+                  </section>
                 </div>
-                <div className="register-device-header-grid">
-                  <label>
-                    Time
-                    <input value={header.headerTimeText} onChange={(event) => updateDeviceHeader(header.slotNo, "headerTimeText", event.target.value)} />
-                  </label>
-                  <label>
-                    target
-                    <input value={header.targetText} onChange={(event) => updateDeviceHeader(header.slotNo, "targetText", event.target.value)} />
-                  </label>
-                  <label>
-                    P
-                    <input value={header.pText} onChange={(event) => updateDeviceHeader(header.slotNo, "pText", event.target.value)} />
-                  </label>
-                  <label>
-                    Target Device
-                    <input value={header.targetDeviceText} onChange={(event) => updateDeviceHeader(header.slotNo, "targetDeviceText", event.target.value)} />
-                  </label>
-                </div>
-              </section>
+              </details>
             ))}
           </div>
         </section>
@@ -1504,7 +1605,9 @@ function ModuleRegisterPage() {
           <div className="register-step-header">
             <div>
               <h2>Step Rows</h2>
-              <p className="register-section-copy">Fill major / middle / minor / tech doc / work text / expected result per row, then fill the device-specific command cells below.</p>
+              <p className="register-section-copy">
+                Fill the common row fields here. Device-specific command cells are edited inside each device unit above.
+              </p>
             </div>
             <button className="secondary" type="button" onClick={addRow}>
               <span aria-hidden="true">+</span>
@@ -1560,55 +1663,6 @@ function ModuleRegisterPage() {
                     Expected Result / Item
                     <input value={row.expectedResult} onChange={(event) => updateRow(row.rowId, "expectedResult", event.target.value)} />
                   </label>
-                  <div className="wide register-device-row-groups">
-                    {deviceHeaders.map((header) => {
-                      const entry =
-                        row.deviceEntries.find((candidate) => candidate.slotNo === header.slotNo) ??
-                        {
-                          slotNo: header.slotNo,
-                          timeText: "",
-                          windowText: "",
-                          pText: "",
-                          commandText: "",
-                        };
-
-                      return (
-                        <section key={`${row.rowId}-${header.slotNo}`} className="register-device-row-group">
-                          <div className="register-device-row-group-header">
-                            <strong>{`Device ${header.slotNo}`}</strong>
-                            <span>{header.targetDeviceText || "No device label"}</span>
-                          </div>
-                          <div className="register-device-row-group-grid">
-                            <label>
-                              Time
-                              <input
-                                value={entry.timeText}
-                                onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "timeText", event.target.value)}
-                              />
-                            </label>
-                            <label>
-                              window
-                              <input
-                                value={entry.windowText}
-                                onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "windowText", event.target.value)}
-                              />
-                            </label>
-                            <label>
-                              P
-                              <input value={entry.pText} onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "pText", event.target.value)} />
-                            </label>
-                            <label>
-                              Command
-                              <input
-                                value={entry.commandText}
-                                onChange={(event) => updateRowDeviceEntry(row.rowId, header.slotNo, "commandText", event.target.value)}
-                              />
-                            </label>
-                          </div>
-                        </section>
-                      );
-                    })}
-                  </div>
                 </div>
               </section>
             ))}
