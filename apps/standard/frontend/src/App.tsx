@@ -306,6 +306,11 @@ type ApprovalStatusDetailState = {
   message: string;
 };
 
+type ApprovalStatusMutationState = {
+  status: "idle" | "submitting" | "success" | "error";
+  message: string;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
@@ -3002,18 +3007,25 @@ function IndentedExcelText({
 }
 
 function ApprovalPage() {
+  // approval-screen-v2
   const navigate = useNavigate();
   const [approvalListState, setApprovalListState] = useState<ApprovalStatusListState>({
     status: "loading",
     items: [],
-    message: "承認状態一覧を取得しています。",
+    message: "???????????????",
   });
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [approvalDetailState, setApprovalDetailState] = useState<ApprovalStatusDetailState>({
     status: "idle",
     item: null,
-    message: "対象を選択すると承認状態の詳細を表示します。",
+    message: "??????????????????????",
   });
+  const [approvalMutationState, setApprovalMutationState] =
+    useState<ApprovalStatusMutationState>({
+      status: "idle",
+      message: "???????????????API????????",
+    });
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -3022,7 +3034,7 @@ function ApprovalPage() {
       setApprovalListState({
         status: "loading",
         items: [],
-        message: "承認状態一覧を取得しています。",
+        message: "???????????????",
       });
 
       try {
@@ -3035,7 +3047,9 @@ function ApprovalPage() {
           setApprovalListState({
             status: "unavailable",
             items: [],
-            message: responseBody.message || `承認状態一覧の取得に失敗しました。HTTP ${response.status}`,
+            message:
+              responseBody.message ||
+              `?????????????????HTTP ${response.status}`,
           });
           return;
         }
@@ -3044,7 +3058,7 @@ function ApprovalPage() {
         setApprovalListState({
           status: "available",
           items,
-          message: responseBody.message || "承認状態一覧を取得しました。",
+          message: responseBody.message || "??????????????",
         });
 
         setSelectedTargetId((current) => {
@@ -3057,14 +3071,14 @@ function ApprovalPage() {
           return items[0].target_id;
         });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (error instanceof DOMException && error.name == "AbortError") {
           return;
         }
 
         setApprovalListState({
           status: "unavailable",
           items: [],
-          message: "APIに接続できませんでした。",
+          message: "???????????API??????????",
         });
       }
     }
@@ -3074,14 +3088,14 @@ function ApprovalPage() {
     return () => {
       abortController.abort();
     };
-  }, []);
+  }, [reloadTick]);
 
   useEffect(() => {
     if (selectedTargetId === null) {
       setApprovalDetailState({
         status: "idle",
         item: null,
-        message: "対象を選択すると承認状態の詳細を表示します。",
+        message: "??????????????????????",
       });
       return;
     }
@@ -3092,7 +3106,7 @@ function ApprovalPage() {
       setApprovalDetailState({
         status: "loading",
         item: null,
-        message: "承認状態詳細を取得しています。",
+        message: "????????????????",
       });
 
       try {
@@ -3105,7 +3119,9 @@ function ApprovalPage() {
           setApprovalDetailState({
             status: "unavailable",
             item: null,
-            message: responseBody.message || `承認状態詳細の取得に失敗しました。HTTP ${response.status}`,
+            message:
+              responseBody.message ||
+              `?????????????????HTTP ${response.status}`,
           });
           return;
         }
@@ -3113,17 +3129,17 @@ function ApprovalPage() {
         setApprovalDetailState({
           status: "available",
           item: responseBody.data,
-          message: responseBody.message || "承認状態詳細を取得しました。",
+          message: responseBody.message || "???????????????",
         });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (error instanceof DOMException && error.name == "AbortError") {
           return;
         }
 
         setApprovalDetailState({
           status: "unavailable",
           item: null,
-          message: "APIに接続できませんでした。",
+          message: "???????????API??????????",
         });
       }
     }
@@ -3133,49 +3149,118 @@ function ApprovalPage() {
     return () => {
       abortController.abort();
     };
+  }, [selectedTargetId, reloadTick]);
+
+  useEffect(() => {
+    setApprovalMutationState({
+      status: "idle",
+      message: "???????????????API????????",
+    });
   }, [selectedTargetId]);
 
   const selectedItem = approvalDetailState.item;
   const selectedSummary =
     approvalListState.items.find((item) => item.target_id === selectedTargetId) ?? null;
 
+  async function handleApplyTransition(toStatus: ModuleApiStatus): Promise<void> {
+    if (selectedItem === null) {
+      return;
+    }
+
+    setApprovalMutationState({
+      status: "submitting",
+      message: "?????????????",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/v1/statuses/${selectedItem.target_id}`), {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: toStatus }),
+      });
+      const responseBody = (await response.json()) as ApiResponse<ApprovalStatusDetailData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setApprovalMutationState({
+          status: "error",
+          message:
+            responseBody.message ||
+            `??????????????HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setApprovalDetailState({
+        status: "available",
+        item: responseBody.data,
+        message: responseBody.message || "????????????",
+      });
+      setApprovalMutationState({
+        status: "success",
+        message: responseBody.message || "????????????",
+      });
+      setReloadTick((current) => current + 1);
+    } catch (error) {
+      setApprovalMutationState({
+        status: "error",
+        message: "???????????API??????????",
+      });
+    }
+  }
+
+  const detailStatusClass =
+    approvalDetailState.status === "idle" ? "loading" : approvalDetailState.status;
+  const mutationStatusClass =
+    approvalMutationState.status === "success"
+      ? "available"
+      : approvalMutationState.status === "error"
+        ? "unavailable"
+        : "loading";
+
   return (
-    <Page title="承認状態確認 / 変更" description="版管理の承認フローに沿って、原本の状態と次に進める操作をAPIから確認します。">
+    <Page
+      title="?????? / ??"
+      description="?????????????????????????????????????"
+    >
       <section className="approval-flow">
-        <FlowStep label="0版 / 過去作成分" />
-        <FlowStep label="作成 → Draft" active />
-        <FlowStep label="承認申請 → Published" />
-        <FlowStep label="承認済み → Archived" />
+        <FlowStep label="0. ????" />
+        <FlowStep label="1. ????draft?" active />
+        <FlowStep label="2. ?????published?" />
+        <FlowStep label="3. ?????archived?" />
       </section>
+
       <section className={`list-status list-status-${approvalListState.status}`} aria-live="polite">
         <div>
-          <span>取得状態</span>
+          <span>??????</span>
           <strong>
             {approvalListState.status === "loading"
-              ? "取得中"
+              ? "???"
               : approvalListState.status === "available"
-                ? "取得成功"
-                : "取得失敗"}
+                ? "????"
+                : "????"}
           </strong>
         </div>
         <div>
-          <span>対象件数</span>
+          <span>????</span>
           <strong>{approvalListState.items.length}</strong>
         </div>
         <div>
-          <span>選択中</span>
-          <strong>{selectedSummary?.target_key ?? "未選択"}</strong>
+          <span>???</span>
+          <strong>{selectedSummary?.target_key ?? "???"}</strong>
         </div>
         <p>{approvalListState.message}</p>
       </section>
+
       {approvalListState.status === "available" && approvalListState.items.length === 0 ? (
         <section className="empty-state">
-          <h2>承認対象はまだありません</h2>
-          <p>原本データが追加されると、承認状態の一覧をここで確認できます。</p>
+          <h2>????????????</h2>
+          <p>????????????????????????????????</p>
         </section>
       ) : (
         <DataTable
-          columns={["対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "操作"]}
+          columns={["??", "??", "????", "????", "???????", "???", "??"]}
           rows={approvalListState.items.map((item) => [
             `${item.target_key} ${item.target_name}`,
             `v${item.version_no}`,
@@ -3184,70 +3269,106 @@ function ApprovalPage() {
             `${item.enabled_module_count}/${item.module_count}`,
             item.updated_at,
             <button className="text-button" onClick={() => setSelectedTargetId(item.target_id)}>
-              詳細
+              ????
             </button>,
           ])}
         />
       )}
-      <section className={`list-status list-status-${approvalDetailState.status === "idle" ? "loading" : approvalDetailState.status}`} aria-live="polite">
+
+      <section className={`list-status list-status-${detailStatusClass}`} aria-live="polite">
         <div>
-          <span>詳細状態</span>
+          <span>??????</span>
           <strong>
             {approvalDetailState.status === "idle"
-              ? "未選択"
+              ? "???"
               : approvalDetailState.status === "loading"
-                ? "取得中"
+                ? "???"
                 : approvalDetailState.status === "available"
-                  ? "取得成功"
-                  : "取得失敗"}
+                  ? "????"
+                  : "????"}
           </strong>
         </div>
         <div>
-          <span>対象ID</span>
-          <strong>{selectedTargetId ?? "未選択"}</strong>
+          <span>??ID</span>
+          <strong>{selectedTargetId ?? "???"}</strong>
         </div>
         <div>
-          <span>次の操作</span>
+          <span>????</span>
           <strong>{selectedItem?.next_action ?? "-"}</strong>
         </div>
         <p>{approvalDetailState.message}</p>
       </section>
+
+      <section className={`list-status list-status-${mutationStatusClass}`} aria-live="polite">
+        <div>
+          <span>????</span>
+          <strong>
+            {approvalMutationState.status === "idle"
+              ? "???"
+              : approvalMutationState.status === "submitting"
+                ? "???"
+                : approvalMutationState.status === "success"
+                  ? "????"
+                  : "????"}
+          </strong>
+        </div>
+        <div>
+          <span>??</span>
+          <strong>{selectedSummary?.target_key ?? "???"}</strong>
+        </div>
+        <div>
+          <span>????</span>
+          <strong>{selectedItem?.allowed_transitions.length ?? 0}</strong>
+        </div>
+        <p>{approvalMutationState.message}</p>
+      </section>
+
       {selectedItem ? (
         <>
           <section className="detail-layout">
             <div className="facts">
-              <Fact label="対象ID" value={selectedItem.target_key} />
-              <Fact label="対象名" value={selectedItem.target_name} />
-              <Fact label="版" value={`v${selectedItem.version_no}`} />
-              <Fact label="状態" value={selectedItem.status_label} />
-              <Fact label="作成者" value={selectedItem.created_by ?? "-"} />
-              <Fact label="更新日" value={selectedItem.updated_at} />
+              <Fact label="??ID" value={selectedItem.target_key} />
+              <Fact label="???" value={selectedItem.target_name} />
+              <Fact label="?" value={`v${selectedItem.version_no}`} />
+              <Fact label="????" value={selectedItem.status_label} />
+              <Fact label="???" value={selectedItem.created_by ?? "-"} />
+              <Fact label="???" value={selectedItem.updated_at} />
             </div>
             <div className="module-detail-note">
-              <span>説明</span>
-              <p>{selectedItem.description ?? "説明は未設定です。"}</p>
-              <span>変更メモ</span>
-              <p>{selectedItem.change_note ?? "変更メモは未設定です。"}</p>
+              <span>??</span>
+              <p>{selectedItem.description ?? "?????????"}</p>
+              <span>????</span>
+              <p>{selectedItem.change_note ?? "???????????"}</p>
             </div>
           </section>
+
           <section className="section-band approval-detail-grid">
             <div>
-              <h2>遷移候補</h2>
+              <h2>???????</h2>
               {selectedItem.allowed_transitions.length > 0 ? (
                 <div className="approval-transition-list">
                   {selectedItem.allowed_transitions.map((transition) => (
                     <article key={transition.to_status} className="approval-transition-card">
                       <strong>{transition.action_label}</strong>
                       <span>{transition.to_status_label}</span>
+                      <button
+                        className="primary"
+                        onClick={() => void handleApplyTransition(transition.to_status)}
+                        disabled={approvalMutationState.status === "submitting"}
+                      >
+                        {approvalMutationState.status === "submitting"
+                          ? "???..."
+                          : transition.action_label}
+                      </button>
                     </article>
                   ))}
                 </div>
               ) : (
-                <p>この状態から進める承認遷移はありません。</p>
+                <p>??????????????????????</p>
               )}
             </div>
             <div>
-              <h2>関連モジュール</h2>
+              <h2>???????</h2>
               {selectedItem.module_names.length > 0 ? (
                 <div className="approval-module-list">
                   {selectedItem.module_names.map((moduleName) => (
@@ -3257,26 +3378,31 @@ function ApprovalPage() {
                   ))}
                 </div>
               ) : (
-                <p>関連モジュールはありません。</p>
+                <p>??????????????</p>
               )}
             </div>
           </section>
+
           <Toolbar>
             <button className="secondary" onClick={() => navigate(`/documents/${selectedItem.target_id}`)}>
-              <span aria-hidden="true">→</span>
-              原本詳細へ
+              <span aria-hidden="true">?</span>
+              ?????
             </button>
           </Toolbar>
         </>
       ) : (
         <section className="empty-state">
-          <h2>承認対象を選択してください</h2>
+          <h2>?????????????</h2>
           <p>{approvalDetailState.message}</p>
         </section>
       )}
+
       <section className="section-band">
-        <h2>版数ルール</h2>
-        <p>Draft 中の修正は Y+1、承認済みは X+1 かつ Y 切り捨てとして扱います。</p>
+        <h2>??????</h2>
+        <p>
+          M1 ?????????????? <code>draft</code> ?? <code>published</code> ?????
+          ???? <code>archived</code> ???????
+        </p>
       </section>
     </Page>
   );

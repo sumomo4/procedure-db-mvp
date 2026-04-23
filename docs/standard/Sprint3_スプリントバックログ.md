@@ -25,7 +25,7 @@ Sprint 3 では、Sprint 2 で整えた参照系の土台をもとに、standard
 | SB3-07 | WebUI | 原本作成 / 更新画面を実API接続へ切り替える | High | [済] | `/documents/create` で新規作成、`/documents/create?id={source_doc_id}` で更新できる | SB3-05, SB3-06 |
 | SB3-08 | 設計 | 承認状態変更ルールを整理する | Medium | [済] | `draft -> published -> archived` の最小遷移ルールが整理されている | Sprint 2 成果物 |
 | SB3-09 | API | 承認状態変更APIを実装する | Medium | [済] | `PATCH /api/v1/statuses/{target_id}` で状態変更できる | SB3-08 |
-| SB3-10 | WebUI | 承認状態変更操作を画面から実行できるようにする | Medium | [未] | 承認状態確認画面から状態変更APIを呼べる | SB3-09 |
+| SB3-10 | WebUI | 承認状態変更操作を画面から実行できるようにする | Medium | [済] | 承認状態確認画面から状態変更APIを呼べる | SB3-09 |
 | SB3-11 | 設計 | Excel取込の最小入力設計を整理する | Medium | [進行中] | `excel_import.py` と整合する最小入力仕様が整理されている | SB3-01 |
 | SB3-12 | API | Excel取込の最小実装を行う | Medium | [未] | Excel取込の入口を API / helper で確認できる | SB3-11 |
 | SB3-13 | CI | 追加API / 画面変更に合わせた確認を整理する | Medium | [未] | pytest / build / deploy script check の観点が揃っている | SB3-02, SB3-05, SB3-09 |
@@ -57,6 +57,10 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
   - 承認状態変更ルールの整理
   - `PATCH /api/v1/statuses/{target_id}` 実装
   - `draft -> published -> archived` の最小遷移を反映
+- SB3-10
+  - 承認状態確認画面から状態変更APIを実行
+  - 一覧 / 詳細 / 状態変更結果を画面上で確認
+  - 原本詳細への導線を追加
 - 詳細画面改善
   - モジュール詳細の Excel 風表示
   - 作業内容段落の DB 保持 (`indent_level`)
@@ -98,7 +102,7 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
 ## 6. 次の候補
 次に進める候補はこのあたりです。
 
-1. SB3-08 / SB3-09 の承認状態変更側へ進む
-2. SB3-11 / SB3-12 の Excel 取込入口を具体化する
-3. 原本詳細側も多装置表示方針をそろえる
-4. Sprint 3 レビュー観点を整理する
+1. SB3-11 / SB3-12 の Excel 取込入口を具体化する
+2. 原本詳細側も多装置表示方針をそろえる
+3. Sprint 3 レビュー観点を整理する
+4. 承認状態変更の利用手順を確認する
