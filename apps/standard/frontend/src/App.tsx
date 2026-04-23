@@ -1013,16 +1013,16 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
     <section className="excel-preview" aria-label="Excel-like module preview">
       <div className="excel-device-summary">
         <div className="excel-device-summary-card excel-device-summary-title">
-          <span>Module</span>
+          <span>モジュール</span>
           <strong>{item.module_name.replace("_CS ", " ")}</strong>
         </div>
         {deviceHeaders.map((header) => (
           <div key={header.slot_no} className="excel-device-summary-card">
-            <span>{`Device ${header.slot_no}`}</span>
+            <span>{`装置 ${header.slot_no}`}</span>
             <strong>{header.target_device_text ?? "-"}</strong>
             <dl>
               <div>
-                <dt>Time</dt>
+                <dt>時刻</dt>
                 <dd>{header.header_time_text ?? "-"}</dd>
               </div>
               <div>
@@ -1050,12 +1050,12 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
           </colgroup>
           <thead>
             <tr>
-              <th>Major</th>
-              <th>Middle</th>
-              <th>Minor</th>
-              <th>Tech Doc</th>
-              <th>Work Text</th>
-              <th>Expected Result / Item</th>
+              <th>大</th>
+              <th>中</th>
+              <th>小</th>
+              <th>技術資料名</th>
+              <th>作業内容</th>
+              <th>確認事項 / 項目</th>
             </tr>
           </thead>
           <tbody>
@@ -1080,11 +1080,11 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
           <details key={header.slot_no} className="excel-device-accordion" open={index === 0}>
             <summary className="excel-device-accordion-summary">
               <div className="excel-device-accordion-title">
-                <strong>{`Device ${header.slot_no}`}</strong>
+                <strong>{`装置 ${header.slot_no}`}</strong>
                 <span>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</span>
               </div>
               <div className="excel-device-accordion-meta">
-                <span>{`Time ${header.header_time_text ?? "-"}`}</span>
+                <span>{`時刻 ${header.header_time_text ?? "-"}`}</span>
                 <span>{`target ${header.target_text ?? "-"}`}</span>
                 <span>{`P ${header.p_text ?? "-"}`}</span>
               </div>
@@ -1102,11 +1102,11 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
                   </colgroup>
                   <thead>
                     <tr>
-                      <th>Row</th>
-                      <th>Time</th>
+                      <th>行</th>
+                      <th>時刻</th>
                       <th>window</th>
                       <th>P</th>
-                      <th>Command</th>
+                      <th>コマンド</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1132,8 +1132,8 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
       </div>
 
       <div className="excel-remarks">
-        <strong>Remarks</strong>
-        <p>Keep the common procedure table visible, then open only the device command blocks you need. This keeps the Excel-style comparison readable even when devices increase.</p>
+        <strong>補足</strong>
+        <p>共通の手順表を見せたまま、必要な装置のコマンド欄だけを開いて確認できます。装置台数が増えても比較しやすい表示です。</p>
       </div>
     </section>
   );
@@ -1205,8 +1205,8 @@ function ModuleRegisterPageLegacy() {
 function ModuleRegisterPage() {
   const navigate = useNavigate();
   const [moduleKeyInput, setModuleKeyInput] = useState("");
-  const [moduleNameInput, setModuleNameInput] = useState("Initial check procedure");
-  const [descriptionInput, setDescriptionInput] = useState("Created from module register screen.");
+  const [moduleNameInput, setModuleNameInput] = useState("初期点検手順");
+  const [descriptionInput, setDescriptionInput] = useState("モジュール登録画面から作成。");
   const [sourcePathInput, setSourcePathInput] = useState("imports/manual-module.xlsx");
   const [createdByInput, setCreatedByInput] = useState("webui");
   const [deviceHeaders, setDeviceHeaders] = useState<ModuleRegisterDeviceHeaderDraft[]>([
@@ -1226,14 +1226,14 @@ function ModuleRegisterPage() {
       majorNo: "1",
       middleNo: "1",
       minorNo: "1",
-      techDocText: "Tech doc",
-      workText: "Check before work.",
-      expectedResult: "Ready.",
+      techDocText: "技術資料",
+      workText: "作業前確認。",
+      expectedResult: "準備完了。",
       deviceEntries: [
         {
           slotNo: 1,
-          timeText: "5 min",
-          windowText: "console",
+          timeText: "5分",
+          windowText: "コンソール",
           pText: ">",
           commandText: "show version",
         },
@@ -1243,7 +1243,7 @@ function ModuleRegisterPage() {
   const [createState, setCreateState] = useState<ModuleCreateState>({
     status: "idle",
     item: null,
-    message: "Fill in device columns and step rows, then save the first module version.",
+    message: "装置ブロックと手順行を入力して、初版モジュールを保存してください。",
   });
 
   function updateRow(rowId: number, field: keyof ModuleRegisterRowDraft, value: string | number): void {
@@ -1382,7 +1382,7 @@ function ModuleRegisterPage() {
     setCreateState({
       status: "submitting",
       item: null,
-      message: "Saving module with multi-device columns...",
+      message: "複数装置対応のモジュールを保存しています...",
     });
 
     try {
@@ -1431,7 +1431,7 @@ function ModuleRegisterPage() {
         setCreateState({
           status: "error",
           item: null,
-          message: responseBody.message || `Module create failed. HTTP ${response.status}`,
+          message: responseBody.message || `モジュール登録に失敗しました。HTTP ${response.status}`,
         });
         return;
       }
@@ -1439,14 +1439,14 @@ function ModuleRegisterPage() {
       setCreateState({
         status: "success",
         item: responseBody.data,
-        message: responseBody.message || "Module was created.",
+        message: responseBody.message || "モジュールを登録しました。",
       });
       setModuleKeyInput(responseBody.data.module_key);
     } catch (error) {
       setCreateState({
         status: "error",
         item: null,
-        message: error instanceof Error ? error.message : "Module create failed.",
+        message: error instanceof Error ? error.message : "モジュール登録に失敗しました。",
       });
     }
   }
@@ -1455,35 +1455,35 @@ function ModuleRegisterPage() {
 
   return (
     <Page
-      title="Module Register"
-      description="Configure device columns and step rows, then save the first module version. Device columns can be added horizontally up to 20 slots."
+      title="モジュール登録"
+      description="装置ブロックと手順行を入力して初版モジュールを保存します。装置は横方向に最大20台まで追加できます。"
     >
-      <section className="upload-zone" aria-label="Module register guidance">
+      <section className="upload-zone" aria-label="モジュール登録ガイダンス">
         <span className="upload-icon">+</span>
-        <h2>Add device columns first, then add step rows</h2>
-        <p>The header fields time / target / P / target device expand horizontally by device. Each row also keeps time / window / P / command for the same device slots.</p>
+        <h2>先に装置ブロックを追加し、そのあと手順行を追加します</h2>
+        <p>装置ごとに「時刻 / target / P / 対象装置」と、各手順行に対する「時刻 / window / P / コマンド」をまとめて入力できます。</p>
       </section>
 
       <form className="register-form" onSubmit={handleSubmit}>
         <FormGrid>
           <label>
-            Module Key
-            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 auto-generated when blank" />
+            モジュールキー
+            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 未入力時は自動採番" />
           </label>
           <label>
-            Module Name
+            モジュール名
             <input value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} required />
           </label>
           <label>
-            Created By
+            作成者
             <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
           </label>
           <label>
-            Source Path
+            取込元
             <input value={sourcePathInput} onChange={(event) => setSourcePathInput(event.target.value)} placeholder="imports/manual-module.xlsx" />
           </label>
           <label className="wide">
-            Description
+            説明
             <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
           </label>
         </FormGrid>
@@ -1491,16 +1491,16 @@ function ModuleRegisterPage() {
         <section className="register-step-card">
           <div className="register-step-header">
             <div>
-              <h2>Device Units</h2>
+              <h2>装置ブロック</h2>
               <p className="register-section-copy">
-                Add device units horizontally. Each unit keeps header fields
-                (time / target / P / target device) and row command fields
-                (time / window / P / command) together.
+                装置を横方向に追加できます。各装置ブロックの中に
+                「時刻 / target / P / 対象装置」と、
+                各手順行の「時刻 / window / P / コマンド」をまとめて持ちます。
               </p>
             </div>
             <button className="secondary" type="button" onClick={addDeviceSlot} disabled={deviceHeaders.length >= 20}>
               <span aria-hidden="true">+</span>
-              Add Device Column
+              装置追加
             </button>
           </div>
           <div className="register-device-accordion-list">
@@ -1508,8 +1508,8 @@ function ModuleRegisterPage() {
               <details key={header.slotNo} className="register-device-accordion" open={header.slotNo === 1}>
                 <summary className="register-device-accordion-summary">
                   <div className="register-device-accordion-title">
-                    <strong>{`Device ${header.slotNo}`}</strong>
-                    <span>{header.targetDeviceText || "No device label"}</span>
+                    <strong>{`装置 ${header.slotNo}`}</strong>
+                    <span>{header.targetDeviceText || "装置名未入力"}</span>
                   </div>
                   <button
                     className="text-button"
@@ -1522,19 +1522,19 @@ function ModuleRegisterPage() {
                     disabled={deviceHeaders.length === 1}
                   >
                     <span aria-hidden="true">-</span>
-                    Remove Column
+                    装置削除
                   </button>
                 </summary>
 
                 <div className="register-device-accordion-body">
                   <section className="register-device-subsection">
                     <div className="register-device-subsection-header">
-                      <strong>Header Fields</strong>
-                      <span>Time / target / P / target device</span>
+                      <strong>装置基本情報</strong>
+                      <span>時刻 / target / P / 対象装置</span>
                     </div>
                     <div className="register-device-header-grid">
                       <label>
-                        Time
+                        時刻
                         <input
                           value={header.headerTimeText}
                           onChange={(event) => updateDeviceHeader(header.slotNo, "headerTimeText", event.target.value)}
@@ -1552,7 +1552,7 @@ function ModuleRegisterPage() {
                         <input value={header.pText} onChange={(event) => updateDeviceHeader(header.slotNo, "pText", event.target.value)} />
                       </label>
                       <label>
-                        Target Device
+                        対象装置
                         <input
                           value={header.targetDeviceText}
                           onChange={(event) => updateDeviceHeader(header.slotNo, "targetDeviceText", event.target.value)}
@@ -1563,8 +1563,8 @@ function ModuleRegisterPage() {
 
                   <section className="register-device-subsection">
                     <div className="register-device-subsection-header">
-                      <strong>Row Command Fields</strong>
-                      <span>Time / window / P / command for each step row</span>
+                      <strong>手順行ごとの装置コマンド</strong>
+                      <span>各手順行に対する 時刻 / window / P / コマンド</span>
                     </div>
                     <div className="register-device-command-list">
                       {rows.map((row, index) => {
@@ -1573,12 +1573,12 @@ function ModuleRegisterPage() {
                         return (
                           <section key={`${header.slotNo}-${row.rowId}`} className="register-device-command-card">
                             <div className="register-device-command-card-header">
-                              <strong>{`Row ${index + 1}`}</strong>
-                              <span>{row.workText.trim() || "No work text yet"}</span>
+                              <strong>{`行 ${index + 1}`}</strong>
+                              <span>{row.workText.trim() || "作業内容未入力"}</span>
                             </div>
                             <div className="register-device-row-group-grid">
                               <label>
-                                Time
+                                時刻
                                 <input
                                   value={entry.timeText}
                                   onChange={(event) =>
@@ -1603,7 +1603,7 @@ function ModuleRegisterPage() {
                                 />
                               </label>
                               <label>
-                                Command
+                                コマンド
                                 <input
                                   value={entry.commandText}
                                   onChange={(event) =>
@@ -1626,54 +1626,54 @@ function ModuleRegisterPage() {
         <section className="register-step-card">
           <div className="register-step-header">
             <div>
-              <h2>Step Rows</h2>
+              <h2>手順行</h2>
               <p className="register-section-copy">
-                Fill the common row fields here. Device-specific command cells are edited inside each device unit above.
+                ここでは共通の手順項目を入力します。装置ごとのコマンド欄は上の装置ブロック内で編集します。
               </p>
             </div>
             <button className="secondary" type="button" onClick={addRow}>
               <span aria-hidden="true">+</span>
-              Add Row
+              行追加
             </button>
           </div>
           <div className="register-rows">
             {rows.map((row, index) => (
               <section key={row.rowId} className="register-row-editor">
                 <div className="register-row-editor-header">
-                  <strong>{`Row ${index + 1}`}</strong>
+                  <strong>{`行 ${index + 1}`}</strong>
                   <button className="text-button" type="button" onClick={() => removeRow(row.rowId)} disabled={rows.length === 1}>
                     <span aria-hidden="true">-</span>
-                    Remove Row
+                    行削除
                   </button>
                 </div>
                 <div className="register-row-grid">
                   <label>
-                    Paragraph
+                    段落
                     <select value={row.indentLevel} onChange={(event) => updateRow(row.rowId, "indentLevel", Number(event.target.value))}>
-                      <option value={0}>Level 1</option>
-                      <option value={1}>Level 2</option>
-                      <option value={2}>Level 3</option>
-                      <option value={3}>Level 4</option>
+                      <option value={0}>1段</option>
+                      <option value={1}>2段</option>
+                      <option value={2}>3段</option>
+                      <option value={3}>4段</option>
                     </select>
                   </label>
                   <label>
-                    Major
+                    大
                     <input value={row.majorNo} onChange={(event) => updateRow(row.rowId, "majorNo", event.target.value)} />
                   </label>
                   <label>
-                    Middle
+                    中
                     <input value={row.middleNo} onChange={(event) => updateRow(row.rowId, "middleNo", event.target.value)} />
                   </label>
                   <label>
-                    Minor
+                    小
                     <input value={row.minorNo} onChange={(event) => updateRow(row.rowId, "minorNo", event.target.value)} />
                   </label>
                   <label>
-                    Tech Doc
+                    技術資料名
                     <input value={row.techDocText} onChange={(event) => updateRow(row.rowId, "techDocText", event.target.value)} />
                   </label>
                   <label className="wide">
-                    Work Text
+                    作業内容
                     <textarea
                       className={`register-work-indent-${row.indentLevel}`}
                       value={row.workText}
@@ -1682,7 +1682,7 @@ function ModuleRegisterPage() {
                     />
                   </label>
                   <label className="wide">
-                    Expected Result / Item
+                    確認事項 / 項目
                     <input value={row.expectedResult} onChange={(event) => updateRow(row.rowId, "expectedResult", event.target.value)} />
                   </label>
                 </div>
@@ -1702,15 +1702,15 @@ function ModuleRegisterPage() {
                   : ""
           }`}
         >
-          <span>Save Status</span>
+          <span>保存状態</span>
           <strong>
             {createState.status === "success"
-              ? "Saved"
+              ? "保存完了"
               : createState.status === "error"
-                ? "Failed"
+                ? "保存失敗"
                 : createState.status === "submitting"
-                  ? "Saving"
-                  : "Waiting"}
+                  ? "保存中"
+                  : "入力待ち"}
           </strong>
           <p>{createState.message}</p>
           {createdItem ? (
@@ -1718,7 +1718,7 @@ function ModuleRegisterPage() {
               <span>{createdItem.module_key}</span>
               <span>{`version ${createdItem.version_no}`}</span>
               <span>{createdItem.status_label}</span>
-              <span>{`${createdItem.device_headers.length} device slots`}</span>
+              <span>{`装置 ${createdItem.device_headers.length} 台`}</span>
             </div>
           ) : null}
         </section>
@@ -1727,12 +1727,12 @@ function ModuleRegisterPage() {
           {createdItem ? (
             <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}`)}>
               <span aria-hidden="true">&lt;-</span>
-              Open Detail
+              詳細を開く
             </button>
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting"}>
             <span aria-hidden="true">save</span>
-            {createState.status === "submitting" ? "Saving..." : "Save"}
+            {createState.status === "submitting" ? "保存中..." : "保存実行"}
           </button>
         </Toolbar>
       </form>
