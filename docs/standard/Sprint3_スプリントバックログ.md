@@ -28,9 +28,9 @@ Sprint 3 では、Sprint 2 で整えた参照系の土台をもとに、standard
 | SB3-10 | WebUI | 承認状態変更操作を画面から実行できるようにする | Medium | [済] | 承認状態確認画面から状態変更APIを呼べる | SB3-09 |
 | SB3-11 | 設計 | Excel取込の最小入力設計を整理する | Medium | [済] | `excel_import.py` と整合する最小入力仕様が整理されている | SB3-01 |
 | SB3-12 | API | Excel取込の最小実装を行う | Medium | [済] | Excel取込の入口を API / helper で確認できる | SB3-11 |
-| SB3-13 | CI | 追加API / 画面変更に合わせた確認を整理する | Medium | [未] | pytest / build / deploy script check の観点が揃っている | SB3-02, SB3-05, SB3-09 |
-| SB3-14 | Deploy | Sprint 3 の中間成果をテストサーバーで確認する | Medium | [進行中] | 実装済み機能がテストサーバーで確認できる | SB3-03, SB3-07, SB3-10 |
-| SB3-15 | Review | Sprint 3 レビュー観点を整理する | Medium | [未] | レビュー時に確認すべき項目がまとまっている | SB3-14 |
+| SB3-13 | CI | 追加API / 画面変更に合わせた確認を整理する | Medium | [済] | pytest / build / deploy script check の観点が揃っている | SB3-02, SB3-05, SB3-09 |
+| SB3-14 | Deploy | Sprint 3 の中間成果をテストサーバーで確認する | Medium | [済] | 実装済み機能がテストサーバーで確認できる | SB3-03, SB3-07, SB3-10 |
+| SB3-15 | Review | Sprint 3 レビュー観点を整理する | Medium | [済] | レビュー時に確認すべき項目がまとまっている | SB3-14 |
 
 ---
 
@@ -71,6 +71,15 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
   - helper を呼ぶ薄い入口として `POST /api/v1/modules/import-sheet` を追加
   - raw binary upload の `POST /api/v1/modules/import` を追加
   - モジュール登録画面に `import-sheet` プレビュー導線を追加
+  - モジュール登録画面に `Excelファイル取込` UI を追加
+  - `xlsx / xlsm` の実ファイル取込を画面から確認
+  - 取込結果を登録画面へ反映し、手修正後に保存できる流れを確認
+- SB3-13
+  - pytest / build / Docker / テストサーバー / deploy script の確認観点を整理
+  - `SB3-13_確認観点整理.md` を追加
+- SB3-15
+  - Sprint 3 のレビュー観点を整理
+  - `Sprint3_レビュー資料.md` を追加
 - 詳細画面改善
   - モジュール詳細の Excel 風表示
   - 作業内容段落の DB 保持 (`indent_level`)
@@ -80,6 +89,8 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
   - `/modules/{id}`
   - `/documents/create`
   - `/documents/{id}`
+  - `/approval`
+  - `Excelファイル取込` を含む最新のモジュール登録画面
 
 ---
 
@@ -112,12 +123,12 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
 ## 6. 次の候補
 次に進める候補はこのあたりです。
 
-1. SB3-12 の upload API / 実ファイル読込入口を具体化する
-2. 原本詳細側も多装置表示方針をそろえる
-3. Sprint 3 レビュー観点を整理する
-4. 承認状態変更の利用手順を確認する
+1. 原本詳細側も多装置表示方針をそろえる
+2. 承認状態変更の利用手順を確認する
+3. Sprint 3 の締め用メモを整理する
+4. Sprint 4 入口タスクを決める
 
-### SB3-12 進め方メモ
+### SB3-12 完了メモ
 - 先行方針は `helper 直呼び確認 -> 薄い backend 入口 -> upload API` とする
-- まずは 1シート相当の JSON を `POST /api/v1/modules/import-sheet` へ渡し、`ModuleCreateRequest` へ正規化できることを確認する
-- 実ファイル upload は次段で追加する
+- 1シート相当の JSON を `POST /api/v1/modules/import-sheet` へ渡し、`ModuleCreateRequest` へ正規化できることを確認した
+- 実ファイル upload を `POST /api/v1/modules/import` で追加し、画面からの取込まで確認した
