@@ -128,6 +128,10 @@ Sprint 3 で今回までに反映できている内容は次のとおりです�
 3. Sprint 3 の締め用メモを整理する
 4. Sprint 4 入口タスクを決める
 
+### Sprint 3 締めメモ
+- `Sprint3_締めメモ.md` に Sprint 3 の到達点 / 残タスク / Sprint 4 入口案を整理した
+- 推奨する Sprint 4 入口は `SB4-01: 原本詳細側の多装置表示方針をモジュール詳細とそろえる`
+
 ### SB3-12 完了メモ
 - 先行方針は `helper 直呼び確認 -> 薄い backend 入口 -> upload API` とする
 - 1シート相当の JSON を `POST /api/v1/modules/import-sheet` へ渡し、`ModuleCreateRequest` へ正規化できることを確認した

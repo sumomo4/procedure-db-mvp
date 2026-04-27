@@ -2424,20 +2424,35 @@ function ModuleRegisterPageV2() {
           </label>
         </FormGrid>
 
-        <section className="register-step-card">
-          <div className="register-step-header">
+        <details className="register-panel-accordion" open>
+          <summary className="register-panel-summary">
             <div>
               <h2>装置ブロック</h2>
               <p className="register-section-copy">
                 装置を横方向に追加できます。各装置ブロックの中に「時刻 / target / P / 対象装置」と、各手順行の「時刻 / window / P / コマンド」をまとめて持ちます。
               </p>
             </div>
-            <button className="secondary" type="button" onClick={addDeviceSlot} disabled={deviceHeaders.length >= 20}>
-              <span aria-hidden="true">+</span>
-              装置追加
-            </button>
-          </div>
-          <div className="register-device-accordion-list">
+            <div className="register-panel-summary-actions">
+              <span className="register-panel-toggle-indicator" aria-hidden="true">
+                開閉
+              </span>
+              <button
+                className="secondary"
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  addDeviceSlot();
+                }}
+                disabled={deviceHeaders.length >= 20}
+              >
+                <span aria-hidden="true">+</span>
+                装置追加
+              </button>
+            </div>
+          </summary>
+          <div className="register-panel-body">
+            <div className="register-device-accordion-list">
             {deviceHeaders.map((header) => (
               <details key={header.slotNo} className="register-device-accordion" open={header.slotNo === 1}>
                 <summary className="register-device-accordion-summary">
@@ -2548,22 +2563,37 @@ function ModuleRegisterPageV2() {
               </details>
             ))}
           </div>
-        </section>
+          </div>
+        </details>
 
-        <section className="register-step-card">
-          <div className="register-step-header">
+        <details className="register-panel-accordion" open>
+          <summary className="register-panel-summary">
             <div>
               <h2>手順行</h2>
               <p className="register-section-copy">
                 ここでは共通の手順項目を入力します。装置ごとのコマンド列は上の装置ブロック側で編集します。
               </p>
             </div>
-            <button className="secondary" type="button" onClick={addRow}>
-              <span aria-hidden="true">+</span>
-              行追加
-            </button>
-          </div>
-          <div className="register-rows">
+            <div className="register-panel-summary-actions">
+              <span className="register-panel-toggle-indicator" aria-hidden="true">
+                開閉
+              </span>
+              <button
+                className="secondary"
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  addRow();
+                }}
+              >
+                <span aria-hidden="true">+</span>
+                行追加
+              </button>
+            </div>
+          </summary>
+          <div className="register-panel-body">
+            <div className="register-rows">
             {rows.map((row, index) => (
               <section key={row.rowId} className="register-row-editor">
                 <div className="register-row-editor-header">
@@ -2625,7 +2655,8 @@ function ModuleRegisterPageV2() {
               </section>
             ))}
           </div>
-        </section>
+          </div>
+        </details>
 
         <section className="register-step-card">
           <div className="register-step-header">

@@ -689,6 +689,65 @@ th {
   gap: 16px;
 }
 
+.register-panel-accordion {
+  border: 1px solid #ded6c8;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.register-panel-summary {
+  list-style: none;
+  padding: 18px 18px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.register-panel-summary::-webkit-details-marker {
+  display: none;
+}
+
+.register-panel-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.register-panel-toggle-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #ded6c8;
+  border-radius: 999px;
+  background: #f7f3ea;
+  color: #172026;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.register-panel-toggle-indicator::after {
+  content: "▾";
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.register-panel-accordion:not([open]) .register-panel-toggle-indicator::after {
+  transform: rotate(-90deg);
+}
+
+.register-panel-body {
+  display: grid;
+  gap: 16px;
+  padding: 0 18px 18px;
+}
+
 .register-device-header-list,
 .register-device-row-groups,
 .register-device-accordion-list,
