@@ -1994,13 +1994,14 @@ function ModuleRegisterPageV2() {
   const [createState, setCreateState] = useState<ModuleCreateState>({
     status: "idle",
     item: null,
-    message: "装置ブロックと手順行を入力して、初版モジュールを保存してください。",
+    message: "Excelファイルを取り込んでから、初版モジュールを保存してください。",
   });
   const [importPreviewState, setImportPreviewState] = useState<ModuleImportPreviewState>({
     status: "idle",
     item: null,
     message: "Excel取込プレビューはまだ実行していません。",
   });
+  const [isWorkbookImportApplied, setIsWorkbookImportApplied] = useState(false);
 
   function blankDeviceEntry(slotNo: number): ModuleRegisterDeviceEntryDraft {
     return {
@@ -2188,6 +2189,15 @@ function ModuleRegisterPageV2() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
 
+    if (!isWorkbookImportApplied) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "先にExcelファイル取込を実行してください。",
+      });
+      return;
+    }
+
     setCreateState({
       status: "submitting",
       item: null,
@@ -2300,6 +2310,7 @@ function ModuleRegisterPageV2() {
       }
 
       applyImportedDraft(responseBody.data);
+      setIsWorkbookImportApplied(true);
       setImportPreviewState({
         status: "success",
         item: responseBody.data,
@@ -2388,16 +2399,17 @@ function ModuleRegisterPageV2() {
 
   const createdItem = createState.item;
   const previewItem = importPreviewState.item;
+  const showManualEditors = false;
 
   return (
     <Page
       title="モジュール登録"
-      description="装置ブロックと手順行を入力し、初版モジュールを保存します。装置は横方向に最大20台まで追加できます。"
+      description="Excelファイルを取り込み、内容を確認してから初版モジュールを保存します。"
     >
       <section className="upload-zone" aria-label="モジュール登録ガイダンス">
         <span className="upload-icon">+</span>
-        <h2>先に装置ブロックを追加し、そのあと手順行を追加します</h2>
-        <p>装置ごとに「時刻 / target / P / 対象装置」と、各手順行に対する「時刻 / window / P / コマンド」をまとめて入力できます。</p>
+        <h2>Excelファイルを取り込んでモジュールを登録します</h2>
+        <p>xlsx / xlsm を選択して取り込み、必要な内容を確認してから保存します。</p>
       </section>
 
       <form className="register-form" onSubmit={handleSubmit}>
@@ -2424,6 +2436,9 @@ function ModuleRegisterPageV2() {
           </label>
         </FormGrid>
 
+        {/* Excel取込のみで登録する方針のため、手入力用の装置ブロックと手順行はWebUIでは表示しません。 */}
+        {showManualEditors ? (
+          <>
         <details className="register-panel-accordion" open>
           <summary className="register-panel-summary">
             <div>
@@ -2657,6 +2672,8 @@ function ModuleRegisterPageV2() {
           </div>
           </div>
         </details>
+          </>
+        ) : null}
 
         <section className="register-step-card">
           <div className="register-step-header">
@@ -2679,7 +2696,19 @@ function ModuleRegisterPageV2() {
           <FormGrid>
             <label className="wide">
               Excelファイル
-              <input type="file" accept=".xlsx,.xlsm" onChange={(event) => setSelectedImportFile(event.target.files?.[0] ?? null)} />
+              <input
+                type="file"
+                accept=".xlsx,.xlsm"
+                onChange={(event) => {
+                  setSelectedImportFile(event.target.files?.[0] ?? null);
+                  setIsWorkbookImportApplied(false);
+                  setCreateState({
+                    status: "idle",
+                    item: null,
+                    message: "Excelファイルを取り込んでから、初版モジュールを保存してください。",
+                  });
+                }}
+              />
             </label>
           </FormGrid>
           <section className="register-status">
@@ -2781,7 +2810,7 @@ function ModuleRegisterPageV2() {
               詳細を開く
             </button>
           ) : null}
-          <button className="primary" type="submit" disabled={createState.status === "submitting"}>
+          <button className="primary" type="submit" disabled={createState.status === "submitting" || !isWorkbookImportApplied}>
             <span aria-hidden="true">✔</span>
             {createState.status === "submitting" ? "保存中..." : "保存実行"}
           </button>
