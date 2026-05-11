@@ -1,5 +1,6 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Fragment, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { DevicePager, PreviewFrame, PreviewOverlay } from "./previewUi";
 
 type Status = "Draft" | "approval" | "archive";
 
@@ -309,6 +310,76 @@ type SourceDocCreateItemDraft = {
   enabled: boolean;
 };
 
+
+
+type CaseDocMasterOptionData = {
+  value: string;
+  label: string;
+};
+
+type CaseDocMasterOptionsData = {
+  items: CaseDocMasterOptionData[];
+};
+
+type CaseDocUnitConfigItemData = {
+  unit_config_id: string;
+  fs_cluster_name: string;
+  block: string;
+  prefecture: string;
+  building: string;
+};
+
+type CaseDocUnitConfigListData = {
+  items: CaseDocUnitConfigItemData[];
+};
+
+type CaseDocHostAssignmentData = {
+  slot_key: string;
+  device_type: string;
+  system: string | null;
+  host_name: string;
+};
+
+type CaseDocCommonValueData = {
+  key: string;
+  value: string;
+  source: string;
+};
+
+type CaseDocResolvedPlaceholderData = {
+  placeholder: string;
+  value: string;
+  source_table: string;
+  source_column: string;
+  host_name: string | null;
+};
+
+type CaseDocResolveContextData = {
+  source_doc_id: number;
+  unit_config: CaseDocUnitConfigItemData;
+  host_assignments: CaseDocHostAssignmentData[];
+  common_values: CaseDocCommonValueData[];
+  resolved_placeholders: CaseDocResolvedPlaceholderData[];
+};
+
+type CaseDocOptionLoadState = {
+  status: "loading" | "available" | "unavailable";
+  items: CaseDocMasterOptionData[];
+  message: string;
+};
+
+type CaseDocUnitConfigLoadState = {
+  status: "idle" | "loading" | "available" | "unavailable";
+  items: CaseDocUnitConfigItemData[];
+  message: string;
+};
+
+type CaseDocResolveState = {
+  status: "idle" | "submitting" | "success" | "error";
+  item: CaseDocResolveContextData | null;
+  message: string;
+};
+
 type ApprovalStatusListItemData = {
   target_id: number;
   target_key: string;
@@ -416,6 +487,7 @@ function App() {
         <Route path="/documents/search" element={<DocumentSearchPage />} />
         <Route path="/documents/create" element={<DocumentEditPage />} />
         <Route path="/documents/:id" element={<DocumentDetailPage />} />
+        <Route path="/case-docs" element={<CaseDocsPage />} />
         <Route path="/approval" element={<ApprovalPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -444,6 +516,7 @@ function Shell() {
           <NavItem to="/modules/register" label="モジュール登録" icon="⇧" />
           <NavItem to="/documents/search" label="原本参照" icon="▤" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
+          <NavItem to="/case-docs" label={caseDocText.title} icon="CS" />
           <NavItem to="/approval" label="承認状態確認" icon="✓" />
         </nav>
         <div className="flow-box">
@@ -916,7 +989,7 @@ function ModuleListPage() {
         </section>
       ) : (
         <DataTable
-          columns={["モジュールID", "モジュール名", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "é¸æ"]}
+          columns={["モジュールID", "モジュール名", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "選択"]}
           rows={moduleListState.items.map((item) => [
             item.module_key,
             item.module_name,
@@ -934,41 +1007,39 @@ function ModuleListPage() {
   );
 }
 
-function ModuleDetailPage() {
-  const navigate = useNavigate();
-  const { moduleId } = useParams();
+function useModuleDetailState(moduleId: string | undefined): ModuleDetailState {
   const [moduleDetailState, setModuleDetailState] = useState<ModuleDetailState>({
     status: "loading",
     item: null,
-    message: "モジュール詳細を取得しています。",
+    message: "モジュール詳細を取得しています...",
   });
 
   useEffect(() => {
+    if (!moduleId) {
+      setModuleDetailState({
+        status: "unavailable",
+        item: null,
+        message: "モジュールIDが指定されていません。",
+      });
+      return;
+    }
+
     const abortController = new AbortController();
 
+    setModuleDetailState({
+      status: "loading",
+      item: null,
+      message: "モジュール詳細を取得しています...",
+    });
+
     async function fetchModuleDetail(): Promise<void> {
-      if (!moduleId) {
-        setModuleDetailState({
-          status: "unavailable",
-          item: null,
-          message: "モジュールIDが指定されていません。",
-        });
-        return;
-      }
-
-      setModuleDetailState({
-        status: "loading",
-        item: null,
-        message: "モジュール詳細を取得しています。",
-      });
-
       try {
         const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}`), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
 
-        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        if (!response.ok || responseBody.result !== "success" || !responseBody.data) {
           setModuleDetailState({
             status: "unavailable",
             item: null,
@@ -1002,7 +1073,15 @@ function ModuleDetailPage() {
     };
   }, [moduleId]);
 
+  return moduleDetailState;
+}
+
+function ModuleDetailPage() {
+  const navigate = useNavigate();
+  const { moduleId } = useParams();
+  const moduleDetailState = useModuleDetailState(moduleId);
   const item = moduleDetailState.item;
+  const [isPreviewOverlayOpen, setIsPreviewOverlayOpen] = useState(false);
 
   return (
     <Page title="モジュール詳細" description="APIから取得したモジュールの基本情報と行データを確認します。">
@@ -1033,7 +1112,11 @@ function ModuleDetailPage() {
           <span aria-hidden="true">←</span>
           一覧へ戻る
         </button>
-        <button className="primary" onClick={() => navigate("/documents/create")}>
+        <button className="secondary" onClick={() => setIsPreviewOverlayOpen(true)} disabled={!item}>
+          <span aria-hidden="true">□</span>
+          全画面プレビュー
+        </button>
+        <button className="primary" onClick={() => navigate("/documents/create")} disabled={!item}>
           <span aria-hidden="true">＋</span>
           原本作成へ
         </button>
@@ -1065,16 +1148,44 @@ function ModuleDetailPage() {
           <p>{moduleDetailState.message}</p>
         </section>
       )}
+
+      {item && isPreviewOverlayOpen ? (
+        <PreviewOverlay
+          title={`${item.module_name.replace("_CS ", " ")} / 案件CSプレビュー`}
+          description="添付Excelと同じ列構造で、装置が右方向に増える案件CS形式の全画面表示です。"
+          onClose={() => setIsPreviewOverlayOpen(false)}
+          actions={
+            <button className="secondary" type="button" onClick={() => window.print()}>
+              <span aria-hidden="true">P</span>
+              印刷
+            </button>
+          }
+        >
+          <div className="preview-surface preview-surface-sheet">
+            <ExcelModulePreview item={item} mode="fullscreen" />
+          </div>
+        </PreviewOverlay>
+      ) : null}
     </Page>
   );
 }
 
-function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
+function ExcelModulePreview({
+  item,
+  mode = "embedded",
+}: {
+  item: ModuleDetailData;
+  mode?: "embedded" | "fullscreen";
+}) {
   const rowsWithIndent = buildIndentedRows(item.rows);
   const deviceHeaders = getModuleDeviceHeaders(item);
 
+  if (mode === "fullscreen") {
+    return <ExcelModuleCaseSheet item={item} rowsWithIndent={rowsWithIndent} deviceHeaders={deviceHeaders} />;
+  }
+
   return (
-    <section className="excel-preview" aria-label="Excel-like module preview">
+    <section className="excel-preview" aria-label="Excel風モジュールプレビュー">
       <div className="excel-device-summary">
         <div className="excel-device-summary-card excel-device-summary-title">
           <span>モジュール</span>
@@ -1138,131 +1249,151 @@ function ExcelModulePreview({ item }: { item: ModuleDetailData }) {
           </tbody>
         </table>
       </div>
-
-      <div className="excel-device-accordion-list">
-        {deviceHeaders.map((header, index) => (
-          <details key={header.slot_no} className="excel-device-accordion" open={index === 0}>
-            <summary className="excel-device-accordion-summary">
-              <div className="excel-device-accordion-title">
-                <strong>{`装置 ${header.slot_no}`}</strong>
-                <span>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</span>
-              </div>
-              <div className="excel-device-accordion-meta">
-                <span>{`時刻 ${header.header_time_text ?? "-"}`}</span>
-                <span>{`target ${header.target_text ?? "-"}`}</span>
-                <span>{`P ${header.p_text ?? "-"}`}</span>
-              </div>
-            </summary>
-
-            <div className="excel-device-accordion-body">
-              <div className="excel-sheet-wrap">
-                <table className="excel-sheet excel-device-command-sheet">
-                  <colgroup>
-                    <col className="excel-col-small" />
-                    <col className="excel-col-time" />
-                    <col className="excel-col-window" />
-                    <col className="excel-col-prompt" />
-                    <col className="excel-col-command" />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th>行</th>
-                      <th>時刻</th>
-                      <th>window</th>
-                      <th>P</th>
-                      <th>コマンド</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rowsWithIndent.map(({ row }) => {
-                      const entry = getModuleDeviceEntry(row, header.slot_no);
-
-                      return (
-                        <tr key={`${row.module_row_id}-${header.slot_no}`} className={`excel-row excel-row-${row.row_type}`}>
-                          <td className="excel-number">{row.row_order}</td>
-                          <td className="excel-center">{entry?.time_text ?? ""}</td>
-                          <td>{entry?.window_text ?? ""}</td>
-                          <td>{entry?.p_text ?? ""}</td>
-                          <td className="excel-command-cell">{entry?.command_text ?? ""}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </details>
-        ))}
-      </div>
-
-      <div className="excel-remarks">
-        <strong>補足</strong>
-        <p>共通の手順表を見せたまま、必要な装置のコマンド欄だけを開いて確認できます。装置台数が増えても比較しやすい表示です。</p>
-      </div>
     </section>
   );
 }
 
-function ModuleSearchPageLegacy() {
-  const navigate = useNavigate();
-  return (
-    <Page title="モジュール検索" description="検索条件を入力し、登録済みモジュールの一覧へ進みます。">
-      <SearchForm
-        fields={[
-          ["キーワード", "初期点検"],
-          ["カテゴリ", "点検"],
-          ["ステータス", "Draft / 承認待ち / 保管済み"],
-        ]}
-        onSubmit={() => navigate("/modules/list")}
-      />
-    </Page>
-  );
-}
+function ExcelModuleCaseSheet({
+  item,
+  rowsWithIndent,
+  deviceHeaders,
+}: {
+  item: ModuleDetailData;
+  rowsWithIndent: Array<{ row: ModuleDetailRowData; indentLevel: 0 | 1 | 2 | 3 | 4 }>;
+  deviceHeaders: ModuleDeviceHeaderData[];
+}) {
+  const caseTitle = item.module_name.replace("_CS ", " ");
+  const caseDeviceHeaders =
+    deviceHeaders.length > 0
+      ? deviceHeaders
+      : [
+          {
+            slot_no: 1,
+            header_time_text: item.header_time_text,
+            target_text: item.target_text,
+            p_text: item.common_p_text,
+            target_device_text: item.target_device_text,
+          },
+        ];
+  const totalColumnSpan = 9 + caseDeviceHeaders.length * 4;
 
-function ModuleListPageLegacy() {
-  const navigate = useNavigate();
   return (
-    <Page title="モジュール一覧" description="検索結果を確認し、原本作成や詳細確認の対象を選択します。">
-      <Toolbar>
-        <button className="secondary" onClick={() => navigate("/modules/search")}><span aria-hidden="true">←</span>条件変更</button>
-        <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">＋</span>原本作成へ</button>
-      </Toolbar>
-      <DataTable
-        columns={["ID", "モジュール名", "カテゴリ", "担当", "版数", "状態", "更新日", "操作"]}
-        rows={modules.map((item) => [
-          item.id,
-          item.name,
-          item.category,
-          item.owner,
-          item.version,
-          <StatusPill status={item.status} />,
-          item.updatedAt,
-          <button className="text-button" onClick={() => navigate("/documents/create")}>選択</button>,
-        ])}
-      />
-    </Page>
-  );
-}
-
-function ModuleRegisterPageLegacy() {
-  return (
-    <Page title="モジュール登録" description="Excelファイルをドラッグ&ドロップし、登録実行までの流れを確認します。">
-      <section className="upload-zone" aria-label="Excelファイル登録">
-        <span className="upload-icon">⇧</span>
-        <h2>Excelファイルをここへドロップ</h2>
-        <p>登録API接続前の画面モックです。M1では操作導線と入力項目を確認します。</p>
-        <button className="primary"><span aria-hidden="true">＋</span>ファイル選択</button>
-      </section>
-      <FormGrid>
-        <label>モジュール名<input defaultValue="初期点検手順" /></label>
-        <label>カテゴリ<input defaultValue="点検" /></label>
-        <label>担当<input defaultValue="開発担当A" /></label>
-        <label>備考<textarea defaultValue="Excelから構造データを取り込む想定" /></label>
-      </FormGrid>
-      <Toolbar>
-        <button className="primary"><span aria-hidden="true">✓</span>登録実行</button>
-      </Toolbar>
-    </Page>
+    <section className="excel-preview excel-preview-fullscreen" aria-label="案件CSプレビュー">
+      <div className="excel-sheet-wrap excel-sheet-wrap-case">
+        <table className="excel-sheet excel-sheet-case excel-sheet-multi-device">
+          <colgroup>
+            <col className="excel-col-small" />
+            <col className="excel-col-small" />
+            <col className="excel-col-small" />
+            <col className="excel-col-doc" />
+            <col className="excel-col-work-block" />
+            <col className="excel-col-work-block" />
+            <col className="excel-col-work-block" />
+            <col className="excel-col-work-block" />
+            <col className="excel-col-check" />
+            {caseDeviceHeaders.map((header) => (
+              <Fragment key={`cols-${header.slot_no}`}>
+                <col className="excel-col-time" />
+                <col className="excel-col-window" />
+                <col className="excel-col-prompt" />
+                <col className="excel-col-command" />
+              </Fragment>
+            ))}
+          </colgroup>
+          <tbody>
+            <tr className="excel-case-title-row">
+              <td colSpan={9} className="excel-case-title-cell">
+                {caseTitle}
+              </td>
+              {caseDeviceHeaders.map((header) => (
+                <Fragment key={`top-label-${header.slot_no}`}>
+                  <td className="excel-case-top-label">時刻</td>
+                  <td className="excel-case-top-label">terget</td>
+                  <td className="excel-case-top-label">P</td>
+                  <td className="excel-case-top-label">対象装置</td>
+                </Fragment>
+              ))}
+            </tr>
+            <tr className="excel-case-device-meta-row">
+              <td colSpan={9} className="excel-case-left-blank" />
+              {caseDeviceHeaders.map((header) => (
+                <Fragment key={`top-value-${header.slot_no}`}>
+                  <td className="excel-center">{header.header_time_text ?? ""}</td>
+                  <td>{header.target_text ?? String(header.slot_no)}</td>
+                  <td className="excel-center">{header.p_text ?? ""}</td>
+                  <td>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</td>
+                </Fragment>
+              ))}
+            </tr>
+            <tr className="excel-case-spacer-row">
+              <td colSpan={totalColumnSpan} />
+            </tr>
+            <tr className="excel-case-group-row">
+              <td colSpan={3} className="excel-case-group-cell">通番</td>
+              <td className="excel-case-group-cell" />
+              <td colSpan={4} className="excel-case-group-cell">作業内容</td>
+              <td className="excel-case-group-cell" />
+              {caseDeviceHeaders.map((header) => (
+                <Fragment key={`group-${header.slot_no}`}>
+                  <td className="excel-case-group-cell" />
+                  <td className="excel-case-group-cell" />
+                  <td className="excel-case-group-cell" />
+                  <td className="excel-case-device-name">{header.target_device_text ?? `{{DEVICE_${header.slot_no}}}`}</td>
+                </Fragment>
+              ))}
+            </tr>
+            <tr>
+              <th>大</th>
+              <th>中</th>
+              <th>小</th>
+              <th>技術資料名</th>
+              <th colSpan={4}>作業内容</th>
+              <th>確認事項 or 項目</th>
+              {caseDeviceHeaders.map((header) => (
+                <Fragment key={`header-${header.slot_no}`}>
+                  <th>時刻</th>
+                  <th>window</th>
+                  <th>P</th>
+                  <th>コマンド</th>
+                </Fragment>
+              ))}
+            </tr>
+            {rowsWithIndent.map(({ row, indentLevel }) => (
+              <tr key={row.module_row_id} className={`excel-row excel-row-${row.row_type}`}>
+                <td className="excel-number">{row.major_no ?? ""}</td>
+                <td className="excel-number">{row.middle_no ?? ""}</td>
+                <td className="excel-number">{row.minor_no ?? ""}</td>
+                <td>{row.tech_doc_text ?? ""}</td>
+                <td colSpan={4} className="excel-work-cell excel-work-cell-wide">
+                  <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                </td>
+                <td>{row.expected_result ?? ""}</td>
+                {caseDeviceHeaders.map((header) => {
+                  const entry = getModuleDeviceEntry(row, header.slot_no);
+                  return (
+                    <Fragment key={`${row.module_row_id}-${header.slot_no}`}>
+                      <td className="excel-center">{entry?.time_text ?? row.time_text ?? ""}</td>
+                      <td>{entry?.window_text ?? row.window_text ?? ""}</td>
+                      <td>{entry?.p_text ?? row.p_text ?? ""}</td>
+                      <td className="excel-command-cell">{entry?.command_text ?? row.command_text ?? ""}</td>
+                    </Fragment>
+                  );
+                })}
+              </tr>
+            ))}
+            <tr className="excel-case-spacer-row">
+              <td colSpan={totalColumnSpan} />
+            </tr>
+            <tr className="excel-case-remarks-row">
+              <td colSpan={totalColumnSpan}>
+                <strong>備考</strong>
+                <p>{item.description ?? ""}</p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -2002,6 +2133,13 @@ function ModuleRegisterPageV2() {
     message: "Excel取込プレビューはまだ実行していません。",
   });
   const [isWorkbookImportApplied, setIsWorkbookImportApplied] = useState(false);
+  const [isImportPreviewFullscreenOpen, setIsImportPreviewFullscreenOpen] = useState(false);
+
+  useEffect(() => {
+    if (!importPreviewState.item) {
+      setIsImportPreviewFullscreenOpen(false);
+    }
+  }, [importPreviewState.item]);
 
   function blankDeviceEntry(slotNo: number): ModuleRegisterDeviceEntryDraft {
     return {
@@ -2399,6 +2537,7 @@ function ModuleRegisterPageV2() {
 
   const createdItem = createState.item;
   const previewItem = importPreviewState.item;
+  const previewModuleItem = previewItem ? convertImportPreviewToModuleDetail(previewItem) : null;
   const showManualEditors = false;
 
   return (
@@ -2816,6 +2955,51 @@ function ModuleRegisterPageV2() {
           </button>
         </Toolbar>
       </form>
+            {isImportPreviewFullscreenOpen && previewItem && previewModuleItem ? (
+        <PreviewOverlay
+          title="Excel取込プレビュー"
+          description="現在の取込結果を保存前に全画面で確認します。Excel出力と同じ列構造で、装置が横に増えていく形で表示します。"
+          onClose={() => setIsImportPreviewFullscreenOpen(false)}
+          actions={
+            <button className="secondary" type="button" onClick={() => window.print()}>
+              <span aria-hidden="true">P</span>
+              印刷
+            </button>
+          }
+        >
+          <section className={`list-status list-status-${importPreviewState.status}`} aria-live="polite">
+            <div>
+              <span>プレビュー状態</span>
+              <strong>
+                {importPreviewState.status === "success"
+                  ? "正規化完了"
+                  : importPreviewState.status === "error"
+                    ? "変換失敗"
+                    : importPreviewState.status === "submitting"
+                      ? "変換中"
+                      : "未実行"}
+              </strong>
+            </div>
+            <div>
+              <span>モジュールキー</span>
+              <strong>{previewItem.module_key ?? "自動採番"}</strong>
+            </div>
+            <div>
+              <span>装置数</span>
+              <strong>{previewItem.device_headers.length}</strong>
+            </div>
+            <p>{importPreviewState.message}</p>
+          </section>
+          <div className="preview-surface preview-surface-sheet">
+            <ExcelModulePreview item={previewModuleItem} mode="fullscreen" />
+          </div>
+          <details className="json-preview-wrap">
+            <summary>正規化結果を表示</summary>
+            <pre className="json-preview">{JSON.stringify(previewItem, null, 2)}</pre>
+          </details>
+        </PreviewOverlay>
+      ) : null}
+
     </Page>
   );
 }
@@ -2979,11 +3163,11 @@ function DocumentSearchPage() {
       <Toolbar>
         <button className="secondary" onClick={() => navigate("/documents/search")}>
           <span aria-hidden="true">↺</span>
-          条件を戻す
+          条件をリセット
         </button>
         <button className="primary" onClick={() => navigate("/documents/create")}>
           <span aria-hidden="true">＋</span>
-          原本作成へ
+          原本を登録
         </button>
       </Toolbar>
       {sourceDocListState.status === "available" && sourceDocListState.items.length === 0 ? (
@@ -3771,32 +3955,39 @@ function DocumentEditPage() {
   );
 }
 
-function DocumentDetailPage() {
-  const navigate = useNavigate();
-  const { id } = useParams();
+function useSourceDocDetailState(id: string | undefined): SourceDocDetailState {
   const [sourceDocDetailState, setSourceDocDetailState] = useState<SourceDocDetailState>({
     status: "loading",
     item: null,
-    message: "原本詳細を取得しています。",
+    message: "原本詳細を取得しています...",
   });
 
   useEffect(() => {
+    if (!id) {
+      setSourceDocDetailState({
+        status: "unavailable",
+        item: null,
+        message: "原本IDが指定されていません。",
+      });
+      return;
+    }
+
     const abortController = new AbortController();
 
-    async function fetchSourceDocDetail(): Promise<void> {
-      setSourceDocDetailState({
-        status: "loading",
-        item: null,
-        message: "原本詳細を取得しています。",
-      });
+    setSourceDocDetailState({
+      status: "loading",
+      item: null,
+      message: "原本詳細を取得しています...",
+    });
 
+    async function fetchSourceDocDetail(): Promise<void> {
       try {
         const response = await fetch(buildApiUrl(`/api/v1/source-docs/${id}`), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<SourceDocDetailData>;
 
-        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        if (!response.ok || responseBody.result !== "success" || !responseBody.data) {
           setSourceDocDetailState({
             status: "unavailable",
             item: null,
@@ -3830,7 +4021,15 @@ function DocumentDetailPage() {
     };
   }, [id]);
 
+  return sourceDocDetailState;
+}
+
+function DocumentDetailPage() {
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const sourceDocDetailState = useSourceDocDetailState(id);
   const item = sourceDocDetailState.item;
+  const [isPreviewOverlayOpen, setIsPreviewOverlayOpen] = useState(false);
 
   return (
     <Page title="原本詳細" description="原本の版、状態、関連モジュール構成を API から確認します。">
@@ -3856,7 +4055,14 @@ function DocumentDetailPage() {
         <p>{sourceDocDetailState.message}</p>
       </section>
       <Toolbar>
-        <button className="secondary" onClick={() => navigate("/documents/search")}><span aria-hidden="true">↩</span>一覧へ戻る</button>
+        <button className="secondary" onClick={() => navigate("/documents/search")}>
+          <span aria-hidden="true">↩</span>
+          一覧へ戻る
+        </button>
+        <button className="secondary" onClick={() => setIsPreviewOverlayOpen(true)} disabled={!item}>
+          <span aria-hidden="true">□</span>
+          全画面プレビュー
+        </button>
         <button
           className="primary"
           onClick={() => {
@@ -3864,7 +4070,10 @@ function DocumentDetailPage() {
               navigate(`/documents/create?id=${item.source_doc_id}`);
             }
           }}
-        ><span aria-hidden="true">✎</span>更新する</button>
+        >
+          <span aria-hidden="true">✎</span>
+          更新する
+        </button>
       </Toolbar>
       {item ? (
         <>
@@ -3892,6 +4101,24 @@ function DocumentDetailPage() {
           <p>{sourceDocDetailState.message}</p>
         </section>
       )}
+
+      {item && isPreviewOverlayOpen ? (
+        <PreviewOverlay
+          title={`${item.source_doc_name} / 原本プレビュー`}
+          description="原本に紐づくモジュール構成を、同ページ内の全画面 overlay で確認します。"
+          onClose={() => setIsPreviewOverlayOpen(false)}
+          actions={
+            <button className="secondary" type="button" onClick={() => window.print()}>
+              <span aria-hidden="true">P</span>
+              印刷
+            </button>
+          }
+        >
+          <div className="preview-surface">
+            <ExcelSourceDocPreview item={item} onOpenModule={(moduleId) => navigate(`/modules/${moduleId}`)} />
+          </div>
+        </PreviewOverlay>
+      ) : null}
     </Page>
   );
 }
@@ -3990,6 +4217,59 @@ function ExcelSourceDocPreview({
   );
 }
 
+function convertImportPreviewToModuleDetail(item: ModuleImportPreviewData): ModuleDetailData {
+  return {
+    module_id: 0,
+    module_key: item.module_key ?? "preview",
+    module_name: item.module_name,
+    description: item.description,
+    module_version_id: 0,
+    version_no: 1,
+    status: "draft",
+    status_label: "プレビュー",
+    row_count: item.rows.length,
+    source_xlsx_path: item.source_xlsx_path,
+    created_by: item.created_by,
+    header_time_text: item.header_time_text,
+    target_text: item.target_text,
+    common_p_text: item.common_p_text,
+    target_device_text: item.target_device_text,
+    device_headers: item.device_headers.map((header) => ({
+      slot_no: header.slot_no,
+      header_time_text: header.header_time_text,
+      target_text: header.target_text,
+      p_text: header.p_text,
+      target_device_text: header.target_device_text,
+    })),
+    created_at: "-",
+    updated_at: "-",
+    rows: item.rows.map((row, index) => ({
+      module_row_id: index + 1,
+      row_order: row.row_order,
+      row_type: row.row_type,
+      major_no: row.major_no,
+      middle_no: row.middle_no,
+      minor_no: row.minor_no,
+      tech_doc_text: row.tech_doc_text,
+      work_text: row.work_text,
+      indent_level: row.indent_level,
+      expected_result: row.expected_result,
+      time_text: row.time_text,
+      window_text: row.window_text,
+      p_text: row.p_text,
+      command_text: row.command_text,
+      note: row.note,
+      device_entries: row.device_entries.map((entry) => ({
+        slot_no: entry.slot_no,
+        time_text: entry.time_text,
+        window_text: entry.window_text,
+        p_text: entry.p_text,
+        command_text: entry.command_text,
+      })),
+    })),
+  };
+}
+
 function getModuleDeviceHeaders(item: ModuleDetailData): ModuleDeviceHeaderData[] {
   const headersBySlot = new Map<number, ModuleDeviceHeaderData>();
 
@@ -4078,6 +4358,356 @@ function IndentedExcelText({
       </span>
       <span className="excel-indent-text">{text ?? ""}</span>
     </div>
+  );
+}
+
+
+
+const caseDocText = {
+  title: "\u6848\u4ef6\u5316",
+  description: "\u539f\u672c\u3068Access\u7531\u6765\u306e\u30de\u30b9\u30bf\u5024\u3092\u7d10\u3065\u3051\u3001\u6848\u4ef6CS\u751f\u6210\u306b\u4f7f\u3046\u5024\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002",
+  sourceDoc: "\u539f\u672c",
+  prefecture: "\u90fd\u9053\u5e9c\u770c",
+  building: "\u30d3\u30eb",
+  unitConfig: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210",
+  resolve: "\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d",
+  location: "\u8a2d\u7f6e\u5834\u6240",
+  unit: "\u30e6\u30cb\u30c3\u30c8",
+  none: "\u672a\u9078\u629e",
+  hostAssignments: "\u30db\u30b9\u30c8\u5272\u5f53",
+  commonValues: "\u5171\u901a\u5024",
+  resolvedValues: "\u89e3\u6c7a\u6e08\u307f\u5024",
+  slot: "\u30b9\u30ed\u30c3\u30c8",
+  deviceType: "\u88c5\u7f6e\u7a2e\u5225",
+  system: "\u7cfb",
+  hostName: "\u30db\u30b9\u30c8\u540d",
+  key: "\u30ad\u30fc",
+  value: "\u5024",
+  source: "\u51fa\u5178",
+  valueName: "\u5024\u540d",
+  sourceTable: "\u51fa\u5178\u30c6\u30fc\u30d6\u30eb",
+  sourceColumn: "\u51fa\u5178\u30ab\u30e9\u30e0",
+  emptyTitle: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044",
+  loadingSourceDocs: "\u539f\u672c\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
+  loadingPrefectures: "\u90fd\u9053\u5e9c\u770c\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
+  loadingBuildings: "\u30d3\u30eb\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
+  loadingUnitConfigs: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
+  selectLocation: "\u90fd\u9053\u5e9c\u770c\u3068\u30d3\u30eb\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+  ready: "\u6848\u4ef6CS\u751f\u6210\u306b\u4f7f\u3046\u5024\u3092\u78ba\u8a8d\u3067\u304d\u307e\u3059\u3002",
+  sourceDocFailed: "\u539f\u672c\u4e00\u89a7\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  sourceDocLoaded: "\u539f\u672c\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
+  prefectureFailed: "\u90fd\u9053\u5e9c\u770c\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  prefectureLoaded: "\u90fd\u9053\u5e9c\u770c\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
+  selectPrefecture: "\u90fd\u9053\u5e9c\u770c\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+  buildingFailed: "\u30d3\u30eb\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  buildingLoaded: "\u30d3\u30eb\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
+  unitConfigFailed: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  unitConfigLoaded: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
+  apiFailed: "API\u306b\u63a5\u7d9a\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002",
+  selectRequired: "\u539f\u672c\u3001\u90fd\u9053\u5e9c\u770c\u3001\u30d3\u30eb\u3001\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+  resolving: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u3066\u3044\u307e\u3059\u3002",
+  resolveFailed: "\u5024\u306e\u89e3\u6c7a\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  resolved: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u307e\u3057\u305f\u3002",
+};
+
+function CaseDocsPage() {
+  const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
+    status: "loading",
+    items: [],
+    message: caseDocText.loadingSourceDocs,
+  });
+  const [prefectureState, setPrefectureState] = useState<CaseDocOptionLoadState>({
+    status: "loading",
+    items: [],
+    message: caseDocText.loadingPrefectures,
+  });
+  const [buildingState, setBuildingState] = useState<CaseDocOptionLoadState>({
+    status: "loading",
+    items: [],
+    message: caseDocText.loadingBuildings,
+  });
+  const [unitConfigState, setUnitConfigState] = useState<CaseDocUnitConfigLoadState>({
+    status: "idle",
+    items: [],
+    message: caseDocText.selectLocation,
+  });
+  const [resolveState, setResolveState] = useState<CaseDocResolveState>({
+    status: "idle",
+    item: null,
+    message: caseDocText.ready,
+  });
+  const [selectedSourceDocId, setSelectedSourceDocId] = useState("");
+  const [selectedPrefecture, setSelectedPrefecture] = useState("");
+  const [selectedBuilding, setSelectedBuilding] = useState("");
+  const [selectedUnitConfigId, setSelectedUnitConfigId] = useState("");
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchInitialOptions(): Promise<void> {
+      try {
+        const [sourceDocsResponse, prefecturesResponse] = await Promise.all([
+          fetch(buildApiUrl("/api/v1/source-docs"), { signal: abortController.signal }),
+          fetch(buildApiUrl("/api/v1/case-docs/master/prefectures"), { signal: abortController.signal }),
+        ]);
+        const sourceDocsBody = (await sourceDocsResponse.json()) as ApiResponse<SourceDocListData>;
+        const prefecturesBody = (await prefecturesResponse.json()) as ApiResponse<CaseDocMasterOptionsData>;
+
+        if (!sourceDocsResponse.ok || sourceDocsBody.result !== "success" || sourceDocsBody.data === null) {
+          setSourceDocListState({ status: "unavailable", items: [], message: sourceDocsBody.message || caseDocText.sourceDocFailed });
+        } else {
+          setSourceDocListState({ status: "available", items: sourceDocsBody.data.items, message: caseDocText.sourceDocLoaded });
+          setSelectedSourceDocId((currentValue) => currentValue || String(sourceDocsBody.data?.items[0]?.source_doc_id ?? ""));
+        }
+
+        if (!prefecturesResponse.ok || prefecturesBody.result !== "success" || prefecturesBody.data === null) {
+          setPrefectureState({ status: "unavailable", items: [], message: prefecturesBody.message || caseDocText.prefectureFailed });
+        } else {
+          setPrefectureState({ status: "available", items: prefecturesBody.data.items, message: caseDocText.prefectureLoaded });
+          setSelectedPrefecture((currentValue) => currentValue || prefecturesBody.data?.items[0]?.value || "");
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setSourceDocListState({ status: "unavailable", items: [], message: caseDocText.apiFailed });
+        setPrefectureState({ status: "unavailable", items: [], message: caseDocText.apiFailed });
+      }
+    }
+
+    void fetchInitialOptions();
+
+    return () => {
+      abortController.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPrefecture) {
+      setBuildingState({ status: "available", items: [], message: caseDocText.selectPrefecture });
+      setSelectedBuilding("");
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    async function fetchBuildings(): Promise<void> {
+      setBuildingState({ status: "loading", items: [], message: caseDocText.loadingBuildings });
+      try {
+        const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/buildings"), window.location.origin);
+        endpoint.searchParams.set("prefecture", selectedPrefecture);
+        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
+        const responseBody = (await response.json()) as ApiResponse<CaseDocMasterOptionsData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setBuildingState({ status: "unavailable", items: [], message: responseBody.message || caseDocText.buildingFailed });
+          return;
+        }
+
+        setBuildingState({ status: "available", items: responseBody.data.items, message: caseDocText.buildingLoaded });
+        setSelectedBuilding(responseBody.data.items[0]?.value ?? "");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setBuildingState({ status: "unavailable", items: [], message: caseDocText.apiFailed });
+      }
+    }
+
+    void fetchBuildings();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [selectedPrefecture]);
+
+  useEffect(() => {
+    if (!selectedPrefecture || !selectedBuilding) {
+      setUnitConfigState({ status: "idle", items: [], message: caseDocText.selectLocation });
+      setSelectedUnitConfigId("");
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    async function fetchUnitConfigs(): Promise<void> {
+      setUnitConfigState({ status: "loading", items: [], message: caseDocText.loadingUnitConfigs });
+      try {
+        const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/unit-config"), window.location.origin);
+        endpoint.searchParams.set("prefecture", selectedPrefecture);
+        endpoint.searchParams.set("building", selectedBuilding);
+        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
+        const responseBody = (await response.json()) as ApiResponse<CaseDocUnitConfigListData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setUnitConfigState({ status: "unavailable", items: [], message: responseBody.message || caseDocText.unitConfigFailed });
+          return;
+        }
+
+        setUnitConfigState({ status: "available", items: responseBody.data.items, message: caseDocText.unitConfigLoaded });
+        setSelectedUnitConfigId(responseBody.data.items[0]?.unit_config_id ?? "");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setUnitConfigState({ status: "unavailable", items: [], message: caseDocText.apiFailed });
+      }
+    }
+
+    void fetchUnitConfigs();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [selectedPrefecture, selectedBuilding]);
+
+  const selectedSourceDoc = sourceDocListState.items.find((item) => String(item.source_doc_id) === selectedSourceDocId) ?? null;
+  const selectedUnitConfig = unitConfigState.items.find((item) => item.unit_config_id === selectedUnitConfigId) ?? null;
+
+  async function handleResolveContext(): Promise<void> {
+    if (!selectedSourceDocId || !selectedPrefecture || !selectedBuilding || !selectedUnitConfig) {
+      setResolveState({ status: "error", item: null, message: caseDocText.selectRequired });
+      return;
+    }
+
+    setResolveState({ status: "submitting", item: null, message: caseDocText.resolving });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/case-docs/resolve-context"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_doc_id: Number(selectedSourceDocId),
+          prefecture: selectedPrefecture,
+          building: selectedBuilding,
+          fs_cluster_name: selectedUnitConfig.fs_cluster_name,
+          block: selectedUnitConfig.block,
+          unit_config_id: selectedUnitConfig.unit_config_id,
+        }),
+      });
+      const responseBody = (await response.json()) as ApiResponse<CaseDocResolveContextData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setResolveState({ status: "error", item: null, message: responseBody.message || `${caseDocText.resolveFailed} HTTP ${response.status}` });
+        return;
+      }
+
+      setResolveState({ status: "success", item: responseBody.data, message: caseDocText.resolved });
+    } catch {
+      setResolveState({ status: "error", item: null, message: caseDocText.apiFailed });
+    }
+  }
+
+  return (
+    <Page title={caseDocText.title} description={caseDocText.description}>
+      <section className="case-doc-panel">
+        <form
+          className="case-doc-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleResolveContext();
+          }}
+        >
+          <label>
+            {caseDocText.sourceDoc}
+            <select value={selectedSourceDocId} onChange={(event) => setSelectedSourceDocId(event.target.value)}>
+              {sourceDocListState.items.map((item) => (
+                <option key={item.source_doc_id} value={item.source_doc_id}>
+                  {item.source_doc_key} / {item.source_doc_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {caseDocText.prefecture}
+            <select value={selectedPrefecture} onChange={(event) => setSelectedPrefecture(event.target.value)}>
+              {prefectureState.items.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {caseDocText.building}
+            <select value={selectedBuilding} onChange={(event) => setSelectedBuilding(event.target.value)}>
+              {buildingState.items.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {caseDocText.unitConfig}
+            <select value={selectedUnitConfigId} onChange={(event) => setSelectedUnitConfigId(event.target.value)}>
+              {unitConfigState.items.map((item) => (
+                <option key={item.unit_config_id} value={item.unit_config_id}>
+                  {item.fs_cluster_name} / {item.block}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="primary" type="submit" disabled={resolveState.status === "submitting"}>
+            {caseDocText.resolve}
+          </button>
+        </form>
+      </section>
+
+      <section className={`list-status list-status-${resolveState.status === "error" ? "unavailable" : resolveState.status === "success" ? "available" : "loading"}`} aria-live="polite">
+        <div>
+          <span>{caseDocText.sourceDoc}</span>
+          <strong>{selectedSourceDoc ? selectedSourceDoc.source_doc_key : caseDocText.none}</strong>
+        </div>
+        <div>
+          <span>{caseDocText.location}</span>
+          <strong>{selectedPrefecture && selectedBuilding ? `${selectedPrefecture} / ${selectedBuilding}` : caseDocText.none}</strong>
+        </div>
+        <div>
+          <span>{caseDocText.unit}</span>
+          <strong>{selectedUnitConfig ? `${selectedUnitConfig.fs_cluster_name} / ${selectedUnitConfig.block}` : caseDocText.none}</strong>
+        </div>
+        <p>{resolveState.message}</p>
+      </section>
+
+      {resolveState.item ? (
+        <div className="case-doc-result-grid">
+          <section className="section-band">
+            <h2>{caseDocText.hostAssignments}</h2>
+            <DataTable
+              columns={[caseDocText.slot, caseDocText.deviceType, caseDocText.system, caseDocText.hostName]}
+              rows={resolveState.item.host_assignments.map((item) => [
+                item.slot_key,
+                item.device_type,
+                item.system ?? "-",
+                item.host_name,
+              ])}
+            />
+          </section>
+          <section className="section-band">
+            <h2>{caseDocText.commonValues}</h2>
+            <DataTable
+              columns={[caseDocText.key, caseDocText.value, caseDocText.source]}
+              rows={resolveState.item.common_values.map((item) => [item.key, item.value, item.source])}
+            />
+          </section>
+          <section className="section-band case-doc-wide-section">
+            <h2>{caseDocText.resolvedValues}</h2>
+            <DataTable
+              columns={[caseDocText.valueName, caseDocText.value, caseDocText.sourceTable, caseDocText.sourceColumn, caseDocText.hostName]}
+              rows={resolveState.item.resolved_placeholders.map((item) => [
+                item.placeholder,
+                item.value,
+                item.source_table,
+                item.source_column,
+                item.host_name ?? "-",
+              ])}
+            />
+          </section>
+        </div>
+      ) : (
+        <section className="empty-state">
+          <h2>{caseDocText.emptyTitle}</h2>
+          <p>{sourceDocListState.message} / {prefectureState.message} / {buildingState.message} / {unitConfigState.message}</p>
+        </section>
+      )}
+    </Page>
   );
 }
 
@@ -4580,6 +5210,7 @@ function routeTitle(path: string) {
     "/modules/register": "モジュール登録",
     "/documents/search": "原本検索",
     "/documents/create": "原本作成 / 更新",
+    "/case-docs": "\u6848\u4ef6\u5316",
     "/approval": "承認状態確認",
   };
   if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list") {

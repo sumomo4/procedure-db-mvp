@@ -288,6 +288,81 @@ nav {
   padding: 34px;
 }
 
+.preview-screen {
+  min-height: 100vh;
+  padding: 30px;
+  background: #f4f0e8;
+}
+
+.preview-page {
+  width: min(1680px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 24px;
+}
+
+.preview-toolbar {
+  margin-top: 18px;
+}
+
+.preview-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  padding: 18px;
+  overflow: auto;
+  background: rgba(23, 32, 38, 0.66);
+}
+
+.preview-overlay-panel {
+  width: min(1720px, 100%);
+  min-height: calc(100vh - 36px);
+  margin: 0 auto;
+  border-radius: 8px;
+  background: #f4f0e8;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.32);
+}
+
+.preview-overlay-shell {
+  padding: 24px;
+  display: grid;
+  gap: 24px;
+}
+
+.preview-overlay-content {
+  display: grid;
+  gap: 24px;
+}
+
+.preview-surface {
+  padding: 18px;
+  border: 1px solid #d6cdbc;
+  border-radius: 8px;
+  background: #fbfaf7;
+  box-shadow: 0 12px 30px rgba(67, 54, 35, 0.08);
+}
+
+.preview-surface-sheet {
+  padding: 8px;
+  border: 1px solid #b8c1c7;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.register-inline-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .page {
   display: grid;
   gap: 24px;
@@ -459,6 +534,42 @@ nav {
 
 .module-search-form {
   grid-template-columns: minmax(220px, 1.2fr) minmax(180px, 0.8fr) auto;
+}
+
+
+
+.case-doc-panel {
+  background: rgba(255, 255, 255, 0.72);
+  border-top: 1px solid #ded6c8;
+  border-bottom: 1px solid #ded6c8;
+  padding: 22px;
+}
+
+.case-doc-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(160px, 1fr)) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.case-doc-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.case-doc-wide-section {
+  grid-column: 1 / -1;
+}
+
+.case-doc-result-grid .section-band {
+  display: grid;
+  gap: 14px;
+}
+
+.case-doc-result-grid .section-band h2 {
+  margin: 0;
+  font-size: 18px;
 }
 
 .toolbar {
@@ -1227,6 +1338,102 @@ th {
   padding: 0;
 }
 
+.excel-device-focus {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #9aa6ac;
+  background: #ffffff;
+}
+
+.excel-device-focus-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.excel-device-focus-header strong,
+.excel-device-focus-header span {
+  display: block;
+}
+
+.excel-device-focus-header strong {
+  color: #172026;
+  font-size: 18px;
+}
+
+.excel-device-focus-header span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.device-pager {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #c9d1d3;
+  background: #ffffff;
+}
+
+.device-pager-summary {
+  display: grid;
+  gap: 4px;
+}
+
+.device-pager-summary span,
+.device-pager-summary small {
+  color: #56636c;
+  font-weight: 700;
+}
+
+.device-pager-summary strong {
+  color: #172026;
+  font-size: 18px;
+}
+
+.device-pager-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.device-pager-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.device-pager-tab {
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid #c9d1d3;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  text-align: left;
+  color: #172026;
+  background: #ffffff;
+}
+
+.device-pager-tab.active {
+  border-color: #1f6f78;
+  background: #eef6f7;
+}
+
+.device-pager-tab strong {
+  font-size: 14px;
+}
+
+.device-pager-tab span {
+  color: #56636c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .excel-title-grid {
   display: grid;
   grid-template-columns: minmax(460px, 1fr) 72px 96px 64px 160px;
@@ -1304,6 +1511,18 @@ th {
   overflow-wrap: anywhere;
 }
 
+.excel-sheet-case {
+  color: #11181d;
+  font-size: 12px;
+}
+
+.excel-sheet-case th,
+.excel-sheet-case td {
+  border-color: #7f9099;
+  padding: 4px 6px;
+  line-height: 1.35;
+}
+
 .excel-sheet th {
   position: sticky;
   top: 0;
@@ -1330,6 +1549,10 @@ th {
   width: 360px;
 }
 
+.excel-col-work-block {
+  width: 92px;
+}
+
 .excel-col-check {
   width: 280px;
 }
@@ -1348,6 +1571,38 @@ th {
 
 .excel-col-command {
   width: 210px;
+}
+
+.excel-sheet-case .excel-col-small {
+  width: 24px;
+}
+
+.excel-sheet-case .excel-col-doc {
+  width: 78px;
+}
+
+.excel-sheet-case .excel-col-work-block {
+  width: 69px;
+}
+
+.excel-sheet-case .excel-col-check {
+  width: 536px;
+}
+
+.excel-sheet-case .excel-col-time {
+  width: 42px;
+}
+
+.excel-sheet-case .excel-col-window {
+  width: 58px;
+}
+
+.excel-sheet-case .excel-col-prompt {
+  width: 35px;
+}
+
+.excel-sheet-case .excel-col-command {
+  width: 350px;
 }
 
 .excel-row-header td {
@@ -1409,22 +1664,102 @@ th {
   background: #fbfcfc;
 }
 
-.excel-remarks {
-  min-height: 110px;
-  padding: 18px;
-  border: 1px solid #9aa6ac;
-  background: #ffffff;
+.excel-preview-fullscreen {
+  gap: 18px;
 }
 
-.excel-remarks strong {
+.excel-sheet-wrap-case {
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.excel-sheet-case {
+  width: max-content;
+  min-width: 100%;
+}
+
+.excel-sheet-case td,
+.excel-sheet-case th {
+  min-width: 0;
+}
+
+.excel-case-title-cell {
+  color: #172026;
+  background: #ffffff;
+  padding: 2px 6px 6px;
+  font-size: 18px;
+  font-weight: 900;
+  text-align: left;
+}
+
+.excel-case-top-label {
+  background: #ffffff;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.excel-case-device-meta-row td {
+  background: #ffffff;
+  padding-top: 2px;
+  padding-bottom: 8px;
+}
+
+.excel-case-left-blank {
+  background: #ffffff;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+}
+
+.excel-case-spacer-row td {
+  min-height: 14px;
+  background: #ffffff;
+  border: 0;
+  padding: 0;
+}
+
+.excel-case-group-cell {
+  background: #ffffff;
+  text-align: center;
+  font-weight: 900;
+}
+
+.excel-case-device-name {
+  background: #ffffff;
+  text-align: center;
+  font-weight: 800;
+}
+
+.excel-work-cell-wide {
+  min-width: 276px;
+}
+
+.excel-case-remarks-row td {
+  min-height: 140px;
+  background: #ffffff;
+  vertical-align: top;
+  padding: 8px 10px;
+}
+
+.excel-case-remarks-row strong {
   display: block;
   margin-bottom: 8px;
 }
 
-.excel-remarks p {
+.excel-case-remarks-row p {
   margin: 0;
   color: #56636c;
   line-height: 1.7;
+}
+
+.excel-sheet-case .excel-number,
+.excel-sheet-case .excel-center {
+  vertical-align: middle;
+}
+
+.excel-sheet-case .excel-command-cell {
+  background: #ffffff;
 }
 
 .source-doc-module-block {
@@ -1482,6 +1817,20 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .preview-overlay {
+    padding: 0;
+  }
+
+  .preview-overlay-panel {
+    width: 100%;
+    min-height: 100vh;
+    border-radius: 0;
+  }
+
+  .preview-overlay-shell {
+    padding: 18px 14px 24px;
+  }
+
   .sidebar {
     position: static;
     height: auto;
@@ -1499,6 +1848,10 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .device-pager-tabs {
+    grid-template-columns: 1fr;
+  }
+
   .content {
     padding: 24px 18px;
   }
@@ -1510,5 +1863,63 @@ th {
   .login-copy h1,
   .page-header h1 {
     font-size: 30px;
+  }
+}
+
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  button,
+  .sidebar,
+  .preview-toolbar,
+  .device-pager,
+  .logout-button {
+    display: none !important;
+  }
+
+  .content,
+  .preview-screen,
+  .preview-page,
+  .preview-surface,
+  .preview-overlay,
+  .preview-overlay-panel,
+  .preview-overlay-shell,
+  .preview-overlay-content,
+  .excel-sheet-wrap,
+  .excel-device-focus,
+  .source-doc-module-block,
+  .source-doc-module-header,
+  .excel-device-summary-card {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+  }
+
+  .preview-overlay {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+  }
+
+  .preview-overlay-panel {
+    min-height: auto !important;
+  }
+
+  .preview-screen,
+  .preview-page,
+  .preview-overlay-content,
+  .excel-preview {
+    gap: 12px !important;
+  }
+
+  .source-doc-module-block,
+  .excel-device-focus,
+  .excel-device-summary-card,
+  .excel-sheet-wrap {
+    break-inside: avoid;
   }
 }

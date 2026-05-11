@@ -498,6 +498,90 @@ class ApprovalStatusUpdateRequest(BaseModel):
     status: Literal["draft", "published", "archived"]
 
 
+class CaseDocMasterOptionData(BaseModel):
+    """Selectable master option used by the case document workflow."""
+
+    value: str
+    label: str
+
+
+class CaseDocMasterOptionsData(BaseModel):
+    """List of selectable master options."""
+
+    items: list[CaseDocMasterOptionData]
+
+
+class CaseDocUnitConfigItemData(BaseModel):
+    """Unit configuration candidate resolved from Access-derived data."""
+
+    unit_config_id: str
+    fs_cluster_name: str
+    block: str
+    prefecture: str
+    building: str
+
+
+class CaseDocUnitConfigListData(BaseModel):
+    """Unit configuration candidates for selected location."""
+
+    items: list[CaseDocUnitConfigItemData]
+
+
+class CaseDocResolveContextRequest(BaseModel):
+    """Request payload for resolving case document generation context."""
+
+    source_doc_id: int = Field(gt=0)
+    prefecture: str = Field(min_length=1)
+    building: str = Field(min_length=1)
+    fs_cluster_name: str | None = None
+    block: str | None = None
+    unit_config_id: str | None = None
+
+
+class CaseDocHostAssignmentData(BaseModel):
+    """Device host assignment resolved from the unit configuration."""
+
+    slot_key: str
+    device_type: str
+    system: str | None = None
+    host_name: str
+
+
+class CaseDocCommonValueData(BaseModel):
+    """Common value resolved without manual input."""
+
+    key: str
+    value: str
+    source: str
+
+
+class CaseDocResolvedPlaceholderData(BaseModel):
+    """Placeholder resolution result for preview before generation."""
+
+    placeholder: str
+    value: str
+    source_table: str
+    source_column: str
+    host_name: str | None = None
+
+
+class CaseDocResolveContextData(BaseModel):
+    """Resolved context used to generate a case document."""
+
+    source_doc_id: int
+    unit_config: CaseDocUnitConfigItemData
+    host_assignments: list[CaseDocHostAssignmentData]
+    common_values: list[CaseDocCommonValueData]
+    resolved_placeholders: list[CaseDocResolvedPlaceholderData]
+
+
+class CaseDocGenerateRequest(BaseModel):
+    """Request payload for case document generation."""
+
+    source_doc_id: int = Field(gt=0)
+    unit_config_id: str = Field(min_length=1)
+
+
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:
     """Build a successful API response.
 

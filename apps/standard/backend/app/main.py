@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.responses import error_response
-from app.routers import health, modules, source_docs, statuses
+from app.routers import case_docs, health, modules, source_docs, statuses
 
 
 def create_app() -> FastAPI:
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
     application.include_router(modules.router, prefix=settings.api_prefix)
     application.include_router(source_docs.router, prefix=settings.api_prefix)
     application.include_router(statuses.router, prefix=settings.api_prefix)
+    application.include_router(case_docs.router, prefix=settings.api_prefix)
 
     @application.exception_handler(HTTPException)
     async def http_exception_handler(
