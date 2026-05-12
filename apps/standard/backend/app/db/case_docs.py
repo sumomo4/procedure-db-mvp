@@ -7,10 +7,14 @@ from app.core.responses import (
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
 )
-from app.db.case_doc_repositories import CaseDocMasterRepository, SeedCaseDocMasterRepository
+from app.db.case_doc_repositories import (
+    CaseDocMasterRepository,
+    ExportFileCaseDocMasterRepository,
+    SeedCaseDocMasterRepository,
+)
 
 
-_SUPPORTED_MASTER_SOURCES = {"seed"}
+_SUPPORTED_MASTER_SOURCES = {"seed", "export_file"}
 
 
 def get_case_doc_master_repository(settings: AppSettings) -> CaseDocMasterRepository:
@@ -18,6 +22,8 @@ def get_case_doc_master_repository(settings: AppSettings) -> CaseDocMasterReposi
 
     if settings.case_doc_master_source not in _SUPPORTED_MASTER_SOURCES:
         raise ValueError(f"unsupported case document master source: {settings.case_doc_master_source}")
+    if settings.case_doc_master_source == "export_file":
+        return ExportFileCaseDocMasterRepository(settings.case_doc_access_export_dir)
     return SeedCaseDocMasterRepository()
 
 

@@ -217,12 +217,12 @@ python -m app.tools.import_case_doc_masters --input /app/storage/access_exports
 
 ## 9. 実装順序
 
-1. `CaseDocMasterRepository` 相当の境界を作る
-2. 現在の seed データを `SeedCaseDocMasterRepository` に移す
-3. `CASE_DOC_MASTER_SOURCE=seed` で今と同じ動作を維持する
-4. `storage/standard/access_exports` の配置ルールを追加する
-5. Excel / CSV 読み取りの `ExportFileCaseDocMasterRepository` を追加する
-6. 必須列検証を追加する
+1. `CaseDocMasterRepository` 相当の境界を作る（実装済み）
+2. 現在の seed データを `SeedCaseDocMasterRepository` に移す（実装済み）
+3. `CASE_DOC_MASTER_SOURCE=seed` で今と同じ動作を維持する（実装済み）
+4. `storage/standard/access_exports` の配置ルールを追加する（実装済み）
+5. Excel / CSV 読み取りの `ExportFileCaseDocMasterRepository` を追加する（初期実装済み: `unit_config.xlsx`, `SBC.xlsx`, `case_common_values.xlsx/csv`）
+6. 必須列検証を追加する（初期実装済み: 必須列値が見つからない場合はエラー）
 7. 既存の `/case-docs` 画面と生成APIを export_file で動作確認する
 8. 必要になった時点で PostgreSQL 取り込みに進む
 
