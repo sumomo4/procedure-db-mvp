@@ -2,17 +2,24 @@
 
 ## 目的
 
-`CASE_DOC_MASTER_SOURCE=export_file` で仮のAccess抽出ファイルを読み込み、案件CS生成まで確認した結果をもとに、今後追加候補となるプレースホルダを整理する。
+`CASE_DOC_MASTER_SOURCE=export_file` でAccessDB抽出Excelファイルを読み込み、案件CS生成まで確認した結果をもとに、MVPで仮利用するプレースホルダと今後追加候補を整理する。
 
-## 現在対応済み
+## MVPでの前提
+
+- MVPでは `C:\Users\clove\Downloads\UNISBC` 配下のExcelファイル群を、AccessDBから抽出したテーブルの仮入力として扱う。
+- プレースホルダは本番確定ではなく、MVP検証用の仮定義とする。
+- `TTS_HOST` / `TTS_IP` / `TTS_PORT` も仮定義とし、正式な取得元・命名は実データ確認後に確定する。
+- 2026-05-12時点で確認した抽出Excelは `FS.xlsx` / `GUI.xlsx` / `HFS.xlsx` / `HSS.xlsx` / `MSW.xlsx` / `RAID.xlsx` / `SBC.xlsx` / `SCCE.xlsx` / `ユニット構成.xlsx`。
+
+## MVP仮対応済み
 
 | プレースホルダ | 取得元 | 用途 |
 | --- | --- | --- |
 | `TARGET_DEVICE_HOSTNAME` | ユニット構成.xlsx の対象SBCスロット | 対象装置ホスト名 |
 | `SBC_COMMAND_FLOATING_IP` | SBC.xlsx の コマンド用フローティングIPアドレス | TeraTerm接続先、コマンド欄 |
-| `TTS_HOST` | SBC.xlsx の `TTS-Host` | 対象SBCに紐づくTTSホスト |
-| `TTS_IP` | SBC.xlsx の `TTS-IP` | 対象SBCに紐づくTTS IP |
-| `TTS_PORT` | SBC.xlsx の `TTS-Port` | 対象SBCに紐づくTTS接続ポート |
+| `TTS_HOST` | SBC.xlsx の `TTS-Host` | 対象SBCに紐づくTTSホスト（MVP仮） |
+| `TTS_IP` | SBC.xlsx の `TTS-IP` | 対象SBCに紐づくTTS IP（MVP仮） |
+| `TTS_PORT` | SBC.xlsx の `TTS-Port` | 対象SBCに紐づくTTS接続ポート（MVP仮） |
 | `LOGIN_USER` | case_common_values.xlsx | ログインユーザー |
 
 ## 追加候補: SBC系
@@ -75,3 +82,10 @@
 - 添付Excelテンプレート内に、どの値が固定文字列ではなく差し替え対象として出てくるか
 - SBC以外の装置を対象にした案件CS生成が必要か
 - 装置種別ごとに、ホスト名をキーにしたRepositoryを増やすか
+
+
+## 運用メモ
+
+- AccessDB本体へ直接接続するのではなく、MVPでは抽出済みExcelファイルを読み込む。
+- AccessDB側のテーブル・カラム・値が変わった場合は、`UNISBC` 配下相当の抽出Excelを再取得し、必要に応じてプレースホルダ対応表を見直す。
+- 仮定義から正式定義へ移す際は、プレースホルダ名・取得元テーブル・取得元カラム・テストを同時に更新する。

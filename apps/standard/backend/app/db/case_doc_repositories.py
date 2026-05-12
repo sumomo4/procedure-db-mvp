@@ -124,6 +124,7 @@ SBC_COLUMN_ALIASES = {
     "tts_ip": ("tts_ip", "TTS-IP"),
     "tts_port": ("tts_port", "TTS-Port"),
 }
+# TTS placeholders are MVP-provisional names based on the UNISBC Access export files.
 SBC_PLACEHOLDER_DEFINITIONS = (
     ("SBC_COMMAND_FLOATING_IP", "command_floating_ip", "command_floating_ip"),
     ("TTS_HOST", "tts_host", "tts_host"),

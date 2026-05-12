@@ -5,6 +5,11 @@
 案件CS生成APIで使用する `.xlsm` テンプレートと、AccessDB 由来の値の対応方針を整理する。
 全カラムをプレースホルダに 1 対 1 で対応させるのではなく、テンプレート出力に必要な値を意味単位で対応させる。
 
+## MVPでの仮定義について
+
+- MVPでは `C:\Users\clove\Downloads\UNISBC` 配下のAccessDB抽出Excelを基に、プレースホルダを仮定義する。
+- `TTS_HOST` / `TTS_IP` / `TTS_PORT` は現時点でのMVP仮名とし、正式な取得元や命名規則は実データ確認後に固める。
+
 ## 方針
 
 - AccessDB の全カラムは、プレースホルダの対象にしない。
@@ -83,7 +88,7 @@
 | --- | --- | --- |
 | 装置固有値 | `{{DEVICE_TYPE_USAGE_VALUE}}` | `{{SBC_COMMAND_FLOATING_IP}}` |
 | 対象装置情報 | `{{TARGET_DEVICE_VALUE}}` | `{{TARGET_DEVICE_HOSTNAME}}` |
-| ログイン・接続情報 | `{{PURPOSE_VALUE}}` | `{{LOGIN_USER}}`, `{{TTS_HOST}}` |
+| ログイン・接続情報 | `{{PURPOSE_VALUE}}` | `{{LOGIN_USER}}`, `{{TTS_HOST}}` | ※ TTS系はMVP仮
 | 共通値 | `{{COMMON_VALUE}}` または意味名 | `{{OPERATOR_NAME}}` |
 | 判定・条件値 | `{{CONDITION_VALUE}}` | `{{IS_REDUNDANT_ROUTE_ENABLED}}` |
 
@@ -126,7 +131,7 @@
 
 - 対象装置のホスト名は `{{TARGET_DEVICE_HOSTNAME}}` に対応させる。
 - ホスト名が確定したあと、そのホスト名をキーに装置マスタを参照する。
-- 装置マスタから、コマンド用IPアドレス、TTS接続先、ポートなどの値を解決する。
+- 装置マスタから、コマンド用IPアドレス、TTS接続先（MVP仮）、ポートなどの値を解決する。
 - 解決した値を、用途ごとの正式プレースホルダへ反映する。
 - ホスト名が確定できない場合は、案件CS生成を続行せず、解決エラーとして扱う。
 
@@ -211,7 +216,3 @@ AccessDB の全カラムを先にプレースホルダ化することはしな�
 2. AccessDB 実データへの接続方式とテーブル参照ルールを固める
 3. 共通値マスタをDB化する場合の管理画面/更新方法を決める
 4. 追加テンプレートで必要になったプレースホルダをこの命名規則に沿って追加する
-
-
-
-
