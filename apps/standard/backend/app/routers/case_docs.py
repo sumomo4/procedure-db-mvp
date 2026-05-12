@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
 from app.core.config import AppSettings
+from app.core.exceptions import DatabaseConnectionError
 from app.core.case_doc_generation import XLSM_MEDIA_TYPE, build_case_doc_workbook_bytes
 from app.core.responses import (
     ApiResponse,
@@ -24,6 +25,7 @@ from app.db.case_docs import (
     list_case_doc_unit_configs,
     resolve_case_doc_context,
 )
+from app.db.source_docs import get_source_doc_detail
 from app.routers.health import get_app_settings
 
 
@@ -135,7 +137,21 @@ def generate_case_doc(
             detail=str(exception),
         ) from exception
 
-    workbook_bytes = build_case_doc_workbook_bytes(context)
+    try:
+        source_doc = get_source_doc_detail(settings, payload.source_doc_id)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if source_doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="source document was not found.",
+        )
+
+    workbook_bytes = build_case_doc_workbook_bytes(context, source_doc)
     filename = f"case-doc-{payload.source_doc_id}-{context.unit_config.unit_config_id}.xlsm"
     return Response(
         content=workbook_bytes,

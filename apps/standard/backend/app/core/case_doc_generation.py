@@ -9,12 +9,13 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.core.responses import CaseDocResolveContextData
+from app.core.responses import CaseDocResolveContextData, SourceDocDetailData
 
 
 XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "case_docs" / "case_doc_template.xlsm"
 RESOLVED_VALUES_SHEET_NAME = "\u89e3\u6c7a\u5024"
+SOURCE_DOC_EXPANSION_SHEET_NAME = "\u539f\u672c\u5c55\u958b"
 TEMPLATE_PLACEHOLDER_ALIASES = {
     "DEVICE_NAME": "TARGET_DEVICE_HOSTNAME",
     "NW_ADDRESS": "SBC_COMMAND_FLOATING_IP",
@@ -25,7 +26,10 @@ TEMPLATE_PLACEHOLDER_ALIASES = {
 def _u(value: str) -> str:
     """Decode escaped Japanese literals while keeping this source ASCII-safe."""
 
-    return value.encode("ascii").decode("unicode_escape")
+    try:
+        return value.encode("ascii").decode("unicode_escape")
+    except UnicodeEncodeError:
+        return value
 
 
 def _clear_sheet(sheet: Worksheet) -> None:
@@ -160,7 +164,125 @@ def _write_resolved_values_sheet(sheet: Worksheet, context: CaseDocResolveContex
     sheet.freeze_panes = "A10"
 
 
-def build_case_doc_workbook_bytes(context: CaseDocResolveContextData) -> bytes:
+def _write_source_doc_expansion_sheet(sheet: Worksheet, source_doc: SourceDocDetailData) -> None:
+    """Write source document modules and rows used by the generated case document."""
+
+    source_doc_title = _u("\u539f\u672c\u5c55\u958b")
+    enabled_text = _u("\u6709\u52b9")
+    disabled_text = _u("\u7121\u52b9")
+    row_header = [
+        _u("\u30e2\u30b8\u30e5\u30fc\u30eb\u9806"),
+        _u("\u6709\u52b9\u72b6\u614b"),
+        _u("\u30e2\u30b8\u30e5\u30fc\u30ebID"),
+        _u("\u30e2\u30b8\u30e5\u30fc\u30eb\u540d"),
+        _u("\u884c\u9806"),
+        _u("\u5927"),
+        _u("\u4e2d"),
+        _u("\u5c0f"),
+        _u("\u4f5c\u696d\u5185\u5bb9"),
+        _u("\u78ba\u8a8d\u7d50\u679c"),
+        _u("\u30b3\u30de\u30f3\u30c9"),
+    ]
+
+    _clear_sheet(sheet)
+    rows: list[list[object]] = [
+        [source_doc_title],
+        [_u("\u539f\u672cID"), source_doc.source_doc_id],
+        [_u("\u539f\u672c\u30ad\u30fc"), source_doc.source_doc_key],
+        [_u("\u539f\u672c\u540d"), source_doc.source_doc_name],
+        [_u("\u7248"), source_doc.version_no],
+        [_u("\u30e2\u30b8\u30e5\u30fc\u30eb\u6570"), source_doc.module_count],
+        [_u("\u6709\u52b9\u30e2\u30b8\u30e5\u30fc\u30eb\u6570"), source_doc.enabled_module_count],
+        [],
+        [
+            _u("\u203b\u6848\u4ef6CS\u751f\u6210\u3067\u306f\u3001\u539f\u672c\u306b\u7d10\u3065\u304f\u6709\u52b9\u30e2\u30b8\u30e5\u30fc\u30eb\u3092\u9806\u756a\u3069\u304a\u308a\u5c55\u958b\u3057\u307e\u3059\u3002")
+        ],
+        row_header,
+    ]
+
+    for module in sorted(source_doc.items, key=lambda item: item.item_order):
+        module_status = enabled_text if module.enabled else disabled_text
+        if not module.enabled:
+            rows.append(
+                [
+                    module.item_order,
+                    module_status,
+                    module.module_key,
+                    module.module_name,
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    _u("\u6848\u4ef6CS\u751f\u6210\u5bfe\u8c61\u5916"),
+                    "-",
+                    "-",
+                ]
+            )
+            continue
+
+        if not module.rows:
+            rows.append(
+                [
+                    module.item_order,
+                    module_status,
+                    module.module_key,
+                    module.module_name,
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    _u("\u884c\u30c7\u30fc\u30bf\u306a\u3057"),
+                    "-",
+                    "-",
+                ]
+            )
+            continue
+
+        for module_row in sorted(module.rows, key=lambda row: row.row_order):
+            rows.append(
+                [
+                    module.item_order,
+                    module_status,
+                    module.module_key,
+                    module.module_name,
+                    module_row.row_order,
+                    module_row.major_no or "",
+                    module_row.middle_no or "",
+                    module_row.minor_no or "",
+                    module_row.work_text or "",
+                    module_row.expected_result or "",
+                    module_row.command_text or "",
+                ]
+            )
+
+    for row_index, values in enumerate(rows, start=1):
+        _write_row(sheet, row_index, values)
+        if values and len(values) == 1:
+            sheet.cell(row=row_index, column=1).font = Font(bold=True, size=14)
+        if values == row_header:
+            _style_heading(sheet, row_index)
+
+    for column_letter, width in {
+        "A": 14,
+        "B": 14,
+        "C": 18,
+        "D": 34,
+        "E": 12,
+        "F": 10,
+        "G": 10,
+        "H": 10,
+        "I": 56,
+        "J": 34,
+        "K": 42,
+    }.items():
+        sheet.column_dimensions[column_letter].width = width
+    sheet.freeze_panes = "A11"
+
+
+def build_case_doc_workbook_bytes(
+    context: CaseDocResolveContextData,
+    source_doc: SourceDocDetailData | None = None,
+) -> bytes:
     """Build an xlsm workbook by copying the configured template."""
 
     if not TEMPLATE_PATH.exists():
@@ -177,6 +299,13 @@ def build_case_doc_workbook_bytes(context: CaseDocResolveContextData) -> bytes:
     else:
         resolved_sheet = workbook.create_sheet(RESOLVED_VALUES_SHEET_NAME)
     _write_resolved_values_sheet(resolved_sheet, context)
+
+    if source_doc is not None:
+        if SOURCE_DOC_EXPANSION_SHEET_NAME in workbook.sheetnames:
+            source_doc_sheet = workbook[SOURCE_DOC_EXPANSION_SHEET_NAME]
+        else:
+            source_doc_sheet = workbook.create_sheet(SOURCE_DOC_EXPANSION_SHEET_NAME)
+        _write_source_doc_expansion_sheet(source_doc_sheet, source_doc)
 
     output = BytesIO()
     workbook.save(output)

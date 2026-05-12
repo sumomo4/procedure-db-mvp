@@ -2,9 +2,12 @@
 
 from io import BytesIO
 
+import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+
+from app.core.responses import ModuleRowData, SourceDocDetailData, SourceDocModuleItemData
 
 
 def _tokyo_prefecture(client: TestClient) -> str:
@@ -18,6 +21,65 @@ def _tokyo_building(client: TestClient) -> str:
         params={"prefecture": _tokyo_prefecture(client)},
     )
     return response.json()["data"]["items"][0]["value"]
+
+
+def _fake_source_doc_detail(source_doc_id: int) -> SourceDocDetailData:
+    return SourceDocDetailData(
+        source_doc_id=source_doc_id,
+        source_doc_key="BP-STD-001",
+        source_doc_name="M1\u78ba\u8a8d\u7528 \u539f\u672cA",
+        description="test source document",
+        source_doc_version_id=10,
+        version_no=1,
+        status="draft",
+        status_label="draft",
+        change_note=None,
+        module_count=1,
+        enabled_module_count=1,
+        created_by="pytest",
+        created_at="2026-05-12",
+        updated_at="2026-05-12",
+        items=[
+            SourceDocModuleItemData(
+                blueprint_item_id=100,
+                item_order=1,
+                enabled=True,
+                module_id=1,
+                module_key="MOD-001",
+                module_name="01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS \u30e2\u30b8\u30e5\u30fc\u30eb1",
+                module_version_id=101,
+                module_version_no=1,
+                module_status="draft",
+                module_status_label="draft",
+                rows=[
+                    ModuleRowData(
+                        module_row_id=1000,
+                        row_order=1,
+                        row_type="work",
+                        major_no="0",
+                        middle_no="1",
+                        minor_no="1",
+                        tech_doc_text="",
+                        work_text="\u4f5c\u696d\u3067\u4f7f\u7528\u3059\u308bPC\u306eTeraTerm\u8a2d\u5b9a\u3092\u5909\u66f4\u3059\u308b\u3002",
+                        indent_level=0,
+                        expected_result="\u8a2d\u5b9a\u5909\u66f4\u5b8c\u4e86",
+                        time_text=None,
+                        window_text=None,
+                        p_text=None,
+                        command_text="show running-config",
+                        note=None,
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def _mock_source_doc_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.case_docs.get_source_doc_detail",
+        lambda settings, source_doc_id: _fake_source_doc_detail(source_doc_id),
+    )
 
 
 def test_read_case_doc_prefectures_returns_options(client: TestClient) -> None:
@@ -127,8 +189,10 @@ def test_resolve_case_doc_context_rejects_non_sbc_target_slot(client: TestClient
     assert body["message"] == "target SBC slot was not found."
 
 
-def test_generate_case_doc_returns_xlsm_download(client: TestClient) -> None:
+def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """Generate API should return a downloadable workbook package."""
+
+    _mock_source_doc_detail(monkeypatch)
 
     response = client.post(
         "/api/v1/case-docs/generate",
@@ -154,6 +218,10 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient) -> None:
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
     assert resolved_sheet["A22"].value == "SBC_COMMAND_FLOATING_IP"
+    source_doc_sheet = workbook["\u539f\u672c\u5c55\u958b"]
+    assert source_doc_sheet["B2"].value == 1
+    assert source_doc_sheet["B3"].value == "BP-STD-001"
+    assert source_doc_sheet["I11"].value == "\u4f5c\u696d\u3067\u4f7f\u7528\u3059\u308bPC\u306eTeraTerm\u8a2d\u5b9a\u3092\u5909\u66f4\u3059\u308b\u3002"
 
 
 def test_resolve_case_doc_context_accepts_target_sbc_slot(client: TestClient) -> None:
@@ -176,8 +244,10 @@ def test_resolve_case_doc_context_accepts_target_sbc_slot(client: TestClient) ->
     assert data["target_assignment"]["host_name"] == "sbc-tyo-cl1-1"
 
 
-def test_generate_case_doc_uses_selected_target_sbc_slot(client: TestClient) -> None:
+def test_generate_case_doc_uses_selected_target_sbc_slot(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """Generate API should place selected target SBC values into the template."""
+
+    _mock_source_doc_detail(monkeypatch)
 
     response = client.post(
         "/api/v1/case-docs/generate",
