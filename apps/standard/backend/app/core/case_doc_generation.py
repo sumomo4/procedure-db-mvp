@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import copy
 from io import BytesIO
 from pathlib import Path
 
@@ -9,13 +10,27 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.core.responses import CaseDocResolveContextData, SourceDocDetailData
+from app.core.responses import CaseDocResolveContextData, ModuleRowData, SourceDocDetailData
 
 
 XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "case_docs" / "case_doc_template.xlsm"
 RESOLVED_VALUES_SHEET_NAME = "\u89e3\u6c7a\u5024"
 SOURCE_DOC_EXPANSION_SHEET_NAME = "\u539f\u672c\u5c55\u958b"
+BODY_HEADER_MARKERS = {"\u5927", "\u4e2d", "\u5c0f", "\u4f5c\u696d\u5185\u5bb9", "\u78ba\u8a8d\u4e8b\u9805 or \u9805\u76ee", "\u30b3\u30de\u30f3\u30c9"}
+FOOTER_START_MARKERS = {"\u9023\u7d61\u4e8b\u9805"}
+BODY_OUTPUT_COLUMNS = {
+    "major_no": 1,
+    "middle_no": 2,
+    "minor_no": 3,
+    "tech_doc_text": 4,
+    "work_text": 5,
+    "expected_result": 9,
+    "time_text": 10,
+    "window_text": 11,
+    "p_text": 12,
+    "command_text": 13,
+}
 TEMPLATE_PLACEHOLDER_ALIASES = {
     "DEVICE_NAME": "TARGET_DEVICE_HOSTNAME",
     "NW_ADDRESS": "SBC_COMMAND_FLOATING_IP",
@@ -53,6 +68,128 @@ def _style_heading(sheet: Worksheet, row_index: int) -> None:
     for cell in sheet[row_index]:
         cell.font = Font(bold=True)
         cell.fill = fill
+
+
+def _cell_text(value: object) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _find_case_doc_body_sheet(workbook) -> Worksheet | None:
+    for sheet in workbook.worksheets:
+        if sheet.title in {RESOLVED_VALUES_SHEET_NAME, SOURCE_DOC_EXPANSION_SHEET_NAME}:
+            continue
+        if _find_body_header_row(sheet) is not None:
+            return sheet
+    return None
+
+
+def _find_body_header_row(sheet: Worksheet) -> int | None:
+    markers = {_u(marker) for marker in BODY_HEADER_MARKERS}
+    for row_index in range(1, sheet.max_row + 1):
+        row_values = {_cell_text(sheet.cell(row=row_index, column=column_index).value) for column_index in range(1, sheet.max_column + 1)}
+        if markers.issubset(row_values):
+            return row_index
+    return None
+
+
+def _find_footer_start_row(sheet: Worksheet, start_row: int) -> int:
+    footer_markers = {_u(marker) for marker in FOOTER_START_MARKERS}
+    for row_index in range(start_row, sheet.max_row + 1):
+        row_values = {_cell_text(sheet.cell(row=row_index, column=column_index).value) for column_index in range(1, sheet.max_column + 1)}
+        if row_values & footer_markers:
+            return row_index
+    return sheet.max_row + 1
+
+
+def _is_major_heading_row(module_row: ModuleRowData) -> bool:
+    return bool(module_row.major_no) and str(module_row.middle_no or "") in {"", "0"} and str(module_row.minor_no or "") in {"", "0"}
+
+
+def _flatten_enabled_source_doc_rows(source_doc: SourceDocDetailData) -> list[ModuleRowData]:
+    rows: list[ModuleRowData] = []
+    for module in sorted(source_doc.items, key=lambda item: item.item_order):
+        if not module.enabled:
+            continue
+        rows.extend(sorted(module.rows, key=lambda row: row.row_order))
+    return rows
+
+
+def _snapshot_row_style(sheet: Worksheet, row_index: int) -> tuple[list[dict[str, object]], float | None]:
+    styles: list[dict[str, object]] = []
+    for column_index in range(1, 14):
+        cell = sheet.cell(row=row_index, column=column_index)
+        styles.append(
+            {
+                "font": copy(cell.font),
+                "fill": copy(cell.fill),
+                "border": copy(cell.border),
+                "alignment": copy(cell.alignment),
+                "number_format": cell.number_format,
+                "protection": copy(cell.protection),
+            }
+        )
+    return styles, sheet.row_dimensions[row_index].height
+
+
+def _apply_row_style(sheet: Worksheet, row_index: int, styles: list[dict[str, object]], height: float | None) -> None:
+    if height is not None:
+        sheet.row_dimensions[row_index].height = height
+    for column_index, style in enumerate(styles, start=1):
+        cell = sheet.cell(row=row_index, column=column_index)
+        cell.font = copy(style["font"])
+        cell.fill = copy(style["fill"])
+        cell.border = copy(style["border"])
+        cell.alignment = copy(style["alignment"])
+        cell.number_format = str(style["number_format"])
+        cell.protection = copy(style["protection"])
+
+
+def _resize_body_area(sheet: Worksheet, start_row: int, footer_start_row: int, output_row_count: int) -> None:
+    existing_row_count = max(footer_start_row - start_row, 0)
+    target_row_count = max(output_row_count, 1)
+    if target_row_count > existing_row_count:
+        sheet.insert_rows(footer_start_row, target_row_count - existing_row_count)
+    elif target_row_count < existing_row_count:
+        sheet.delete_rows(start_row + target_row_count, existing_row_count - target_row_count)
+
+
+def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> None:
+    body_sheet = _find_case_doc_body_sheet(workbook)
+    if body_sheet is None:
+        return
+
+    header_row = _find_body_header_row(body_sheet)
+    if header_row is None:
+        return
+
+    start_row = header_row + 1
+    footer_start_row = _find_footer_start_row(body_sheet, start_row)
+    major_style, major_height = _snapshot_row_style(body_sheet, start_row)
+    normal_style, normal_height = _snapshot_row_style(body_sheet, min(start_row + 1, max(footer_start_row - 1, start_row)))
+    source_rows = _flatten_enabled_source_doc_rows(source_doc)
+
+    _resize_body_area(body_sheet, start_row, footer_start_row, len(source_rows))
+    if not source_rows:
+        for column_index in range(1, 14):
+            body_sheet.cell(row=start_row, column=column_index, value=None)
+        return
+
+    for offset, source_row in enumerate(source_rows):
+        row_index = start_row + offset
+        styles, height = (major_style, major_height) if _is_major_heading_row(source_row) else (normal_style, normal_height)
+        _apply_row_style(body_sheet, row_index, styles, height)
+        for column_index in range(1, 14):
+            body_sheet.cell(row=row_index, column=column_index, value=None)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["major_no"], value=source_row.major_no)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["middle_no"], value=source_row.middle_no)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["minor_no"], value=source_row.minor_no)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["tech_doc_text"], value=source_row.tech_doc_text)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["work_text"], value=source_row.work_text)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["expected_result"], value=source_row.expected_result)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["time_text"], value=source_row.time_text)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["window_text"], value=source_row.window_text)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["p_text"], value=source_row.p_text)
+        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["command_text"], value=source_row.command_text)
 
 
 def _value_for_target_host(context: CaseDocResolveContextData, placeholder: str) -> str | None:
@@ -289,6 +426,9 @@ def build_case_doc_workbook_bytes(
         raise FileNotFoundError(f"case document template was not found: {TEMPLATE_PATH}")
 
     workbook = load_workbook(TEMPLATE_PATH, keep_vba=True)
+    if source_doc is not None:
+        _write_source_doc_body_sheet(workbook, source_doc)
+
     placeholder_values = _build_placeholder_values(context)
     for sheet in workbook.worksheets:
         if sheet.title != RESOLVED_VALUES_SHEET_NAME:

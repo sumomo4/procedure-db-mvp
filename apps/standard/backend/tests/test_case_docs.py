@@ -66,7 +66,7 @@ def _fake_source_doc_detail(source_doc_id: int) -> SourceDocDetailData:
                         time_text=None,
                         window_text=None,
                         p_text=None,
-                        command_text="show running-config",
+                        command_text="{{SBC_COMMAND_FLOATING_IP}}",
                         note=None,
                     )
                 ],
@@ -213,8 +213,11 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert "\u89e3\u6c7a\u5024" in workbook.sheetnames
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
     assert template_sheet["M4"].value == "sbc-tyo-cl1-0"
-    assert template_sheet["M7"].value == "10.10.1.10"
-    assert template_sheet["M10"].value == "cs-operator"
+    assert template_sheet["A6"].value == "0"
+    assert template_sheet["B6"].value == "1"
+    assert template_sheet["C6"].value == "1"
+    assert template_sheet["E6"].value == "\u4f5c\u696d\u3067\u4f7f\u7528\u3059\u308bPC\u306eTeraTerm\u8a2d\u5b9a\u3092\u5909\u66f4\u3059\u308b\u3002"
+    assert template_sheet["M6"].value == "10.10.1.10"
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
     assert resolved_sheet["A22"].value == "SBC_COMMAND_FLOATING_IP"
@@ -264,4 +267,4 @@ def test_generate_case_doc_uses_selected_target_sbc_slot(client: TestClient, mon
     workbook = load_workbook(BytesIO(response.content), keep_vba=True)
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
     assert template_sheet["M4"].value == "sbc-tyo-cl1-1"
-    assert template_sheet["M7"].value == "10.10.1.11"
+    assert template_sheet["M6"].value == "10.10.1.11"
