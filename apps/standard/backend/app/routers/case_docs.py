@@ -3,10 +3,13 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 
 from app.core.config import AppSettings
+from app.core.case_doc_generation import XLSM_MEDIA_TYPE, build_case_doc_workbook_bytes
 from app.core.responses import (
     ApiResponse,
+    CaseDocGenerateRequest,
     CaseDocMasterOptionsData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
@@ -115,3 +118,27 @@ def resolve_case_doc_generation_context(
         ) from exception
 
     return success_response(data, "Case document context was resolved.")
+
+
+@router.post("/generate")
+def generate_case_doc(
+    payload: CaseDocGenerateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> Response:
+    """Generate a downloadable case document workbook."""
+
+    try:
+        context = resolve_case_doc_context(settings, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+
+    workbook_bytes = build_case_doc_workbook_bytes(context)
+    filename = f"case-doc-{payload.source_doc_id}-{context.unit_config.unit_config_id}.xlsm"
+    return Response(
+        content=workbook_bytes,
+        media_type=XLSM_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

@@ -536,6 +536,7 @@ class CaseDocResolveContextRequest(BaseModel):
     fs_cluster_name: str | None = None
     block: str | None = None
     unit_config_id: str | None = None
+    target_slot_key: str | None = None
 
 
 class CaseDocHostAssignmentData(BaseModel):
@@ -570,16 +571,14 @@ class CaseDocResolveContextData(BaseModel):
 
     source_doc_id: int
     unit_config: CaseDocUnitConfigItemData
+    target_assignment: CaseDocHostAssignmentData
     host_assignments: list[CaseDocHostAssignmentData]
     common_values: list[CaseDocCommonValueData]
     resolved_placeholders: list[CaseDocResolvedPlaceholderData]
 
 
-class CaseDocGenerateRequest(BaseModel):
+class CaseDocGenerateRequest(CaseDocResolveContextRequest):
     """Request payload for case document generation."""
-
-    source_doc_id: int = Field(gt=0)
-    unit_config_id: str = Field(min_length=1)
 
 
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:

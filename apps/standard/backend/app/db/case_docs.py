@@ -56,7 +56,7 @@ _UNIT_CONFIGS = [
     },
 ]
 
-_DEVICE_VALUES = {
+_DEVICE_VALUES_BY_HOST_NAME = {
     "sbc-tyo-cl1-0": {
         "command_floating_ip": "10.10.1.10",
         "tts_host": "tts-tyo-01",
@@ -85,9 +85,9 @@ _DEVICE_VALUES = {
 
 _COMMON_VALUES = {
     "operator_user": {
-        "key": "USER",
+        "key": "LOGIN_USER",
         "value": "cs-operator",
-        "source": "case_common_values.operator_user",
+        "source": "case_common_values.login_user",
     }
 }
 
@@ -171,6 +171,82 @@ def _find_unit_config(payload: CaseDocResolveContextRequest) -> dict[str, object
     return candidates[0]
 
 
+def _select_target_host_assignment(
+    host_assignments: list[CaseDocHostAssignmentData],
+    target_slot_key: str | None,
+) -> CaseDocHostAssignmentData:
+    """Select the target SBC host assignment used as the document value key."""
+
+    sbc_assignments = [assignment for assignment in host_assignments if assignment.device_type == "SBC"]
+    if target_slot_key:
+        for assignment in sbc_assignments:
+            if assignment.slot_key == target_slot_key:
+                return assignment
+        raise ValueError("target SBC slot was not found.")
+
+    if not sbc_assignments:
+        raise ValueError("target SBC slot was not found.")
+    return sbc_assignments[0]
+
+
+def _to_host_assignments(hosts: dict[str, object]) -> list[CaseDocHostAssignmentData]:
+    return [
+        CaseDocHostAssignmentData(
+            slot_key=slot_key,
+            device_type=str(host["device_type"]),
+            system=str(host["system"]),
+            host_name=str(host["host_name"]),
+        )
+        for slot_key, host in hosts.items()
+        if isinstance(host, dict)
+    ]
+
+
+def _list_common_values() -> list[CaseDocCommonValueData]:
+    return [CaseDocCommonValueData(**value) for value in _COMMON_VALUES.values()]
+
+
+def _resolve_sbc_placeholders_by_host_name(
+    host_assignments: list[CaseDocHostAssignmentData],
+) -> list[CaseDocResolvedPlaceholderData]:
+    """Resolve SBC values by using each assignment host name as the master key."""
+
+    resolved_placeholders: list[CaseDocResolvedPlaceholderData] = []
+    for assignment in host_assignments:
+        if assignment.device_type != "SBC":
+            continue
+
+        device_values = _DEVICE_VALUES_BY_HOST_NAME.get(assignment.host_name)
+        if device_values is None:
+            continue
+
+        resolved_placeholders.append(
+            CaseDocResolvedPlaceholderData(
+                placeholder="SBC_COMMAND_FLOATING_IP",
+                value=device_values["command_floating_ip"],
+                source_table="SBC",
+                source_column="command_floating_ip",
+                host_name=assignment.host_name,
+            )
+        )
+    return resolved_placeholders
+
+
+def _resolve_common_placeholders(
+    common_values: list[CaseDocCommonValueData],
+) -> list[CaseDocResolvedPlaceholderData]:
+    return [
+        CaseDocResolvedPlaceholderData(
+            placeholder=value.key,
+            value=value.value,
+            source_table="case_common_values",
+            source_column=value.key.lower(),
+            host_name=None,
+        )
+        for value in common_values
+    ]
+
+
 def resolve_case_doc_context(
     settings: AppSettings,
     payload: CaseDocResolveContextRequest,
@@ -183,45 +259,18 @@ def resolve_case_doc_context(
     if not isinstance(hosts, dict):
         raise ValueError("unit configuration hosts are invalid.")
 
-    host_assignments = [
-        CaseDocHostAssignmentData(
-            slot_key=slot_key,
-            device_type=str(host["device_type"]),
-            system=str(host["system"]),
-            host_name=str(host["host_name"]),
-        )
-        for slot_key, host in hosts.items()
-        if isinstance(host, dict)
-    ]
-
-    common_values = [CaseDocCommonValueData(**value) for value in _COMMON_VALUES.values()]
-
+    host_assignments = _to_host_assignments(hosts)
+    target_assignment = _select_target_host_assignment(host_assignments, payload.target_slot_key)
+    common_values = _list_common_values()
     resolved_placeholders = [
-        CaseDocResolvedPlaceholderData(
-            placeholder="SBC_COMMAND_FLOATING_IP",
-            value=device_values["command_floating_ip"],
-            source_table="SBC",
-            source_column="command_floating_ip",
-            host_name=assignment.host_name,
-        )
-        for assignment in host_assignments
-        if assignment.device_type == "SBC"
-        if (device_values := _DEVICE_VALUES.get(assignment.host_name)) is not None
+        *_resolve_sbc_placeholders_by_host_name(host_assignments),
+        *_resolve_common_placeholders(common_values),
     ]
-    resolved_placeholders.extend(
-        CaseDocResolvedPlaceholderData(
-            placeholder=value.key,
-            value=value.value,
-            source_table="case_common_values",
-            source_column=value.key.lower(),
-            host_name=None,
-        )
-        for value in common_values
-    )
 
     return CaseDocResolveContextData(
         source_doc_id=payload.source_doc_id,
         unit_config=_to_unit_config_item(unit_config),
+        target_assignment=target_assignment,
         host_assignments=host_assignments,
         common_values=common_values,
         resolved_placeholders=resolved_placeholders,

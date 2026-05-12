@@ -357,6 +357,7 @@ type CaseDocResolvedPlaceholderData = {
 type CaseDocResolveContextData = {
   source_doc_id: number;
   unit_config: CaseDocUnitConfigItemData;
+  target_assignment: CaseDocHostAssignmentData;
   host_assignments: CaseDocHostAssignmentData[];
   common_values: CaseDocCommonValueData[];
   resolved_placeholders: CaseDocResolvedPlaceholderData[];
@@ -377,6 +378,12 @@ type CaseDocUnitConfigLoadState = {
 type CaseDocResolveState = {
   status: "idle" | "submitting" | "success" | "error";
   item: CaseDocResolveContextData | null;
+  message: string;
+};
+
+type CaseDocGenerateState = {
+  status: "idle" | "submitting" | "success" | "error";
+  filename: string | null;
   message: string;
 };
 
@@ -4373,6 +4380,7 @@ const caseDocText = {
   resolve: "\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d",
   location: "\u8a2d\u7f6e\u5834\u6240",
   unit: "\u30e6\u30cb\u30c3\u30c8",
+  targetDevice: "\u5bfe\u8c61\u88c5\u7f6e",
   none: "\u672a\u9078\u629e",
   hostAssignments: "\u30db\u30b9\u30c8\u5272\u5f53",
   commonValues: "\u5171\u901a\u5024",
@@ -4408,6 +4416,13 @@ const caseDocText = {
   resolving: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u3066\u3044\u307e\u3059\u3002",
   resolveFailed: "\u5024\u306e\u89e3\u6c7a\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
   resolved: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u307e\u3057\u305f\u3002",
+  generate: "\u6848\u4ef6CS\u3092\u751f\u6210",
+  generateStatus: "\u751f\u6210\u72b6\u614b",
+  generateReady: "\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d\u5f8c\u3001\u6848\u4ef6CS\u3092\u751f\u6210\u3067\u304d\u307e\u3059\u3002",
+  generateFirst: "\u5148\u306b\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+  generating: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u3066\u3044\u307e\u3059\u3002",
+  generated: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u307e\u3057\u305f\u3002",
+  generateFailed: "\u6848\u4ef6CS\u306e\u751f\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
 };
 
 function CaseDocsPage() {
@@ -4436,10 +4451,16 @@ function CaseDocsPage() {
     item: null,
     message: caseDocText.ready,
   });
+  const [generateState, setGenerateState] = useState<CaseDocGenerateState>({
+    status: "idle",
+    filename: null,
+    message: caseDocText.generateReady,
+  });
   const [selectedSourceDocId, setSelectedSourceDocId] = useState("");
   const [selectedPrefecture, setSelectedPrefecture] = useState("");
   const [selectedBuilding, setSelectedBuilding] = useState("");
   const [selectedUnitConfigId, setSelectedUnitConfigId] = useState("");
+  const [selectedTargetSlotKey, setSelectedTargetSlotKey] = useState("");
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -4563,6 +4584,9 @@ function CaseDocsPage() {
 
   const selectedSourceDoc = sourceDocListState.items.find((item) => String(item.source_doc_id) === selectedSourceDocId) ?? null;
   const selectedUnitConfig = unitConfigState.items.find((item) => item.unit_config_id === selectedUnitConfigId) ?? null;
+  const targetAssignmentOptions = resolveState.item?.host_assignments.filter((item) => item.device_type === "SBC") ?? [];
+  const selectedTargetAssignment =
+    targetAssignmentOptions.find((item) => item.slot_key === selectedTargetSlotKey) ?? resolveState.item?.target_assignment ?? null;
 
   async function handleResolveContext(): Promise<void> {
     if (!selectedSourceDocId || !selectedPrefecture || !selectedBuilding || !selectedUnitConfig) {
@@ -4583,6 +4607,7 @@ function CaseDocsPage() {
           fs_cluster_name: selectedUnitConfig.fs_cluster_name,
           block: selectedUnitConfig.block,
           unit_config_id: selectedUnitConfig.unit_config_id,
+          target_slot_key: selectedTargetSlotKey || undefined,
         }),
       });
       const responseBody = (await response.json()) as ApiResponse<CaseDocResolveContextData>;
@@ -4593,8 +4618,69 @@ function CaseDocsPage() {
       }
 
       setResolveState({ status: "success", item: responseBody.data, message: caseDocText.resolved });
+      setSelectedTargetSlotKey(responseBody.data.target_assignment.slot_key);
+      setGenerateState({ status: "idle", filename: null, message: caseDocText.generateReady });
     } catch {
       setResolveState({ status: "error", item: null, message: caseDocText.apiFailed });
+    }
+  }
+
+
+  async function handleGenerateCaseDoc(): Promise<void> {
+    if (!selectedSourceDocId || !selectedPrefecture || !selectedBuilding || !selectedUnitConfig) {
+      setGenerateState({ status: "error", filename: null, message: caseDocText.selectRequired });
+      return;
+    }
+
+    if (!resolveState.item) {
+      setGenerateState({ status: "error", filename: null, message: caseDocText.generateFirst });
+      return;
+    }
+
+    setGenerateState({ status: "submitting", filename: null, message: caseDocText.generating });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/case-docs/generate"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_doc_id: Number(selectedSourceDocId),
+          prefecture: selectedPrefecture,
+          building: selectedBuilding,
+          fs_cluster_name: selectedUnitConfig.fs_cluster_name,
+          block: selectedUnitConfig.block,
+          unit_config_id: selectedUnitConfig.unit_config_id,
+          target_slot_key: selectedTargetSlotKey || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `${caseDocText.generateFailed} HTTP ${response.status}`;
+        try {
+          const responseBody = (await response.json()) as ApiResponse<unknown>;
+          message = responseBody.message || message;
+        } catch {
+          // Binary download endpoints may not always return JSON on failure.
+        }
+        setGenerateState({ status: "error", filename: null, message });
+        return;
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition") ?? "";
+      const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/);
+      const filename = filenameMatch?.[1] ?? `case-doc-${selectedSourceDocId}-${selectedUnitConfig.unit_config_id}.xlsm`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+      setGenerateState({ status: "success", filename, message: `${caseDocText.generated} ${filename}` });
+    } catch {
+      setGenerateState({ status: "error", filename: null, message: caseDocText.apiFailed });
     }
   }
 
@@ -4663,8 +4749,35 @@ function CaseDocsPage() {
           <span>{caseDocText.unit}</span>
           <strong>{selectedUnitConfig ? `${selectedUnitConfig.fs_cluster_name} / ${selectedUnitConfig.block}` : caseDocText.none}</strong>
         </div>
+        <div>
+          <span>{caseDocText.targetDevice}</span>
+          <strong>{selectedTargetAssignment ? selectedTargetAssignment.host_name : caseDocText.none}</strong>
+        </div>
         <p>{resolveState.message}</p>
       </section>
+
+      {resolveState.item ? (
+        <section className={`list-status list-status-${generateState.status === "error" ? "unavailable" : generateState.status === "success" ? "available" : "loading"} case-doc-generate-panel`} aria-live="polite">
+          <label className="case-doc-target-select">
+            <span>{caseDocText.targetDevice}</span>
+            <select value={selectedTargetSlotKey} onChange={(event) => setSelectedTargetSlotKey(event.target.value)}>
+              {targetAssignmentOptions.map((item) => (
+                <option key={item.slot_key} value={item.slot_key}>
+                  {item.slot_key} / {item.host_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div>
+            <span>{caseDocText.generateStatus}</span>
+            <strong>{generateState.filename ?? (generateState.status === "submitting" ? caseDocText.generating : caseDocText.generateReady)}</strong>
+          </div>
+          <p>{generateState.message}</p>
+          <button className="primary" type="button" onClick={() => void handleGenerateCaseDoc()} disabled={generateState.status === "submitting"}>
+            {caseDocText.generate}
+          </button>
+        </section>
+      ) : null}
 
       {resolveState.item ? (
         <div className="case-doc-result-grid">

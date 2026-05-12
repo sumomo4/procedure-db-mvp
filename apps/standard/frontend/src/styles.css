@@ -552,6 +552,26 @@ nav {
   align-items: end;
 }
 
+
+.case-doc-generate-panel {
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 2fr) auto;
+}
+
+.case-doc-generate-panel button {
+  justify-self: end;
+}
+
+.case-doc-target-select {
+  display: grid;
+  gap: 6px;
+}
+
+.case-doc-target-select span {
+  color: #4d5c66;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .case-doc-result-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
