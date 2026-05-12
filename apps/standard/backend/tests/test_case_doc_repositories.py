@@ -46,9 +46,9 @@ def _create_access_export_files(export_dir: Path) -> None:
     _write_workbook(
         export_dir / "SBC.xlsx",
         [
-            ["\u30db\u30b9\u30c8\u540d", "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"],
-            ["sbc-exp-cl1-0", "172.16.1.10"],
-            ["sbc-exp-cl1-1", "172.16.1.11"],
+            ["\u30db\u30b9\u30c8\u540d", "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9", "TTS-Host", "TTS-IP", "TTS-Port"],
+            ["sbc-exp-cl1-0", "172.16.1.10", "tts-exp-01", "172.16.1.200", "23"],
+            ["sbc-exp-cl1-1", "172.16.1.11", "tts-exp-01", "172.16.1.200", "23"],
         ],
     )
     _write_workbook(
@@ -98,10 +98,10 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
     _write_workbook(
         export_dir / "SBC.xlsx",
         [
-            ["\u30db\u30b9\u30c8\u540d", "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"],
-            ["sbc-real-cl1-0", "10.1.1.10"],
-            ["sbc-real-cl1-1", "10.1.1.11"],
-            ["sbc-real2-cl1-0", "10.2.1.10"],
+            ["\u30db\u30b9\u30c8\u540d", "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9", "TTS-Host", "TTS-IP", "TTS-Port"],
+            ["sbc-real-cl1-0", "10.1.1.10", "tts-real-01", "10.1.1.200", "23"],
+            ["sbc-real-cl1-1", "10.1.1.11", "tts-real-01", "10.1.1.200", "23"],
+            ["sbc-real2-cl1-0", "10.2.1.10", "tts-real-02", "10.2.1.200", "23"],
         ],
     )
 
@@ -141,12 +141,15 @@ def test_export_file_repository_resolves_target_sbc_values(tmp_path: Path) -> No
     assert context.target_assignment.slot_key == "SBC_CL1_1"
     assert context.target_assignment.host_name == "sbc-exp-cl1-1"
     assert context.common_values[0].value == "export-operator"
-    target_ip = next(
-        item.value
+    target_placeholders = {
+        item.placeholder: item.value
         for item in context.resolved_placeholders
-        if item.placeholder == "SBC_COMMAND_FLOATING_IP" and item.host_name == "sbc-exp-cl1-1"
-    )
-    assert target_ip == "172.16.1.11"
+        if item.host_name == "sbc-exp-cl1-1"
+    }
+    assert target_placeholders["SBC_COMMAND_FLOATING_IP"] == "172.16.1.11"
+    assert target_placeholders["TTS_HOST"] == "tts-exp-01"
+    assert target_placeholders["TTS_IP"] == "172.16.1.200"
+    assert target_placeholders["TTS_PORT"] == "23"
 
 
 def test_export_file_repository_accepts_real_file_names_and_header_variants(tmp_path: Path) -> None:
@@ -171,9 +174,12 @@ def test_export_file_repository_accepts_real_file_names_and_header_variants(tmp_
     assert tokyo_units.items[0].unit_config_id == "unit-export-2"
     assert context.target_assignment.slot_key == "SBC_CL1_1"
     assert context.target_assignment.host_name == "sbc-real-cl1-1"
-    target_ip = next(
-        item.value
+    target_placeholders = {
+        item.placeholder: item.value
         for item in context.resolved_placeholders
-        if item.placeholder == "SBC_COMMAND_FLOATING_IP" and item.host_name == "sbc-real-cl1-1"
-    )
-    assert target_ip == "10.1.1.11"
+        if item.host_name == "sbc-real-cl1-1"
+    }
+    assert target_placeholders["SBC_COMMAND_FLOATING_IP"] == "10.1.1.11"
+    assert target_placeholders["TTS_HOST"] == "tts-real-01"
+    assert target_placeholders["TTS_IP"] == "10.1.1.200"
+    assert target_placeholders["TTS_PORT"] == "23"

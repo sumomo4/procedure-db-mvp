@@ -163,7 +163,15 @@ def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -
             "source": "case_common_values.login_user",
         }
     ]
-    assert any(item["placeholder"] == "SBC_COMMAND_FLOATING_IP" for item in data["resolved_placeholders"])
+    target_placeholders = {
+        item["placeholder"]: item
+        for item in data["resolved_placeholders"]
+        if item["host_name"] == "sbc-tyo-cl1-0"
+    }
+    assert target_placeholders["SBC_COMMAND_FLOATING_IP"]["value"] == "10.10.1.10"
+    assert target_placeholders["TTS_HOST"]["value"] == "tts-tyo-01"
+    assert target_placeholders["TTS_IP"]["value"] == "10.10.1.200"
+    assert target_placeholders["TTS_PORT"]["value"] == "23"
     login_user_placeholder = next(item for item in data["resolved_placeholders"] if item["placeholder"] == "LOGIN_USER")
     assert login_user_placeholder["source_table"] == "case_common_values"
     assert login_user_placeholder["source_column"] == "login_user"
@@ -246,6 +254,13 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
     assert resolved_sheet["A22"].value == "SBC_COMMAND_FLOATING_IP"
+    resolved_values = {
+        resolved_sheet.cell(row=row_index, column=1).value: resolved_sheet.cell(row=row_index, column=2).value
+        for row_index in range(1, resolved_sheet.max_row + 1)
+    }
+    assert resolved_values["TTS_HOST"] == "tts-tyo-01"
+    assert resolved_values["TTS_IP"] == "10.10.1.200"
+    assert resolved_values["TTS_PORT"] == "23"
     source_doc_sheet = workbook["\u539f\u672c\u5c55\u958b"]
     assert source_doc_sheet["B2"].value == 1
     assert source_doc_sheet["B3"].value == "BP-STD-001"

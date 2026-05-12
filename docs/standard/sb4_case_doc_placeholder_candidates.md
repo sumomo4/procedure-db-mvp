@@ -1,4 +1,4 @@
-﻿# SB4 案件CS プレースホルダ候補メモ
+# SB4 案件CS プレースホルダ候補メモ
 
 ## 目的
 
@@ -10,15 +10,10 @@
 | --- | --- | --- |
 | `TARGET_DEVICE_HOSTNAME` | ユニット構成.xlsx の対象SBCスロット | 対象装置ホスト名 |
 | `SBC_COMMAND_FLOATING_IP` | SBC.xlsx の コマンド用フローティングIPアドレス | TeraTerm接続先、コマンド欄 |
+| `TTS_HOST` | SBC.xlsx の `TTS-Host` | 対象SBCに紐づくTTSホスト |
+| `TTS_IP` | SBC.xlsx の `TTS-IP` | 対象SBCに紐づくTTS IP |
+| `TTS_PORT` | SBC.xlsx の `TTS-Port` | 対象SBCに紐づくTTS接続ポート |
 | `LOGIN_USER` | case_common_values.xlsx | ログインユーザー |
-
-## 追加候補: 接続・TTS系
-
-| 候補名 | 取得元候補 | 備考 |
-| --- | --- | --- |
-| `TTS_HOST` | GUI/HFS/HSS/MSW/RAID/SCCE.xlsx の `TTS-Host` | 対象装置や作業端末接続に必要なら追加 |
-| `TTS_IP` | GUI/HFS/HSS/MSW/RAID/SCCE.xlsx の `TTS-IP` | IP指定が必要な作業向け |
-| `TTS_PORT` | GUI/HFS/HSS/MSW/RAID/SCCE.xlsx の `TTS-Port` | Telnet/SSHポート指定向け |
 
 ## 追加候補: SBC系
 
@@ -63,7 +58,7 @@
 | --- | --- |
 | FS | 保守LANフローティングIPアドレス、リモートシェルコマンド用フローティングIPアドレス、コマンド用フローティングIPアドレス、装置監視A/B用フローティングIPアドレス |
 | HFS/HSS | 装置監視用 IPアドレス、コマンド投入用 IPアドレス、NTP向け IPアドレス、アラーム送信用 IPアドレス、iLO用 IPアドレス |
-| MSW/RAID/SCCE | 保守・装置監視用、TTS-Host、TTS-IP、TTS-Port |
+| MSW/RAID/SCCE | 保守・装置監視用 |
 | RAID | MSW収容ポート番号 |
 | SCCE | VLAN/untagVLAN 系列 |
 
@@ -78,6 +73,5 @@
 ## 次に確認すること
 
 - 添付Excelテンプレート内に、どの値が固定文字列ではなく差し替え対象として出てくるか
-- `TTS-Host` / `TTS-IP` / `TTS-Port` を対象SBCからどう決めるか
 - SBC以外の装置を対象にした案件CS生成が必要か
 - 装置種別ごとに、ホスト名をキーにしたRepositoryを増やすか

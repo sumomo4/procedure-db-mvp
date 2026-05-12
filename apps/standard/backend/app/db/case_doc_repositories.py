@@ -120,7 +120,16 @@ SBC_COLUMN_ALIASES = {
         "command_floating_ip",
         _u(r"\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"),
     ),
+    "tts_host": ("tts_host", "TTS-Host"),
+    "tts_ip": ("tts_ip", "TTS-IP"),
+    "tts_port": ("tts_port", "TTS-Port"),
 }
+SBC_PLACEHOLDER_DEFINITIONS = (
+    ("SBC_COMMAND_FLOATING_IP", "command_floating_ip", "command_floating_ip"),
+    ("TTS_HOST", "tts_host", "tts_host"),
+    ("TTS_IP", "tts_ip", "tts_ip"),
+    ("TTS_PORT", "tts_port", "tts_port"),
+)
 COMMON_VALUE_COLUMN_ALIASES = {
     "key": ("key", _u(r"\u30ad\u30fc")),
     "value": ("value", _u(r"\u5024")),
@@ -314,24 +323,35 @@ def _resolve_sbc_placeholders_by_host_name(
 ) -> list[CaseDocResolvedPlaceholderData]:
     """Resolve SBC values by using each assignment host name as the master key."""
 
+    return _resolve_sbc_placeholders_from_values(host_assignments, _DEVICE_VALUES_BY_HOST_NAME)
+
+
+def _resolve_sbc_placeholders_from_values(
+    host_assignments: list[CaseDocHostAssignmentData],
+    device_values_by_host_name: dict[str, dict[str, str]],
+) -> list[CaseDocResolvedPlaceholderData]:
     resolved_placeholders: list[CaseDocResolvedPlaceholderData] = []
     for assignment in host_assignments:
         if assignment.device_type != "SBC":
             continue
 
-        device_values = _DEVICE_VALUES_BY_HOST_NAME.get(assignment.host_name)
+        device_values = device_values_by_host_name.get(assignment.host_name)
         if device_values is None:
             continue
 
-        resolved_placeholders.append(
-            CaseDocResolvedPlaceholderData(
-                placeholder="SBC_COMMAND_FLOATING_IP",
-                value=device_values["command_floating_ip"],
-                source_table="SBC",
-                source_column="command_floating_ip",
-                host_name=assignment.host_name,
+        for placeholder, value_key, source_column in SBC_PLACEHOLDER_DEFINITIONS:
+            value = device_values.get(value_key)
+            if not value:
+                continue
+            resolved_placeholders.append(
+                CaseDocResolvedPlaceholderData(
+                    placeholder=placeholder,
+                    value=value,
+                    source_table="SBC",
+                    source_column=source_column,
+                    host_name=assignment.host_name,
+                )
             )
-        )
     return resolved_placeholders
 
 
@@ -519,13 +539,18 @@ class ExportFileCaseDocMasterRepository:
         values_by_host_name: dict[str, dict[str, str]] = {}
         for row in rows:
             host_name = _value_from_aliases(row, SBC_COLUMN_ALIASES["host_name"], "host_name")
-            values_by_host_name[host_name] = {
+            device_values = {
                 "command_floating_ip": _value_from_aliases(
                     row,
                     SBC_COLUMN_ALIASES["command_floating_ip"],
                     "command_floating_ip",
                 )
             }
+            for value_key in ("tts_host", "tts_ip", "tts_port"):
+                value = _optional_value_from_aliases(row, SBC_COLUMN_ALIASES[value_key])
+                if value:
+                    device_values[value_key] = value
+            values_by_host_name[host_name] = device_values
         return values_by_host_name
 
     def _load_common_values(self) -> list[CaseDocCommonValueData]:
@@ -559,23 +584,4 @@ class ExportFileCaseDocMasterRepository:
         self,
         host_assignments: list[CaseDocHostAssignmentData],
     ) -> list[CaseDocResolvedPlaceholderData]:
-        device_values_by_host_name = self._load_sbc_values_by_host_name()
-        resolved_placeholders: list[CaseDocResolvedPlaceholderData] = []
-        for assignment in host_assignments:
-            if assignment.device_type != "SBC":
-                continue
-
-            device_values = device_values_by_host_name.get(assignment.host_name)
-            if device_values is None:
-                continue
-
-            resolved_placeholders.append(
-                CaseDocResolvedPlaceholderData(
-                    placeholder="SBC_COMMAND_FLOATING_IP",
-                    value=device_values["command_floating_ip"],
-                    source_table="SBC",
-                    source_column="command_floating_ip",
-                    host_name=assignment.host_name,
-                )
-            )
-        return resolved_placeholders
+        return _resolve_sbc_placeholders_from_values(host_assignments, self._load_sbc_values_by_host_name())
