@@ -553,6 +553,8 @@ class CaseDocCommonValueData(BaseModel):
 
     key: str
     value: str
+    source_table: str
+    source_column: str
     source: str
 
 

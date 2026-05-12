@@ -79,10 +79,15 @@ def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -
         {
             "key": "LOGIN_USER",
             "value": "cs-operator",
+            "source_table": "case_common_values",
+            "source_column": "login_user",
             "source": "case_common_values.login_user",
         }
     ]
     assert any(item["placeholder"] == "SBC_COMMAND_FLOATING_IP" for item in data["resolved_placeholders"])
+    login_user_placeholder = next(item for item in data["resolved_placeholders"] if item["placeholder"] == "LOGIN_USER")
+    assert login_user_placeholder["source_table"] == "case_common_values"
+    assert login_user_placeholder["source_column"] == "login_user"
 
 
 def test_resolve_case_doc_context_rejects_unknown_unit(client: TestClient) -> None:

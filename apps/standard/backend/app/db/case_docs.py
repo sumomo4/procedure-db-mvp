@@ -83,13 +83,15 @@ _DEVICE_VALUES_BY_HOST_NAME = {
     },
 }
 
-_COMMON_VALUES = {
-    "operator_user": {
+_COMMON_VALUE_SOURCE_TABLE = "case_common_values"
+_COMMON_VALUE_DEFINITIONS = [
+    {
         "key": "LOGIN_USER",
         "value": "cs-operator",
-        "source": "case_common_values.login_user",
+        "source_table": _COMMON_VALUE_SOURCE_TABLE,
+        "source_column": "login_user",
     }
-}
+]
 
 
 def _as_option(value: str) -> CaseDocMasterOptionData:
@@ -203,7 +205,13 @@ def _to_host_assignments(hosts: dict[str, object]) -> list[CaseDocHostAssignment
 
 
 def _list_common_values() -> list[CaseDocCommonValueData]:
-    return [CaseDocCommonValueData(**value) for value in _COMMON_VALUES.values()]
+    return [
+        CaseDocCommonValueData(
+            **value,
+            source=f"{value['source_table']}.{value['source_column']}",
+        )
+        for value in _COMMON_VALUE_DEFINITIONS
+    ]
 
 
 def _resolve_sbc_placeholders_by_host_name(
@@ -239,8 +247,8 @@ def _resolve_common_placeholders(
         CaseDocResolvedPlaceholderData(
             placeholder=value.key,
             value=value.value,
-            source_table="case_common_values",
-            source_column=value.key.lower(),
+            source_table=value.source_table,
+            source_column=value.source_column,
             host_name=None,
         )
         for value in common_values

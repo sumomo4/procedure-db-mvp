@@ -343,6 +343,8 @@ type CaseDocHostAssignmentData = {
 type CaseDocCommonValueData = {
   key: string;
   value: string;
+  source_table: string;
+  source_column: string;
   source: string;
 };
 

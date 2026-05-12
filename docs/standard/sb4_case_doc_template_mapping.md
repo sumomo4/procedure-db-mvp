@@ -25,7 +25,7 @@
 | --- | --- | --- | --- |
 | `M4` | `{{TARGET_DEVICE_HOSTNAME}}` | ユニット構成の SBC スロットから解決したホスト名 | 正式名へ移行済み |
 | `M7` | `{{SBC_COMMAND_FLOATING_IP}}` | `SBC.xlsx` の `コマンド用フローティングIPアドレス` | 正式名へ移行済み |
-| `M10` | `{{LOGIN_USER}}` | 共通値。AccessDB に対応カラムがあるかは未確認 | 正式名へ移行済み |
+| `M10` | `{{LOGIN_USER}}` | 共通値マスタ `case_common_values.login_user` から解決 | 正式名へ移行済み |
 
 ## Access カラム候補
 
@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | `TARGET_DEVICE_HOSTNAME` | `unit_config.xlsx` -> `SBC.xlsx` | `SBC_CL1_0系` などのスロット列 -> `ホスト名` | 案件で選択したユニット構成から対象装置が決まるため |
 | `SBC_COMMAND_FLOATING_IP` | `SBC.xlsx` | `コマンド用フローティングIPアドレス` | テンプレートで TeraTerm 接続先として使用しているため |
-| `LOGIN_USER` | 共通値マスタまたは将来の運用設定 | 未定 | Access 列としてはまだ明確ではないため |
+| `LOGIN_USER` | 共通値マスタ | `case_common_values.login_user` | 案件CS生成時に手入力せず、運用側で管理するログインユーザー名として扱うため |
 
 ## 1 対 1 対応を避ける理由
 
@@ -95,6 +95,28 @@
 | `{{NW_ADDRESS}}` | 仮名 | `{{SBC_COMMAND_FLOATING_IP}}` | 現テンプレートでは TeraTerm 接続先として使用。テンプレートは正式名へ移行済み。 |
 | `{{USER}}` | 仮名 | `{{LOGIN_USER}}` | ログインユーザー名として使う。テンプレートは正式名へ移行済み。 |
 
+## 共通値の参照元方針
+
+案件CS生成では、案件や装置に依存しない値を共通値として扱う。
+共通値は画面で手入力させず、共通値マスタまたは将来の運用設定テーブルから解決する。
+
+### `LOGIN_USER` の扱い
+
+`{{LOGIN_USER}}` はログインユーザー名を表す共通値とする。
+現在は seed データとして `case_common_values.login_user` から解決する形にしている。
+将来的に AccessDB または PostgreSQL 側へ共通値テーブルを持たせる場合も、同じ `key / value / source_table / source_column` の考え方で差し替える。
+
+| プレースホルダ | key | source_table | source_column | 現在値 |
+| --- | --- | --- | --- | --- |
+| `{{LOGIN_USER}}` | `LOGIN_USER` | `case_common_values` | `login_user` | `cs-operator` |
+
+### 設計ルール
+
+- 共通値は、案件CS生成画面で手入力させない。
+- 共通値は `key` で識別する。
+- 参照元は `source_table` と `source_column` で明示する。
+- 画面表示用には `source_table.source_column` 形式の `source` も返す。
+- 値の変更が必要な場合は、将来的に共通値マスタまたは運用設定画面から変更できるようにする。
 ## ホスト名をキーにした値解決方針
 
 案件CSでは、M列の対象装置欄からコマンド欄までの範囲で、作業対象となる装置のホスト名を確定する。
@@ -186,8 +208,8 @@ AccessDB の全カラムを先にプレースホルダ化することはしな�
 ## 次の実装候補
 
 1. `case_docs.py` の seed データを Access 列名にさらに寄せる
-2. `LOGIN_USER` の参照元を共通値マスタ/運用設定/AccessDBのどれにするか決める
-3. AccessDB 実データへの接続方式とテーブル参照ルールを固める
+2. AccessDB 実データへの接続方式とテーブル参照ルールを固める
+3. 共通値マスタをDB化する場合の管理画面/更新方法を決める
 4. 追加テンプレートで必要になったプレースホルダをこの命名規則に沿って追加する
 
 
