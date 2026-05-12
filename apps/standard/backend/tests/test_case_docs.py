@@ -68,6 +68,23 @@ def _fake_source_doc_detail(source_doc_id: int) -> SourceDocDetailData:
                         p_text=None,
                         command_text="{{SBC_COMMAND_FLOATING_IP}}",
                         note=None,
+                    ),
+                    ModuleRowData(
+                        module_row_id=1001,
+                        row_order=2,
+                        row_type="footer",
+                        major_no=None,
+                        middle_no=None,
+                        minor_no=None,
+                        tech_doc_text=None,
+                        work_text="\u9023\u7d61\u4e8b\u9805",
+                        indent_level=0,
+                        expected_result=None,
+                        time_text=None,
+                        window_text=None,
+                        p_text=None,
+                        command_text=None,
+                        note=None,
                     )
                 ],
             )
@@ -220,7 +237,11 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert template_sheet["M6"].value == "10.10.1.10"
     assert template_sheet["A6"].border.bottom.style == "thick"
     assert template_sheet["M6"].border.bottom.style == "thick"
+    assert template_sheet["A7"].value is None
+    assert template_sheet["A8"].value is None
+    assert template_sheet["A9"].value is None
     assert template_sheet["A10"].value == "\u9023\u7d61\u4e8b\u9805"
+    assert template_sheet["E10"].value is None
     assert all(merged_range.min_row < 6 for merged_range in template_sheet.merged_cells.ranges)
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"

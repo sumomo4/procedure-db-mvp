@@ -130,12 +130,27 @@ def _is_major_heading_row(module_row: ModuleRowData) -> bool:
     return bool(module_row.major_no) and str(module_row.middle_no or "") in {"", "0"} and str(module_row.minor_no or "") in {"", "0"}
 
 
+def _is_footer_like_module_row(module_row: ModuleRowData) -> bool:
+    footer_markers = {_u(marker) for marker in FOOTER_START_MARKERS}
+    values = {
+        _cell_text(module_row.tech_doc_text),
+        _cell_text(module_row.work_text),
+        _cell_text(module_row.expected_result),
+        _cell_text(module_row.command_text),
+    }
+    return bool(values & footer_markers)
+
+
 def _flatten_enabled_source_doc_rows(source_doc: SourceDocDetailData) -> list[ModuleRowData]:
     rows: list[ModuleRowData] = []
     for module in sorted(source_doc.items, key=lambda item: item.item_order):
         if not module.enabled:
             continue
-        rows.extend(sorted(module.rows, key=lambda row: row.row_order))
+        rows.extend(
+            row
+            for row in sorted(module.rows, key=lambda row: row.row_order)
+            if not _is_footer_like_module_row(row)
+        )
     return rows
 
 
