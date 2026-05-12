@@ -19,7 +19,19 @@ RESOLVED_VALUES_SHEET_NAME = "\u89e3\u6c7a\u5024"
 SOURCE_DOC_EXPANSION_SHEET_NAME = "\u539f\u672c\u5c55\u958b"
 BODY_HEADER_MARKERS = {"\u5927", "\u4e2d", "\u5c0f", "\u4f5c\u696d\u5185\u5bb9", "\u78ba\u8a8d\u4e8b\u9805 or \u9805\u76ee", "\u30b3\u30de\u30f3\u30c9"}
 FOOTER_START_MARKERS = {"\u9023\u7d61\u4e8b\u9805"}
-BODY_OUTPUT_COLUMNS = {
+BODY_HEADER_TO_FIELD = {
+    "\u5927": "major_no",
+    "\u4e2d": "middle_no",
+    "\u5c0f": "minor_no",
+    "\u6280\u8853\u8cc7\u6599\u540d": "tech_doc_text",
+    "\u4f5c\u696d\u5185\u5bb9": "work_text",
+    "\u78ba\u8a8d\u4e8b\u9805 or \u9805\u76ee": "expected_result",
+    "\u6642\u523b": "time_text",
+    "window": "window_text",
+    "P": "p_text",
+    "\u30b3\u30de\u30f3\u30c9": "command_text",
+}
+BODY_FALLBACK_COLUMNS = {
     "major_no": 1,
     "middle_no": 2,
     "minor_no": 3,
@@ -90,6 +102,17 @@ def _find_body_header_row(sheet: Worksheet) -> int | None:
         if markers.issubset(row_values):
             return row_index
     return None
+
+
+def _detect_body_columns(sheet: Worksheet, header_row: int) -> dict[str, int]:
+    columns = dict(BODY_FALLBACK_COLUMNS)
+    header_to_field = {_u(header): field for header, field in BODY_HEADER_TO_FIELD.items()}
+    for column_index in range(1, sheet.max_column + 1):
+        header_text = _cell_text(sheet.cell(row=header_row, column=column_index).value)
+        field_name = header_to_field.get(header_text)
+        if field_name:
+            columns[field_name] = column_index
+    return columns
 
 
 def _find_footer_start_row(sheet: Worksheet, start_row: int) -> int:
@@ -167,6 +190,7 @@ def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> N
     major_style, major_height = _snapshot_row_style(body_sheet, start_row)
     normal_style, normal_height = _snapshot_row_style(body_sheet, min(start_row + 1, max(footer_start_row - 1, start_row)))
     source_rows = _flatten_enabled_source_doc_rows(source_doc)
+    body_columns = _detect_body_columns(body_sheet, header_row)
 
     _resize_body_area(body_sheet, start_row, footer_start_row, len(source_rows))
     if not source_rows:
@@ -180,16 +204,16 @@ def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> N
         _apply_row_style(body_sheet, row_index, styles, height)
         for column_index in range(1, 14):
             body_sheet.cell(row=row_index, column=column_index, value=None)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["major_no"], value=source_row.major_no)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["middle_no"], value=source_row.middle_no)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["minor_no"], value=source_row.minor_no)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["tech_doc_text"], value=source_row.tech_doc_text)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["work_text"], value=source_row.work_text)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["expected_result"], value=source_row.expected_result)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["time_text"], value=source_row.time_text)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["window_text"], value=source_row.window_text)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["p_text"], value=source_row.p_text)
-        body_sheet.cell(row=row_index, column=BODY_OUTPUT_COLUMNS["command_text"], value=source_row.command_text)
+        body_sheet.cell(row=row_index, column=body_columns["major_no"], value=source_row.major_no)
+        body_sheet.cell(row=row_index, column=body_columns["middle_no"], value=source_row.middle_no)
+        body_sheet.cell(row=row_index, column=body_columns["minor_no"], value=source_row.minor_no)
+        body_sheet.cell(row=row_index, column=body_columns["tech_doc_text"], value=source_row.tech_doc_text)
+        body_sheet.cell(row=row_index, column=body_columns["work_text"], value=source_row.work_text)
+        body_sheet.cell(row=row_index, column=body_columns["expected_result"], value=source_row.expected_result)
+        body_sheet.cell(row=row_index, column=body_columns["time_text"], value=source_row.time_text)
+        body_sheet.cell(row=row_index, column=body_columns["window_text"], value=source_row.window_text)
+        body_sheet.cell(row=row_index, column=body_columns["p_text"], value=source_row.p_text)
+        body_sheet.cell(row=row_index, column=body_columns["command_text"], value=source_row.command_text)
 
 
 def _value_for_target_host(context: CaseDocResolveContextData, placeholder: str) -> str | None:
