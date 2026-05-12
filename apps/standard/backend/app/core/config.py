@@ -29,6 +29,9 @@ class AppSettings(BaseModel):
         db_password: PostgreSQL password.
         db_connect_timeout_seconds: PostgreSQL connection timeout in seconds.
         cors_allow_origins: Origins allowed to call the API from a browser.
+        case_doc_master_source: Source used for case document master data.
+        case_doc_access_export_dir: Directory where Access export files are placed.
+        case_doc_import_strict: Whether Access export import should fail on validation warnings.
     """
 
     app_env: str = Field(default="standard")
@@ -41,6 +44,9 @@ class AppSettings(BaseModel):
     db_password: str = Field(default="standard_password")
     db_connect_timeout_seconds: int = Field(default=DEFAULT_DB_CONNECT_TIMEOUT_SECONDS, ge=1)
     cors_allow_origins: tuple[str, ...] = Field(default=DEFAULT_CORS_ALLOW_ORIGINS)
+    case_doc_master_source: str = Field(default="seed")
+    case_doc_access_export_dir: str = Field(default="/app/storage/access_exports")
+    case_doc_import_strict: bool = Field(default=True)
 
     @property
     def database_url(self) -> str:
@@ -127,4 +133,7 @@ def get_settings() -> AppSettings:
             "CORS_ALLOW_ORIGINS",
             DEFAULT_CORS_ALLOW_ORIGINS,
         ),
+        case_doc_master_source=os.environ.get("CASE_DOC_MASTER_SOURCE", "seed"),
+        case_doc_access_export_dir=os.environ.get("CASE_DOC_ACCESS_EXPORT_DIR", "/app/storage/access_exports"),
+        case_doc_import_strict=os.environ.get("CASE_DOC_IMPORT_STRICT", "true").lower() == "true",
     )

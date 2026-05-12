@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.core.config import AppSettings, _get_csv_from_env, _get_int_from_env
+from app.core.config import AppSettings, _get_csv_from_env, _get_int_from_env, get_settings
 
 
 def test_database_url_uses_postgresql_settings() -> None:
@@ -56,3 +56,19 @@ def test_get_csv_from_env_returns_default_for_blank_value(monkeypatch: pytest.Mo
     monkeypatch.setenv("EXAMPLE_ORIGINS", " , ")
 
     assert _get_csv_from_env("EXAMPLE_ORIGINS", ("fallback",)) == ("fallback",)
+
+def test_get_settings_loads_case_doc_master_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Case document master settings should be loaded from environment variables."""
+
+    monkeypatch.setenv("CASE_DOC_MASTER_SOURCE", "seed")
+    monkeypatch.setenv("CASE_DOC_ACCESS_EXPORT_DIR", "/tmp/access_exports")
+    monkeypatch.setenv("CASE_DOC_IMPORT_STRICT", "false")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.case_doc_master_source == "seed"
+    assert settings.case_doc_access_export_dir == "/tmp/access_exports"
+    assert settings.case_doc_import_strict is False
+
+    get_settings.cache_clear()
