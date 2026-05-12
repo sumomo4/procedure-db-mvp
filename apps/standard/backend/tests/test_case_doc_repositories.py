@@ -60,6 +60,52 @@ def _create_access_export_files(export_dir: Path) -> None:
     )
 
 
+def _create_real_named_access_export_files(export_dir: Path) -> None:
+    export_dir.mkdir(parents=True, exist_ok=True)
+    _write_workbook(
+        export_dir / "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210.xlsx",
+        [
+            [None, None, None],
+            [
+                "FS \u30af\u30e9\u30b9\u30bf\u540d",
+                "\u30d6\u30ed\u30c3\u30af",
+                "\u88c5\u7f6e\u8a2d\u7f6e\u5e9c\u770c",
+                "\u88c5\u7f6e\u8a2d\u7f6e\u30d3\u30eb",
+                "SBC_CL1_0 \u7cfb",
+                "SBC_CL1_1\u3000\u7cfb",
+                "GUI_0\u7cfb",
+            ],
+            [
+                "FS-CL-REAL-02",
+                "B002",
+                "\u5927\u962a\u5e9c",
+                "\u6885\u7530\u30d3\u30eb",
+                "sbc-real-cl1-0",
+                "sbc-real-cl1-1",
+                "gui-real-0",
+            ],
+            [
+                "FS-CL-REAL-01",
+                "B001",
+                "\u6771\u4eac\u90fd",
+                "\u54c1\u5ddd\u30d3\u30eb",
+                "sbc-real2-cl1-0",
+                "",
+                "gui-real2-0",
+            ],
+        ],
+    )
+    _write_workbook(
+        export_dir / "SBC.xlsx",
+        [
+            ["\u30db\u30b9\u30c8\u540d", "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"],
+            ["sbc-real-cl1-0", "10.1.1.10"],
+            ["sbc-real-cl1-1", "10.1.1.11"],
+            ["sbc-real2-cl1-0", "10.2.1.10"],
+        ],
+    )
+
+
 def test_export_file_repository_lists_master_options(tmp_path: Path) -> None:
     """Export file repository should read location options from unit_config.xlsx."""
 
@@ -101,3 +147,33 @@ def test_export_file_repository_resolves_target_sbc_values(tmp_path: Path) -> No
         if item.placeholder == "SBC_COMMAND_FLOATING_IP" and item.host_name == "sbc-exp-cl1-1"
     )
     assert target_ip == "172.16.1.11"
+
+
+def test_export_file_repository_accepts_real_file_names_and_header_variants(tmp_path: Path) -> None:
+    """Export file repository should accept real Access export file names and loose headers."""
+
+    _create_real_named_access_export_files(tmp_path)
+    repository = ExportFileCaseDocMasterRepository(str(tmp_path))
+
+    prefectures = repository.list_prefectures()
+    tokyo_units = repository.list_unit_configs("\u6771\u4eac\u90fd", "\u54c1\u5ddd\u30d3\u30eb")
+    context = repository.resolve_context(
+        CaseDocResolveContextRequest(
+            source_doc_id=1,
+            prefecture="\u5927\u962a\u5e9c",
+            building="\u6885\u7530\u30d3\u30eb",
+            unit_config_id="unit-export-1",
+            target_slot_key="SBC_CL1_1",
+        )
+    )
+
+    assert [item.value for item in prefectures.items] == ["\u5927\u962a\u5e9c", "\u6771\u4eac\u90fd"]
+    assert tokyo_units.items[0].unit_config_id == "unit-export-2"
+    assert context.target_assignment.slot_key == "SBC_CL1_1"
+    assert context.target_assignment.host_name == "sbc-real-cl1-1"
+    target_ip = next(
+        item.value
+        for item in context.resolved_placeholders
+        if item.placeholder == "SBC_COMMAND_FLOATING_IP" and item.host_name == "sbc-real-cl1-1"
+    )
+    assert target_ip == "10.1.1.11"

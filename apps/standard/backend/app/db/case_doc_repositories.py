@@ -5,6 +5,7 @@ case_docs module owns repository selection.
 """
 
 import csv
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
@@ -96,8 +97,8 @@ _COMMON_VALUE_DEFINITIONS = [
     }
 ]
 
-UNIT_CONFIG_FILE_NAME = "unit_config.xlsx"
-SBC_FILE_NAME = "SBC.xlsx"
+UNIT_CONFIG_FILE_NAMES = ("unit_config.xlsx", _u(r"\u30e6\u30cb\u30c3\u30c8\u69cb\u6210.xlsx"))
+SBC_FILE_NAMES = ("SBC.xlsx", "sbc.xlsx")
 COMMON_VALUES_XLSX_FILE_NAME = "case_common_values.xlsx"
 COMMON_VALUES_CSV_FILE_NAME = "case_common_values.csv"
 
@@ -109,6 +110,7 @@ UNIT_CONFIG_COLUMN_ALIASES = {
         "prefecture",
         _u(r"\u90fd\u9053\u5e9c\u770c"),
         _u(r"\u88c5\u7f6e\u8a2d\u7f6e\u90fd\u9053\u5e9c\u770c"),
+        _u(r"\u88c5\u7f6e\u8a2d\u7f6e\u5e9c\u770c"),
     ),
     "building": ("building", _u(r"\u30d3\u30eb"), _u(r"\u88c5\u7f6e\u8a2d\u7f6e\u30d3\u30eb")),
 }
@@ -128,6 +130,19 @@ COMMON_VALUE_COLUMN_ALIASES = {
 DEVICE_SLOT_SUFFIX = _u(r"\u7cfb")
 
 
+def _normalize_key(value: str) -> str:
+    return re.sub(r"[\s\u3000]+", "", value).lower()
+
+
+def _resolve_export_file_path(export_dir: Path, file_names: Iterable[str]) -> Path:
+    for file_name in file_names:
+        path = export_dir / file_name
+        if path.exists():
+            return path
+    expected = ", ".join(file_names)
+    raise ValueError(f"case document export file was not found: {expected}")
+
+
 def _cell_to_text(value: object) -> str:
     if value is None:
         return ""
@@ -144,9 +159,13 @@ def _read_xlsx_rows(path: Path) -> list[dict[str, str]]:
     if not rows:
         return []
 
-    headers = [_cell_to_text(value) for value in rows[0]]
+    header_index = next((index for index, row in enumerate(rows) if any(_cell_to_text(value) for value in row)), None)
+    if header_index is None:
+        return []
+
+    headers = [_normalize_key(_cell_to_text(value)) for value in rows[header_index]]
     records: list[dict[str, str]] = []
-    for row in rows[1:]:
+    for row in rows[header_index + 1 :]:
         record = {header: _cell_to_text(value) for header, value in zip(headers, row, strict=False) if header}
         if any(record.values()):
             records.append(record)
@@ -159,7 +178,7 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
 
     with path.open(encoding="utf-8-sig", newline="") as file:
         return [
-            {str(key).strip(): _cell_to_text(value) for key, value in row.items() if key}
+            {_normalize_key(str(key)): _cell_to_text(value) for key, value in row.items() if key}
             for row in csv.DictReader(file)
             if any(_cell_to_text(value) for value in row.values())
         ]
@@ -167,7 +186,7 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 def _value_from_aliases(row: dict[str, str], aliases: Iterable[str], field_name: str) -> str:
     for alias in aliases:
-        value = row.get(alias, "").strip()
+        value = row.get(_normalize_key(alias), "").strip()
         if value:
             return value
     raise ValueError(f"required column value was not found: {field_name}")
@@ -175,18 +194,20 @@ def _value_from_aliases(row: dict[str, str], aliases: Iterable[str], field_name:
 
 def _optional_value_from_aliases(row: dict[str, str], aliases: Iterable[str]) -> str:
     for alias in aliases:
-        value = row.get(alias, "").strip()
+        value = row.get(_normalize_key(alias), "").strip()
         if value:
             return value
     return ""
 
 
 def _slot_key_from_column_name(column_name: str) -> str | None:
-    if column_name in {alias for aliases in UNIT_CONFIG_COLUMN_ALIASES.values() for alias in aliases}:
+    ignored_columns = {_normalize_key(alias) for aliases in UNIT_CONFIG_COLUMN_ALIASES.values() for alias in aliases}
+    if column_name in ignored_columns:
         return None
-    if not column_name.endswith(DEVICE_SLOT_SUFFIX):
+    normalized_suffix = _normalize_key(DEVICE_SLOT_SUFFIX)
+    if not column_name.endswith(normalized_suffix):
         return None
-    slot_key = column_name.removesuffix(DEVICE_SLOT_SUFFIX).strip()
+    slot_key = column_name.removesuffix(normalized_suffix).strip().upper()
     return slot_key or None
 
 
@@ -198,10 +219,24 @@ def _unique_ordered(values: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
     for value in values:
-        if value not in seen:
-            seen.add(value)
-            ordered.append(value)
+        normalized = value.strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
     return ordered
+
+
+def _sort_unit_configs(unit_configs: Iterable[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        unit_configs,
+        key=lambda row: (
+            str(row["prefecture"]),
+            str(row["building"]),
+            str(row["fs_cluster_name"]),
+            str(row["block"]),
+            str(row["unit_config_id"]),
+        ),
+    )
 
 
 def _to_unit_config_item(row: dict[str, object]) -> CaseDocUnitConfigItemData:
@@ -384,21 +419,23 @@ class ExportFileCaseDocMasterRepository:
         self.export_dir = Path(export_dir)
 
     def list_prefectures(self) -> CaseDocMasterOptionsData:
-        values = _unique_ordered(str(row["prefecture"]) for row in self._load_unit_configs())
+        values = sorted(_unique_ordered(str(row["prefecture"]) for row in self._load_unit_configs()))
         return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
 
     def list_buildings(self, prefecture: str) -> CaseDocMasterOptionsData:
-        values = _unique_ordered(
-            str(row["building"])
-            for row in self._load_unit_configs()
-            if row["prefecture"] == prefecture
+        values = sorted(
+            _unique_ordered(
+                str(row["building"])
+                for row in self._load_unit_configs()
+                if row["prefecture"] == prefecture
+            )
         )
         return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
 
     def list_unit_configs(self, prefecture: str, building: str) -> CaseDocUnitConfigListData:
         items = [
             _to_unit_config_item(row)
-            for row in self._load_unit_configs()
+            for row in _sort_unit_configs(self._load_unit_configs())
             if row["prefecture"] == prefecture and row["building"] == building
         ]
         return CaseDocUnitConfigListData(items=items)
@@ -445,7 +482,7 @@ class ExportFileCaseDocMasterRepository:
         return candidates[0]
 
     def _load_unit_configs(self) -> list[dict[str, object]]:
-        rows = _read_xlsx_rows(self.export_dir / UNIT_CONFIG_FILE_NAME)
+        rows = _read_xlsx_rows(_resolve_export_file_path(self.export_dir, UNIT_CONFIG_FILE_NAMES))
         unit_configs: list[dict[str, object]] = []
         for index, row in enumerate(rows, start=1):
             fs_cluster_name = _value_from_aliases(row, UNIT_CONFIG_COLUMN_ALIASES["fs_cluster_name"], "fs_cluster_name")
@@ -478,7 +515,7 @@ class ExportFileCaseDocMasterRepository:
         return unit_configs
 
     def _load_sbc_values_by_host_name(self) -> dict[str, dict[str, str]]:
-        rows = _read_xlsx_rows(self.export_dir / SBC_FILE_NAME)
+        rows = _read_xlsx_rows(_resolve_export_file_path(self.export_dir, SBC_FILE_NAMES))
         values_by_host_name: dict[str, dict[str, str]] = {}
         for row in rows:
             host_name = _value_from_aliases(row, SBC_COLUMN_ALIASES["host_name"], "host_name")
