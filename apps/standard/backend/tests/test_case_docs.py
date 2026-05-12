@@ -218,6 +218,10 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert template_sheet["C6"].value == "1"
     assert template_sheet["E6"].value == "\u4f5c\u696d\u3067\u4f7f\u7528\u3059\u308bPC\u306eTeraTerm\u8a2d\u5b9a\u3092\u5909\u66f4\u3059\u308b\u3002"
     assert template_sheet["M6"].value == "10.10.1.10"
+    assert template_sheet["A6"].border.bottom.style == "thick"
+    assert template_sheet["M6"].border.bottom.style == "thick"
+    assert template_sheet["A10"].value == "\u9023\u7d61\u4e8b\u9805"
+    assert all(merged_range.min_row < 6 for merged_range in template_sheet.merged_cells.ranges)
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
     assert resolved_sheet["A22"].value == "SBC_COMMAND_FLOATING_IP"

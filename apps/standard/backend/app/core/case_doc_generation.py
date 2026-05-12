@@ -7,7 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.core.responses import CaseDocResolveContextData, ModuleRowData, SourceDocDetailData
@@ -19,6 +19,8 @@ RESOLVED_VALUES_SHEET_NAME = "\u89e3\u6c7a\u5024"
 SOURCE_DOC_EXPANSION_SHEET_NAME = "\u539f\u672c\u5c55\u958b"
 BODY_HEADER_MARKERS = {"\u5927", "\u4e2d", "\u5c0f", "\u4f5c\u696d\u5185\u5bb9", "\u78ba\u8a8d\u4e8b\u9805 or \u9805\u76ee", "\u30b3\u30de\u30f3\u30c9"}
 FOOTER_START_MARKERS = {"\u9023\u7d61\u4e8b\u9805"}
+FOOTER_GAP_ROWS = 3
+BODY_MAX_COLUMN = 13
 BODY_HEADER_TO_FIELD = {
     "\u5927": "major_no",
     "\u4e2d": "middle_no",
@@ -167,13 +169,54 @@ def _apply_row_style(sheet: Worksheet, row_index: int, styles: list[dict[str, ob
         cell.protection = copy(style["protection"])
 
 
-def _resize_body_area(sheet: Worksheet, start_row: int, footer_start_row: int, output_row_count: int) -> None:
-    existing_row_count = max(footer_start_row - start_row, 0)
-    target_row_count = max(output_row_count, 1)
-    if target_row_count > existing_row_count:
-        sheet.insert_rows(footer_start_row, target_row_count - existing_row_count)
-    elif target_row_count < existing_row_count:
-        sheet.delete_rows(start_row + target_row_count, existing_row_count - target_row_count)
+def _unmerge_ranges_from_row(sheet: Worksheet, start_row: int) -> None:
+    for merged_range in list(sheet.merged_cells.ranges):
+        if merged_range.max_row >= start_row:
+            sheet.unmerge_cells(str(merged_range))
+
+
+def _delete_rows_from(sheet: Worksheet, start_row: int) -> None:
+    if sheet.max_row >= start_row:
+        sheet.delete_rows(start_row, sheet.max_row - start_row + 1)
+
+
+def _with_bottom_border(border: Border, bottom: Side) -> Border:
+    return Border(
+        left=copy(border.left),
+        right=copy(border.right),
+        top=copy(border.top),
+        bottom=bottom,
+        diagonal=copy(border.diagonal),
+        diagonal_direction=border.diagonal_direction,
+        diagonalUp=border.diagonalUp,
+        diagonalDown=border.diagonalDown,
+        outline=border.outline,
+        vertical=copy(border.vertical),
+        horizontal=copy(border.horizontal),
+    )
+
+
+def _apply_thick_bottom_border(sheet: Worksheet, row_index: int, max_column: int) -> None:
+    thick_side = Side(style="thick", color="000000")
+    for column_index in range(1, max_column + 1):
+        cell = sheet.cell(row=row_index, column=column_index)
+        cell.border = _with_bottom_border(cell.border, thick_side)
+
+
+def _write_footer_label(sheet: Worksheet, row_index: int, styles: list[dict[str, object]], height: float | None) -> None:
+    _apply_row_style(sheet, row_index, styles, height)
+    for column_index in range(1, BODY_MAX_COLUMN + 1):
+        sheet.cell(row=row_index, column=column_index, value=None)
+    footer_cell = sheet.cell(row=row_index, column=1, value=_u("\u9023\u7d61\u4e8b\u9805"))
+    footer_cell.font = copy(footer_cell.font)
+    footer_cell.font = Font(
+        name=footer_cell.font.name,
+        sz=footer_cell.font.sz,
+        b=True,
+        i=footer_cell.font.i,
+        color=footer_cell.font.color,
+        underline=footer_cell.font.underline,
+    )
 
 
 def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> None:
@@ -189,14 +232,14 @@ def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> N
     footer_start_row = _find_footer_start_row(body_sheet, start_row)
     major_style, major_height = _snapshot_row_style(body_sheet, start_row)
     normal_style, normal_height = _snapshot_row_style(body_sheet, min(start_row + 1, max(footer_start_row - 1, start_row)))
+    footer_style, footer_height = _snapshot_row_style(
+        body_sheet, footer_start_row if footer_start_row <= body_sheet.max_row else start_row
+    )
     source_rows = _flatten_enabled_source_doc_rows(source_doc)
     body_columns = _detect_body_columns(body_sheet, header_row)
 
-    _resize_body_area(body_sheet, start_row, footer_start_row, len(source_rows))
-    if not source_rows:
-        for column_index in range(1, 14):
-            body_sheet.cell(row=start_row, column=column_index, value=None)
-        return
+    _unmerge_ranges_from_row(body_sheet, start_row)
+    _delete_rows_from(body_sheet, start_row)
 
     for offset, source_row in enumerate(source_rows):
         row_index = start_row + offset
@@ -214,6 +257,13 @@ def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> N
         body_sheet.cell(row=row_index, column=body_columns["window_text"], value=source_row.window_text)
         body_sheet.cell(row=row_index, column=body_columns["p_text"], value=source_row.p_text)
         body_sheet.cell(row=row_index, column=body_columns["command_text"], value=source_row.command_text)
+
+    if source_rows:
+        last_source_row_index = start_row + len(source_rows) - 1
+        _apply_thick_bottom_border(body_sheet, last_source_row_index, max(BODY_MAX_COLUMN, max(body_columns.values())))
+
+    footer_row_index = start_row + len(source_rows) + FOOTER_GAP_ROWS
+    _write_footer_label(body_sheet, footer_row_index, footer_style, footer_height)
 
 
 def _value_for_target_host(context: CaseDocResolveContextData, placeholder: str) -> str | None:
