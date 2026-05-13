@@ -46,9 +46,19 @@ def _create_access_export_files(export_dir: Path) -> None:
     _write_workbook(
         export_dir / "SBC.xlsx",
         [
-            ["\u30db\u30b9\u30c8\u540d", "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9", "TTS-Host", "TTS-IP", "TTS-Port"],
-            ["sbc-exp-cl1-0", "172.16.1.10", "tts-exp-01", "172.16.1.200", "23"],
-            ["sbc-exp-cl1-1", "172.16.1.11", "tts-exp-01", "172.16.1.200", "23"],
+            [
+                "\u30db\u30b9\u30c8\u540d",
+                "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "\u547c\u51e6\u7406\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "\u4fdd\u5b88\u30a2\u30e9\u30fc\u30e0\u7528LAN\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "\u30ea\u30e2\u30fc\u30c8\u30b7\u30a7\u30eb\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "NTP\u5411\u3051\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "TTS-Host",
+                "TTS-IP",
+                "TTS-Port",
+            ],
+            ["sbc-exp-cl1-0", "172.16.1.10", "172.16.2.10", "172.16.3.10", "172.16.4.10", "172.16.5.10", "tts-exp-01", "172.16.1.200", "23"],
+            ["sbc-exp-cl1-1", "172.16.1.11", "172.16.2.11", "172.16.3.11", "172.16.4.11", "172.16.5.11", "tts-exp-01", "172.16.1.200", "23"],
         ],
     )
     _write_workbook(
@@ -98,10 +108,20 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
     _write_workbook(
         export_dir / "SBC.xlsx",
         [
-            ["\u30db\u30b9\u30c8\u540d", "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9", "TTS-Host", "TTS-IP", "TTS-Port"],
-            ["sbc-real-cl1-0", "10.1.1.10", "tts-real-01", "10.1.1.200", "23"],
-            ["sbc-real-cl1-1", "10.1.1.11", "tts-real-01", "10.1.1.200", "23"],
-            ["sbc-real2-cl1-0", "10.2.1.10", "tts-real-02", "10.2.1.200", "23"],
+            [
+                "\u30db\u30b9\u30c8\u540d",
+                "\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "\u547c\u51e6\u7406\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "\u4fdd\u5b88\u30a2\u30e9\u30fc\u30e0\u7528LAN\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "\u30ea\u30e2\u30fc\u30c8\u30b7\u30a7\u30eb\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "NTP\u5411\u3051\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
+                "TTS-Host",
+                "TTS-IP",
+                "TTS-Port",
+            ],
+            ["sbc-real-cl1-0", "10.1.1.10", "10.1.2.10", "10.1.3.10", "10.1.4.10", "10.1.5.10", "tts-real-01", "10.1.1.200", "23"],
+            ["sbc-real-cl1-1", "10.1.1.11", "10.1.2.11", "10.1.3.11", "10.1.4.11", "10.1.5.11", "tts-real-01", "10.1.1.200", "23"],
+            ["sbc-real2-cl1-0", "10.2.1.10", "10.2.2.10", "10.2.3.10", "10.2.4.10", "10.2.5.10", "tts-real-02", "10.2.1.200", "23"],
         ],
     )
 
@@ -147,6 +167,10 @@ def test_export_file_repository_resolves_target_sbc_values(tmp_path: Path) -> No
         if item.host_name == "sbc-exp-cl1-1"
     }
     assert target_placeholders["SBC_COMMAND_FLOATING_IP"] == "172.16.1.11"
+    assert target_placeholders["SBC_CALL_PROCESS_FLOATING_IP"] == "172.16.2.11"
+    assert target_placeholders["SBC_MAINT_ALARM_LAN_FLOATING_IP"] == "172.16.3.11"
+    assert target_placeholders["SBC_REMOTE_SHELL_FLOATING_IP"] == "172.16.4.11"
+    assert target_placeholders["SBC_NTP_FLOATING_IP"] == "172.16.5.11"
     assert target_placeholders["TTS_HOST"] == "tts-exp-01"
     assert target_placeholders["TTS_IP"] == "172.16.1.200"
     assert target_placeholders["TTS_PORT"] == "23"
@@ -180,6 +204,10 @@ def test_export_file_repository_accepts_real_file_names_and_header_variants(tmp_
         if item.host_name == "sbc-real-cl1-1"
     }
     assert target_placeholders["SBC_COMMAND_FLOATING_IP"] == "10.1.1.11"
+    assert target_placeholders["SBC_CALL_PROCESS_FLOATING_IP"] == "10.1.2.11"
+    assert target_placeholders["SBC_MAINT_ALARM_LAN_FLOATING_IP"] == "10.1.3.11"
+    assert target_placeholders["SBC_REMOTE_SHELL_FLOATING_IP"] == "10.1.4.11"
+    assert target_placeholders["SBC_NTP_FLOATING_IP"] == "10.1.5.11"
     assert target_placeholders["TTS_HOST"] == "tts-real-01"
     assert target_placeholders["TTS_IP"] == "10.1.1.200"
     assert target_placeholders["TTS_PORT"] == "23"

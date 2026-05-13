@@ -169,6 +169,10 @@ def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -
         if item["host_name"] == "sbc-tyo-cl1-0"
     }
     assert target_placeholders["SBC_COMMAND_FLOATING_IP"]["value"] == "10.10.1.10"
+    assert target_placeholders["SBC_CALL_PROCESS_FLOATING_IP"]["value"] == "10.10.2.10"
+    assert target_placeholders["SBC_MAINT_ALARM_LAN_FLOATING_IP"]["value"] == "10.10.3.10"
+    assert target_placeholders["SBC_REMOTE_SHELL_FLOATING_IP"]["value"] == "10.10.4.10"
+    assert target_placeholders["SBC_NTP_FLOATING_IP"]["value"] == "10.10.5.10"
     assert target_placeholders["TTS_HOST"]["value"] == "tts-tyo-01"
     assert target_placeholders["TTS_IP"]["value"] == "10.10.1.200"
     assert target_placeholders["TTS_PORT"]["value"] == "23"
@@ -254,13 +258,18 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
     assert resolved_sheet["A22"].value == "SBC_COMMAND_FLOATING_IP"
-    resolved_values = {
+    target_resolved_values = {
         resolved_sheet.cell(row=row_index, column=1).value: resolved_sheet.cell(row=row_index, column=2).value
         for row_index in range(1, resolved_sheet.max_row + 1)
+        if resolved_sheet.cell(row=row_index, column=5).value == "sbc-tyo-cl1-0"
     }
-    assert resolved_values["TTS_HOST"] == "tts-tyo-01"
-    assert resolved_values["TTS_IP"] == "10.10.1.200"
-    assert resolved_values["TTS_PORT"] == "23"
+    assert target_resolved_values["SBC_CALL_PROCESS_FLOATING_IP"] == "10.10.2.10"
+    assert target_resolved_values["SBC_MAINT_ALARM_LAN_FLOATING_IP"] == "10.10.3.10"
+    assert target_resolved_values["SBC_REMOTE_SHELL_FLOATING_IP"] == "10.10.4.10"
+    assert target_resolved_values["SBC_NTP_FLOATING_IP"] == "10.10.5.10"
+    assert target_resolved_values["TTS_HOST"] == "tts-tyo-01"
+    assert target_resolved_values["TTS_IP"] == "10.10.1.200"
+    assert target_resolved_values["TTS_PORT"] == "23"
     source_doc_sheet = workbook["\u539f\u672c\u5c55\u958b"]
     assert source_doc_sheet["B2"].value == 1
     assert source_doc_sheet["B3"].value == "BP-STD-001"

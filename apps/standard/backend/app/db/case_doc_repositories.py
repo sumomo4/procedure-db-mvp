@@ -63,24 +63,40 @@ _UNIT_CONFIGS = [
 _DEVICE_VALUES_BY_HOST_NAME = {
     "sbc-tyo-cl1-0": {
         "command_floating_ip": "10.10.1.10",
+        "call_process_floating_ip": "10.10.2.10",
+        "maint_alarm_lan_floating_ip": "10.10.3.10",
+        "remote_shell_floating_ip": "10.10.4.10",
+        "ntp_floating_ip": "10.10.5.10",
         "tts_host": "tts-tyo-01",
         "tts_ip": "10.10.1.200",
         "tts_port": "23",
     },
     "sbc-tyo-cl1-1": {
         "command_floating_ip": "10.10.1.11",
+        "call_process_floating_ip": "10.10.2.11",
+        "maint_alarm_lan_floating_ip": "10.10.3.11",
+        "remote_shell_floating_ip": "10.10.4.11",
+        "ntp_floating_ip": "10.10.5.11",
         "tts_host": "tts-tyo-01",
         "tts_ip": "10.10.1.200",
         "tts_port": "23",
     },
     "sbc-osa-cl1-0": {
         "command_floating_ip": "10.20.1.10",
+        "call_process_floating_ip": "10.20.2.10",
+        "maint_alarm_lan_floating_ip": "10.20.3.10",
+        "remote_shell_floating_ip": "10.20.4.10",
+        "ntp_floating_ip": "10.20.5.10",
         "tts_host": "tts-osa-01",
         "tts_ip": "10.20.1.200",
         "tts_port": "23",
     },
     "sbc-osa-cl1-1": {
         "command_floating_ip": "10.20.1.11",
+        "call_process_floating_ip": "10.20.2.11",
+        "maint_alarm_lan_floating_ip": "10.20.3.11",
+        "remote_shell_floating_ip": "10.20.4.11",
+        "ntp_floating_ip": "10.20.5.11",
         "tts_host": "tts-osa-01",
         "tts_ip": "10.20.1.200",
         "tts_port": "23",
@@ -120,13 +136,33 @@ SBC_COLUMN_ALIASES = {
         "command_floating_ip",
         _u(r"\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"),
     ),
+    "call_process_floating_ip": (
+        "call_process_floating_ip",
+        _u(r"\u547c\u51e6\u7406\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"),
+    ),
+    "maint_alarm_lan_floating_ip": (
+        "maint_alarm_lan_floating_ip",
+        _u(r"\u4fdd\u5b88\u30a2\u30e9\u30fc\u30e0\u7528LAN\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"),
+    ),
+    "remote_shell_floating_ip": (
+        "remote_shell_floating_ip",
+        _u(r"\u30ea\u30e2\u30fc\u30c8\u30b7\u30a7\u30eb\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"),
+    ),
+    "ntp_floating_ip": (
+        "ntp_floating_ip",
+        _u(r"NTP\u5411\u3051\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9"),
+    ),
     "tts_host": ("tts_host", "TTS-Host"),
     "tts_ip": ("tts_ip", "TTS-IP"),
     "tts_port": ("tts_port", "TTS-Port"),
 }
-# TTS placeholders are MVP-provisional names based on the UNISBC Access export files.
+# These placeholder names are MVP-provisional and based on the UNISBC Access export files.
 SBC_PLACEHOLDER_DEFINITIONS = (
     ("SBC_COMMAND_FLOATING_IP", "command_floating_ip", "command_floating_ip"),
+    ("SBC_CALL_PROCESS_FLOATING_IP", "call_process_floating_ip", "call_process_floating_ip"),
+    ("SBC_MAINT_ALARM_LAN_FLOATING_IP", "maint_alarm_lan_floating_ip", "maint_alarm_lan_floating_ip"),
+    ("SBC_REMOTE_SHELL_FLOATING_IP", "remote_shell_floating_ip", "remote_shell_floating_ip"),
+    ("SBC_NTP_FLOATING_IP", "ntp_floating_ip", "ntp_floating_ip"),
     ("TTS_HOST", "tts_host", "tts_host"),
     ("TTS_IP", "tts_ip", "tts_ip"),
     ("TTS_PORT", "tts_port", "tts_port"),
@@ -547,7 +583,9 @@ class ExportFileCaseDocMasterRepository:
                     "command_floating_ip",
                 )
             }
-            for value_key in ("tts_host", "tts_ip", "tts_port"):
+            for _, value_key, _ in SBC_PLACEHOLDER_DEFINITIONS:
+                if value_key == "command_floating_ip":
+                    continue
                 value = _optional_value_from_aliases(row, SBC_COLUMN_ALIASES[value_key])
                 if value:
                     device_values[value_key] = value
