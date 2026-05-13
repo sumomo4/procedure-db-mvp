@@ -568,6 +568,27 @@ class CaseDocResolvedPlaceholderData(BaseModel):
     host_name: str | None = None
 
 
+class CaseDocPlaceholderMappingItemData(BaseModel):
+    """Placeholder mapping item used by case document generation."""
+
+    name: str = Field(min_length=1)
+    enabled: bool
+    scope: Literal["device", "common"]
+    source_file: str = Field(min_length=1)
+    key_column: str = Field(min_length=1)
+    value_column: str = Field(min_length=1)
+    source_column: str = Field(min_length=1)
+    device_type: str | None = None
+    key_value: str | None = None
+    description: str | None = None
+
+
+class CaseDocPlaceholderMappingListData(BaseModel):
+    """Placeholder mapping list used by case document generation."""
+
+    items: list[CaseDocPlaceholderMappingItemData]
+
+
 class CaseDocResolveContextData(BaseModel):
     """Resolved context used to generate a case document."""
 

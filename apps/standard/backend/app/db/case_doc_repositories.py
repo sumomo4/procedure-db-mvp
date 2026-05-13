@@ -10,12 +10,15 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
 
+import yaml
 from openpyxl import load_workbook
 
 from app.core.responses import (
     CaseDocCommonValueData,
     CaseDocHostAssignmentData,
     CaseDocMasterOptionData,
+    CaseDocPlaceholderMappingItemData,
+    CaseDocPlaceholderMappingListData,
     CaseDocMasterOptionsData,
     CaseDocResolvedPlaceholderData,
     CaseDocResolveContextData,
@@ -104,14 +107,7 @@ _DEVICE_VALUES_BY_HOST_NAME = {
 }
 
 _COMMON_VALUE_SOURCE_TABLE = "case_common_values"
-_COMMON_VALUE_DEFINITIONS = [
-    {
-        "key": "LOGIN_USER",
-        "value": "cs-operator",
-        "source_table": _COMMON_VALUE_SOURCE_TABLE,
-        "source_column": "login_user",
-    }
-]
+_COMMON_VALUES_BY_KEY = {"LOGIN_USER": "cs-operator"}
 
 UNIT_CONFIG_FILE_NAMES = ("unit_config.xlsx", _u(r"\u30e6\u30cb\u30c3\u30c8\u69cb\u6210.xlsx"))
 SBC_FILE_NAMES = ("SBC.xlsx", "sbc.xlsx")
@@ -156,17 +152,6 @@ SBC_COLUMN_ALIASES = {
     "tts_ip": ("tts_ip", "TTS-IP"),
     "tts_port": ("tts_port", "TTS-Port"),
 }
-# These placeholder names are MVP-provisional and based on the UNISBC Access export files.
-SBC_PLACEHOLDER_DEFINITIONS = (
-    ("SBC_COMMAND_FLOATING_IP", "command_floating_ip", "command_floating_ip"),
-    ("SBC_CALL_PROCESS_FLOATING_IP", "call_process_floating_ip", "call_process_floating_ip"),
-    ("SBC_MAINT_ALARM_LAN_FLOATING_IP", "maint_alarm_lan_floating_ip", "maint_alarm_lan_floating_ip"),
-    ("SBC_REMOTE_SHELL_FLOATING_IP", "remote_shell_floating_ip", "remote_shell_floating_ip"),
-    ("SBC_NTP_FLOATING_IP", "ntp_floating_ip", "ntp_floating_ip"),
-    ("TTS_HOST", "tts_host", "tts_host"),
-    ("TTS_IP", "tts_ip", "tts_ip"),
-    ("TTS_PORT", "tts_port", "tts_port"),
-)
 COMMON_VALUE_COLUMN_ALIASES = {
     "key": ("key", _u(r"\u30ad\u30fc")),
     "value": ("value", _u(r"\u5024")),
@@ -174,6 +159,58 @@ COMMON_VALUE_COLUMN_ALIASES = {
     "source_column": ("source_column", _u(r"\u51fa\u5178\u30ab\u30e9\u30e0")),
 }
 DEVICE_SLOT_SUFFIX = _u(r"\u7cfb")
+
+
+def _load_placeholder_mappings(mapping_path: str) -> list[CaseDocPlaceholderMappingItemData]:
+    path = Path(mapping_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if not path.exists():
+        raise ValueError(f"placeholder mapping file was not found: {path}")
+
+    with path.open(encoding="utf-8-sig") as file:
+        payload = yaml.safe_load(file) or {}
+
+    raw_items = payload.get("placeholders", [])
+    if not isinstance(raw_items, list):
+        raise ValueError("placeholder mapping file must contain a placeholders list.")
+
+    mappings: list[CaseDocPlaceholderMappingItemData] = []
+    seen: set[str] = set()
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            raise ValueError("placeholder mapping entries must be objects.")
+        item = CaseDocPlaceholderMappingItemData(**raw_item)
+        if item.name in seen:
+            raise ValueError(f"placeholder mapping name is duplicated: {item.name}")
+        seen.add(item.name)
+        if item.scope == "device" and not item.device_type:
+            raise ValueError(f"device placeholder requires device_type: {item.name}")
+        if item.scope == "common" and not item.key_value:
+            raise ValueError(f"common placeholder requires key_value: {item.name}")
+        mappings.append(item)
+    return mappings
+
+
+def _enabled_device_mappings(
+    mappings: Iterable[CaseDocPlaceholderMappingItemData],
+    device_type: str,
+) -> list[CaseDocPlaceholderMappingItemData]:
+    return [
+        mapping
+        for mapping in mappings
+        if mapping.enabled and mapping.scope == "device" and mapping.device_type == device_type
+    ]
+
+
+def _enabled_common_mappings(
+    mappings: Iterable[CaseDocPlaceholderMappingItemData],
+) -> list[CaseDocPlaceholderMappingItemData]:
+    return [mapping for mapping in mappings if mapping.enabled and mapping.scope == "common"]
+
+
+def _source_table_from_mapping(mapping: CaseDocPlaceholderMappingItemData) -> str:
+    return Path(mapping.source_file).stem
 
 
 def _normalize_key(value: str) -> str:
@@ -345,47 +382,63 @@ def _to_host_assignments(hosts: dict[str, object]) -> list[CaseDocHostAssignment
     ]
 
 
-def _list_common_values() -> list[CaseDocCommonValueData]:
-    return [
-        CaseDocCommonValueData(
-            **value,
-            source=f"{value['source_table']}.{value['source_column']}",
+def _list_common_values(
+    mappings: list[CaseDocPlaceholderMappingItemData],
+) -> list[CaseDocCommonValueData]:
+    values: list[CaseDocCommonValueData] = []
+    for mapping in _enabled_common_mappings(mappings):
+        key = mapping.key_value or mapping.name
+        value = _COMMON_VALUES_BY_KEY.get(key)
+        if value is None:
+            continue
+        source_table = _source_table_from_mapping(mapping)
+        values.append(
+            CaseDocCommonValueData(
+                key=key,
+                value=value,
+                source_table=source_table,
+                source_column=mapping.source_column,
+                source=f"{source_table}.{mapping.source_column}",
+            )
         )
-        for value in _COMMON_VALUE_DEFINITIONS
-    ]
+    return values
 
 
 def _resolve_sbc_placeholders_by_host_name(
     host_assignments: list[CaseDocHostAssignmentData],
+    mappings: list[CaseDocPlaceholderMappingItemData],
 ) -> list[CaseDocResolvedPlaceholderData]:
     """Resolve SBC values by using each assignment host name as the master key."""
 
-    return _resolve_sbc_placeholders_from_values(host_assignments, _DEVICE_VALUES_BY_HOST_NAME)
+    return _resolve_device_placeholders_from_values(host_assignments, _DEVICE_VALUES_BY_HOST_NAME, mappings, "SBC")
 
 
-def _resolve_sbc_placeholders_from_values(
+def _resolve_device_placeholders_from_values(
     host_assignments: list[CaseDocHostAssignmentData],
     device_values_by_host_name: dict[str, dict[str, str]],
+    mappings: list[CaseDocPlaceholderMappingItemData],
+    device_type: str,
 ) -> list[CaseDocResolvedPlaceholderData]:
     resolved_placeholders: list[CaseDocResolvedPlaceholderData] = []
+    device_mappings = _enabled_device_mappings(mappings, device_type)
     for assignment in host_assignments:
-        if assignment.device_type != "SBC":
+        if assignment.device_type != device_type:
             continue
 
         device_values = device_values_by_host_name.get(assignment.host_name)
         if device_values is None:
             continue
 
-        for placeholder, value_key, source_column in SBC_PLACEHOLDER_DEFINITIONS:
-            value = device_values.get(value_key)
+        for mapping in device_mappings:
+            value = device_values.get(mapping.source_column)
             if not value:
                 continue
             resolved_placeholders.append(
                 CaseDocResolvedPlaceholderData(
-                    placeholder=placeholder,
+                    placeholder=mapping.name,
                     value=value,
-                    source_table="SBC",
-                    source_column=source_column,
+                    source_table=_source_table_from_mapping(mapping),
+                    source_column=mapping.source_column,
                     host_name=assignment.host_name,
                 )
             )
@@ -422,9 +475,21 @@ class CaseDocMasterRepository(Protocol):
     def resolve_context(self, payload: CaseDocResolveContextRequest) -> CaseDocResolveContextData:
         """Resolve generation context from repository data."""
 
+    def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
+        """Return placeholder mappings used for case document generation."""
+
 
 class SeedCaseDocMasterRepository:
     """Deterministic case document master data used before Access export import."""
+
+    def __init__(self, placeholder_mapping_path: str = "app/config/placeholder_mapping.yml") -> None:
+        self.placeholder_mapping_path = placeholder_mapping_path
+
+    def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
+        return CaseDocPlaceholderMappingListData(items=_load_placeholder_mappings(self.placeholder_mapping_path))
+
+    def _load_placeholder_mappings(self) -> list[CaseDocPlaceholderMappingItemData]:
+        return _load_placeholder_mappings(self.placeholder_mapping_path)
 
     def list_prefectures(self) -> CaseDocMasterOptionsData:
         values = _unique_ordered(str(row["prefecture"]) for row in _UNIT_CONFIGS)
@@ -454,9 +519,10 @@ class SeedCaseDocMasterRepository:
 
         host_assignments = _to_host_assignments(hosts)
         target_assignment = _select_target_host_assignment(host_assignments, payload.target_slot_key)
-        common_values = _list_common_values()
+        mappings = self._load_placeholder_mappings()
+        common_values = _list_common_values(mappings)
         resolved_placeholders = [
-            *_resolve_sbc_placeholders_by_host_name(host_assignments),
+            *_resolve_sbc_placeholders_by_host_name(host_assignments, mappings),
             *_resolve_common_placeholders(common_values),
         ]
 
@@ -469,11 +535,19 @@ class SeedCaseDocMasterRepository:
             resolved_placeholders=resolved_placeholders,
         )
 
+
 class ExportFileCaseDocMasterRepository:
     """Case document master data loaded from Access-derived export files."""
 
-    def __init__(self, export_dir: str) -> None:
+    def __init__(self, export_dir: str, placeholder_mapping_path: str = "app/config/placeholder_mapping.yml") -> None:
         self.export_dir = Path(export_dir)
+        self.placeholder_mapping_path = placeholder_mapping_path
+
+    def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
+        return CaseDocPlaceholderMappingListData(items=_load_placeholder_mappings(self.placeholder_mapping_path))
+
+    def _load_placeholder_mappings(self) -> list[CaseDocPlaceholderMappingItemData]:
+        return _load_placeholder_mappings(self.placeholder_mapping_path)
 
     def list_prefectures(self) -> CaseDocMasterOptionsData:
         values = sorted(_unique_ordered(str(row["prefecture"]) for row in self._load_unit_configs()))
@@ -505,9 +579,10 @@ class ExportFileCaseDocMasterRepository:
 
         host_assignments = _to_host_assignments(hosts)
         target_assignment = _select_target_host_assignment(host_assignments, payload.target_slot_key)
-        common_values = self._load_common_values()
+        mappings = self._load_placeholder_mappings()
+        common_values = self._load_common_values(mappings)
         resolved_placeholders = [
-            *self._resolve_sbc_placeholders_by_host_name(host_assignments),
+            *self._resolve_device_placeholders_by_host_name(host_assignments, mappings),
             *_resolve_common_placeholders(common_values),
         ]
 
@@ -571,28 +646,32 @@ class ExportFileCaseDocMasterRepository:
             )
         return unit_configs
 
-    def _load_sbc_values_by_host_name(self) -> dict[str, dict[str, str]]:
-        rows = _read_xlsx_rows(_resolve_export_file_path(self.export_dir, SBC_FILE_NAMES))
+    def _load_device_values_by_host_name(
+        self,
+        mappings: list[CaseDocPlaceholderMappingItemData],
+        device_type: str,
+    ) -> dict[str, dict[str, str]]:
         values_by_host_name: dict[str, dict[str, str]] = {}
-        for row in rows:
-            host_name = _value_from_aliases(row, SBC_COLUMN_ALIASES["host_name"], "host_name")
-            device_values = {
-                "command_floating_ip": _value_from_aliases(
-                    row,
-                    SBC_COLUMN_ALIASES["command_floating_ip"],
-                    "command_floating_ip",
-                )
-            }
-            for _, value_key, _ in SBC_PLACEHOLDER_DEFINITIONS:
-                if value_key == "command_floating_ip":
-                    continue
-                value = _optional_value_from_aliases(row, SBC_COLUMN_ALIASES[value_key])
-                if value:
-                    device_values[value_key] = value
-            values_by_host_name[host_name] = device_values
+        device_mappings = _enabled_device_mappings(mappings, device_type)
+        source_files = _unique_ordered(mapping.source_file for mapping in device_mappings)
+        for source_file in source_files:
+            source_mappings = [mapping for mapping in device_mappings if mapping.source_file == source_file]
+            rows = _read_xlsx_rows(self.export_dir / source_file)
+            for row in rows:
+                host_aliases = ["host_name", _u(r"\u30db\u30b9\u30c8\u540d")]
+                host_aliases.extend(mapping.key_column for mapping in source_mappings)
+                host_name = _value_from_aliases(row, host_aliases, "host_name")
+                device_values = values_by_host_name.setdefault(host_name, {})
+                for mapping in source_mappings:
+                    value = _optional_value_from_aliases(row, (mapping.value_column, mapping.source_column))
+                    if value:
+                        device_values[mapping.source_column] = value
         return values_by_host_name
 
-    def _load_common_values(self) -> list[CaseDocCommonValueData]:
+    def _load_common_values(
+        self,
+        mappings: list[CaseDocPlaceholderMappingItemData],
+    ) -> list[CaseDocCommonValueData]:
         xlsx_path = self.export_dir / COMMON_VALUES_XLSX_FILE_NAME
         csv_path = self.export_dir / COMMON_VALUES_CSV_FILE_NAME
         if xlsx_path.exists():
@@ -600,14 +679,38 @@ class ExportFileCaseDocMasterRepository:
         elif csv_path.exists():
             rows = _read_csv_rows(csv_path)
         else:
-            return _list_common_values()
+            return _list_common_values(mappings)
 
         common_values: list[CaseDocCommonValueData] = []
-        for row in rows:
-            key = _value_from_aliases(row, COMMON_VALUE_COLUMN_ALIASES["key"], "key")
-            value = _value_from_aliases(row, COMMON_VALUE_COLUMN_ALIASES["value"], "value")
-            source_table = _optional_value_from_aliases(row, COMMON_VALUE_COLUMN_ALIASES["source_table"]) or _COMMON_VALUE_SOURCE_TABLE
-            source_column = _optional_value_from_aliases(row, COMMON_VALUE_COLUMN_ALIASES["source_column"]) or key.lower()
+        for mapping in _enabled_common_mappings(mappings):
+            matched_row = next(
+                (
+                    row
+                    for row in rows
+                    if _optional_value_from_aliases(row, (mapping.key_column, "key")) == mapping.key_value
+                ),
+                None,
+            )
+            if matched_row is None:
+                fallback_value = _COMMON_VALUES_BY_KEY.get(mapping.key_value or mapping.name)
+                if fallback_value is None:
+                    continue
+                source_table = _source_table_from_mapping(mapping)
+                common_values.append(
+                    CaseDocCommonValueData(
+                        key=mapping.key_value or mapping.name,
+                        value=fallback_value,
+                        source_table=source_table,
+                        source_column=mapping.source_column,
+                        source=f"{source_table}.{mapping.source_column}",
+                    )
+                )
+                continue
+
+            key = mapping.key_value or mapping.name
+            value = _value_from_aliases(matched_row, (mapping.value_column, "value"), mapping.name)
+            source_table = _optional_value_from_aliases(matched_row, COMMON_VALUE_COLUMN_ALIASES["source_table"]) or _source_table_from_mapping(mapping)
+            source_column = _optional_value_from_aliases(matched_row, COMMON_VALUE_COLUMN_ALIASES["source_column"]) or mapping.source_column
             common_values.append(
                 CaseDocCommonValueData(
                     key=key,
@@ -619,8 +722,24 @@ class ExportFileCaseDocMasterRepository:
             )
         return common_values
 
-    def _resolve_sbc_placeholders_by_host_name(
+    def _resolve_device_placeholders_by_host_name(
         self,
         host_assignments: list[CaseDocHostAssignmentData],
+        mappings: list[CaseDocPlaceholderMappingItemData],
     ) -> list[CaseDocResolvedPlaceholderData]:
-        return _resolve_sbc_placeholders_from_values(host_assignments, self._load_sbc_values_by_host_name())
+        resolved_placeholders: list[CaseDocResolvedPlaceholderData] = []
+        device_types = _unique_ordered(
+            mapping.device_type or ""
+            for mapping in mappings
+            if mapping.enabled and mapping.scope == "device" and mapping.device_type
+        )
+        for device_type in device_types:
+            resolved_placeholders.extend(
+                _resolve_device_placeholders_from_values(
+                    host_assignments,
+                    self._load_device_values_by_host_name(mappings, device_type),
+                    mappings,
+                    device_type,
+                )
+            )
+        return resolved_placeholders

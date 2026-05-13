@@ -32,6 +32,7 @@ class AppSettings(BaseModel):
         case_doc_master_source: Source used for case document master data.
         case_doc_access_export_dir: Directory where Access export files are placed.
         case_doc_import_strict: Whether Access export import should fail on validation warnings.
+        case_doc_placeholder_mapping_path: YAML path for case document placeholder mappings.
     """
 
     app_env: str = Field(default="standard")
@@ -47,6 +48,7 @@ class AppSettings(BaseModel):
     case_doc_master_source: str = Field(default="seed")
     case_doc_access_export_dir: str = Field(default="/app/storage/access_exports")
     case_doc_import_strict: bool = Field(default=True)
+    case_doc_placeholder_mapping_path: str = Field(default="app/config/placeholder_mapping.yml")
 
     @property
     def database_url(self) -> str:
@@ -136,4 +138,8 @@ def get_settings() -> AppSettings:
         case_doc_master_source=os.environ.get("CASE_DOC_MASTER_SOURCE", "seed"),
         case_doc_access_export_dir=os.environ.get("CASE_DOC_ACCESS_EXPORT_DIR", "/app/storage/access_exports"),
         case_doc_import_strict=os.environ.get("CASE_DOC_IMPORT_STRICT", "true").lower() == "true",
+        case_doc_placeholder_mapping_path=os.environ.get(
+            "CASE_DOC_PLACEHOLDER_MAPPING_PATH",
+            "app/config/placeholder_mapping.yml",
+        ),
     )

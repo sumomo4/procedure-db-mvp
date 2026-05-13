@@ -3,6 +3,7 @@
 from app.core.config import AppSettings
 from app.core.responses import (
     CaseDocMasterOptionsData,
+    CaseDocPlaceholderMappingListData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -23,8 +24,11 @@ def get_case_doc_master_repository(settings: AppSettings) -> CaseDocMasterReposi
     if settings.case_doc_master_source not in _SUPPORTED_MASTER_SOURCES:
         raise ValueError(f"unsupported case document master source: {settings.case_doc_master_source}")
     if settings.case_doc_master_source == "export_file":
-        return ExportFileCaseDocMasterRepository(settings.case_doc_access_export_dir)
-    return SeedCaseDocMasterRepository()
+        return ExportFileCaseDocMasterRepository(
+            settings.case_doc_access_export_dir,
+            settings.case_doc_placeholder_mapping_path,
+        )
+    return SeedCaseDocMasterRepository(settings.case_doc_placeholder_mapping_path)
 
 
 def list_case_doc_prefectures(settings: AppSettings) -> CaseDocMasterOptionsData:
@@ -56,3 +60,9 @@ def resolve_case_doc_context(
     """Resolve generation context without accepting manual placeholder values."""
 
     return get_case_doc_master_repository(settings).resolve_context(payload)
+
+
+def list_case_doc_placeholder_mappings(settings: AppSettings) -> CaseDocPlaceholderMappingListData:
+    """Return placeholder mappings used for case document generation."""
+
+    return get_case_doc_master_repository(settings).list_placeholder_mappings()

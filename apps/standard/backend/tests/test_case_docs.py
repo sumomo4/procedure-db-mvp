@@ -133,6 +133,22 @@ def test_read_case_doc_unit_configs_returns_candidates(client: TestClient) -> No
     ]
 
 
+def test_read_case_doc_placeholder_mappings_returns_configured_items(client: TestClient) -> None:
+    """Placeholder mapping API should return configured mapping items."""
+
+    response = client.get("/api/v1/case-docs/placeholders")
+
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["result"] == "success"
+    items = body["data"]["items"]
+    placeholders = {item["name"]: item for item in items}
+    assert placeholders["SBC_COMMAND_FLOATING_IP"]["source_file"] == "SBC.xlsx"
+    assert placeholders["SBC_COMMAND_FLOATING_IP"]["scope"] == "device"
+    assert placeholders["SBC_COMMAND_FLOATING_IP"]["device_type"] == "SBC"
+    assert placeholders["LOGIN_USER"]["scope"] == "common"
+
+
 def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -> None:
     """Resolve context API should return values derived from master data."""
 

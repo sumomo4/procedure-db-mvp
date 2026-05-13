@@ -12,6 +12,7 @@ from app.core.responses import (
     ApiResponse,
     CaseDocGenerateRequest,
     CaseDocMasterOptionsData,
+    CaseDocPlaceholderMappingListData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -21,6 +22,7 @@ from app.core.responses import (
 )
 from app.db.case_docs import (
     list_case_doc_buildings,
+    list_case_doc_placeholder_mappings,
     list_case_doc_prefectures,
     list_case_doc_unit_configs,
     resolve_case_doc_context,
@@ -55,6 +57,11 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
                 method="GET",
                 path="/api/v1/case-docs/master/unit-config",
                 purpose="Case document unit configuration candidates.",
+            ),
+            RouterEndpointData(
+                method="GET",
+                path="/api/v1/case-docs/placeholders",
+                purpose="Case document placeholder mappings used during generation.",
             ),
             RouterEndpointData(
                 method="POST",
@@ -102,6 +109,22 @@ def read_case_doc_unit_configs(
 
     data = list_case_doc_unit_configs(settings, prefecture, building)
     return success_response(data, "Case document unit configurations were retrieved.")
+
+
+@router.get("/placeholders", response_model=ApiResponse[CaseDocPlaceholderMappingListData])
+def read_case_doc_placeholder_mappings(
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocPlaceholderMappingListData]:
+    """Return placeholder mappings used for case document generation."""
+
+    try:
+        data = list_case_doc_placeholder_mappings(settings)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    return success_response(data, "Case document placeholder mappings were retrieved.")
 
 
 @router.post("/resolve-context", response_model=ApiResponse[CaseDocResolveContextData])
