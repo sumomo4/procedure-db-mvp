@@ -4964,30 +4964,30 @@ function CaseDocPlaceholdersPage() {
           <h2>{caseDocPlaceholderText.title}</h2>
           <DataTable
             columns={[
-              caseDocPlaceholderText.name,
               caseDocPlaceholderText.status,
-              caseDocPlaceholderText.scope,
-              caseDocPlaceholderText.deviceType,
-              caseDocPlaceholderText.sourceFile,
-              caseDocPlaceholderText.keyColumn,
-              caseDocPlaceholderText.valueColumn,
-              caseDocPlaceholderText.sourceColumn,
-              caseDocPlaceholderText.keyValue,
+              caseDocPlaceholderText.name,
               caseDocPlaceholderText.descriptionColumn,
+              caseDocPlaceholderText.deviceType,
+              caseDocPlaceholderText.scope,
+              caseDocPlaceholderText.sourceFile,
+              caseDocPlaceholderText.valueColumn,
+              caseDocPlaceholderText.keyColumn,
+              caseDocPlaceholderText.keyValue,
+              caseDocPlaceholderText.sourceColumn,
             ]}
             rows={placeholderState.items.map((item) => [
-              <code>{item.name}</code>,
               <span className={item.enabled ? "placeholder-state placeholder-state-enabled" : "placeholder-state placeholder-state-disabled"}>
                 {item.enabled ? caseDocPlaceholderText.enabled : caseDocPlaceholderText.disabled}
               </span>,
-              item.scope === "device" ? caseDocPlaceholderText.deviceScoped : caseDocPlaceholderText.commonScoped,
-              item.device_type ?? "-",
-              item.source_file,
-              item.key_column,
-              item.value_column,
-              item.source_column,
-              item.key_value ?? "-",
+              <code>{item.name}</code>,
               item.description ?? "-",
+              item.device_type ?? "-",
+              item.scope === "device" ? caseDocPlaceholderText.deviceScoped : caseDocPlaceholderText.commonScoped,
+              item.source_file,
+              item.value_column,
+              item.key_column,
+              item.key_value ?? "-",
+              item.source_column,
             ])}
           />
         </section>
