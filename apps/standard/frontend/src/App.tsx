@@ -550,7 +550,7 @@ function Shell() {
           <NavItem to="/modules/register" label="モジュール登録" icon="⇧" />
           <NavItem to="/documents/search" label="原本参照" icon="▤" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
-          <NavItem to="/case-docs" label={caseDocText.title} icon="CS" />
+          <NavItem to="/case-docs" label={caseDocText.title} icon="CS" end />
           <NavItem to="/case-docs/placeholders" label={caseDocPlaceholderText.title} icon="{}" />
           <NavItem to="/approval" label="承認状態確認" icon="✓" />
         </nav>
@@ -604,9 +604,9 @@ function Shell() {
   );
 }
 
-function NavItem({ to, label, icon }: { to: string; label: string; icon: string }) {
+function NavItem({ to, label, icon, end = false }: { to: string; label: string; icon: string; end?: boolean }) {
   return (
-    <NavLink to={to} className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+    <NavLink to={to} end={end} className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
       <span aria-hidden="true">{icon}</span>
       {label}
     </NavLink>
