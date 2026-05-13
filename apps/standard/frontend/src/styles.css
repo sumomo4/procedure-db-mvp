@@ -599,6 +599,26 @@ nav {
   justify-content: flex-end;
 }
 
+
+.placeholder-filter-panel {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) minmax(180px, 0.7fr) minmax(260px, 1.6fr);
+  gap: 14px;
+  align-items: end;
+  padding: 18px;
+  border: 1px solid #ded6c8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.placeholder-filter-panel label {
+  display: grid;
+  gap: 8px;
+  color: #4d5c66;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .placeholder-list-section {
   display: grid;
   gap: 14px;
@@ -1896,6 +1916,7 @@ th {
   .list-status,
   .search-form,
   .form-grid,
+  .placeholder-filter-panel,
   .register-step-grid,
   .register-row-grid,
   .facts,

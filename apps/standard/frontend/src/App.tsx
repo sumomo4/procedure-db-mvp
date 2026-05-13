@@ -413,6 +413,9 @@ type CaseDocPlaceholderMappingListState = {
   message: string;
 };
 
+
+type CaseDocPlaceholderStatusFilter = "all" | "enabled" | "disabled";
+
 type ApprovalStatusListItemData = {
   target_id: number;
   target_key: string;
@@ -4461,6 +4464,8 @@ const caseDocPlaceholderText = {
   failed: "プレースホルダ定義の取得に失敗しました。",
   apiFailed: "APIに接続できませんでした。",
   total: "定義数",
+  visible: "表示件数",
+  all: "すべて",
   enabled: "有効",
   disabled: "無効",
   deviceScoped: "装置別",
@@ -4475,8 +4480,13 @@ const caseDocPlaceholderText = {
   sourceColumn: "内部名",
   keyValue: "共通キー",
   descriptionColumn: "説明",
+  statusFilter: "状態で絞り込み",
+  deviceTypeFilter: "装置種別で絞り込み",
+  keyword: "キーワード検索",
+  keywordPlaceholder: "名前、説明、参照元で検索",
   backToCaseDocs: "案件化へ戻る",
   emptyTitle: "プレースホルダ定義がありません",
+  noMatchesTitle: "条件に一致する定義がありません",
 };
 
 function CaseDocsPage() {
@@ -4884,6 +4894,9 @@ function CaseDocPlaceholdersPage() {
     items: [],
     message: caseDocPlaceholderText.loading,
   });
+  const [statusFilter, setStatusFilter] = useState<CaseDocPlaceholderStatusFilter>("all");
+  const [deviceTypeFilter, setDeviceTypeFilter] = useState("all");
+  const [keywordFilter, setKeywordFilter] = useState("");
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -4927,14 +4940,48 @@ function CaseDocPlaceholdersPage() {
   }, []);
 
   const enabledCount = placeholderState.items.filter((item) => item.enabled).length;
-  const deviceScopedCount = placeholderState.items.filter((item) => item.scope === "device").length;
-  const commonScopedCount = placeholderState.items.filter((item) => item.scope === "common").length;
+  const disabledCount = placeholderState.items.length - enabledCount;
+  const deviceTypeOptions = Array.from(
+    new Set(placeholderState.items.map((item) => item.device_type).filter((deviceType): deviceType is string => Boolean(deviceType))),
+  ).sort((left, right) => left.localeCompare(right));
+  const normalizedKeyword = keywordFilter.trim().toLocaleLowerCase();
+  const filteredItems = placeholderState.items.filter((item) => {
+    if (statusFilter === "enabled" && !item.enabled) {
+      return false;
+    }
+    if (statusFilter === "disabled" && item.enabled) {
+      return false;
+    }
+    if (deviceTypeFilter !== "all" && item.device_type !== deviceTypeFilter) {
+      return false;
+    }
+    if (normalizedKeyword.length === 0) {
+      return true;
+    }
+
+    const searchableText = [
+      item.name,
+      item.description,
+      item.device_type,
+      item.scope,
+      item.source_file,
+      item.key_column,
+      item.value_column,
+      item.source_column,
+      item.key_value,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+
+    return searchableText.includes(normalizedKeyword);
+  });
 
   return (
     <Page title={caseDocPlaceholderText.title} description={caseDocPlaceholderText.description}>
       <Toolbar>
         <NavLink to="/case-docs" className="button-link">
-          <span aria-hidden="true">?</span>
+          <span aria-hidden="true">{"\u2190"}</span>
           {caseDocPlaceholderText.backToCaseDocs}
         </NavLink>
       </Toolbar>
@@ -4945,52 +4992,89 @@ function CaseDocPlaceholdersPage() {
           <strong>{placeholderState.items.length}</strong>
         </div>
         <div>
+          <span>{caseDocPlaceholderText.visible}</span>
+          <strong>{filteredItems.length}</strong>
+        </div>
+        <div>
           <span>{caseDocPlaceholderText.enabled}</span>
           <strong>{enabledCount}</strong>
         </div>
         <div>
-          <span>{caseDocPlaceholderText.deviceScoped}</span>
-          <strong>{deviceScopedCount}</strong>
-        </div>
-        <div>
-          <span>{caseDocPlaceholderText.commonScoped}</span>
-          <strong>{commonScopedCount}</strong>
+          <span>{caseDocPlaceholderText.disabled}</span>
+          <strong>{disabledCount}</strong>
         </div>
         <p>{placeholderState.message}</p>
       </section>
 
       {placeholderState.items.length > 0 ? (
-        <section className="section-band placeholder-list-section">
-          <h2>{caseDocPlaceholderText.title}</h2>
-          <DataTable
-            columns={[
-              caseDocPlaceholderText.status,
-              caseDocPlaceholderText.name,
-              caseDocPlaceholderText.descriptionColumn,
-              caseDocPlaceholderText.deviceType,
-              caseDocPlaceholderText.scope,
-              caseDocPlaceholderText.sourceFile,
-              caseDocPlaceholderText.valueColumn,
-              caseDocPlaceholderText.keyColumn,
-              caseDocPlaceholderText.keyValue,
-              caseDocPlaceholderText.sourceColumn,
-            ]}
-            rows={placeholderState.items.map((item) => [
-              <span className={item.enabled ? "placeholder-state placeholder-state-enabled" : "placeholder-state placeholder-state-disabled"}>
-                {item.enabled ? caseDocPlaceholderText.enabled : caseDocPlaceholderText.disabled}
-              </span>,
-              <code>{item.name}</code>,
-              item.description ?? "-",
-              item.device_type ?? "-",
-              item.scope === "device" ? caseDocPlaceholderText.deviceScoped : caseDocPlaceholderText.commonScoped,
-              item.source_file,
-              item.value_column,
-              item.key_column,
-              item.key_value ?? "-",
-              item.source_column,
-            ])}
-          />
-        </section>
+        <>
+          <section className="placeholder-filter-panel" aria-label={caseDocPlaceholderText.title}>
+            <label>
+              {caseDocPlaceholderText.statusFilter}
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CaseDocPlaceholderStatusFilter)}>
+                <option value="all">{caseDocPlaceholderText.all}</option>
+                <option value="enabled">{caseDocPlaceholderText.enabled}</option>
+                <option value="disabled">{caseDocPlaceholderText.disabled}</option>
+              </select>
+            </label>
+            <label>
+              {caseDocPlaceholderText.deviceTypeFilter}
+              <select value={deviceTypeFilter} onChange={(event) => setDeviceTypeFilter(event.target.value)}>
+                <option value="all">{caseDocPlaceholderText.all}</option>
+                {deviceTypeOptions.map((deviceType) => (
+                  <option key={deviceType} value={deviceType}>{deviceType}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {caseDocPlaceholderText.keyword}
+              <input
+                value={keywordFilter}
+                onChange={(event) => setKeywordFilter(event.target.value)}
+                placeholder={caseDocPlaceholderText.keywordPlaceholder}
+              />
+            </label>
+          </section>
+
+          {filteredItems.length > 0 ? (
+            <section className="section-band placeholder-list-section">
+              <h2>{caseDocPlaceholderText.title}</h2>
+              <DataTable
+                columns={[
+                  caseDocPlaceholderText.status,
+                  caseDocPlaceholderText.name,
+                  caseDocPlaceholderText.descriptionColumn,
+                  caseDocPlaceholderText.deviceType,
+                  caseDocPlaceholderText.scope,
+                  caseDocPlaceholderText.sourceFile,
+                  caseDocPlaceholderText.valueColumn,
+                  caseDocPlaceholderText.keyColumn,
+                  caseDocPlaceholderText.keyValue,
+                  caseDocPlaceholderText.sourceColumn,
+                ]}
+                rows={filteredItems.map((item) => [
+                  <span className={item.enabled ? "placeholder-state placeholder-state-enabled" : "placeholder-state placeholder-state-disabled"}>
+                    {item.enabled ? caseDocPlaceholderText.enabled : caseDocPlaceholderText.disabled}
+                  </span>,
+                  <code>{item.name}</code>,
+                  item.description ?? "-",
+                  item.device_type ?? "-",
+                  item.scope === "device" ? caseDocPlaceholderText.deviceScoped : caseDocPlaceholderText.commonScoped,
+                  item.source_file,
+                  item.value_column,
+                  item.key_column,
+                  item.key_value ?? "-",
+                  item.source_column,
+                ])}
+              />
+            </section>
+          ) : (
+            <section className="empty-state">
+              <h2>{caseDocPlaceholderText.noMatchesTitle}</h2>
+              <p>{placeholderState.message}</p>
+            </section>
+          )}
+        </>
       ) : (
         <section className="empty-state">
           <h2>{caseDocPlaceholderText.emptyTitle}</h2>
