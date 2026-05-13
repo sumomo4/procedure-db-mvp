@@ -389,6 +389,30 @@ type CaseDocGenerateState = {
   message: string;
 };
 
+
+type CaseDocPlaceholderMappingItemData = {
+  name: string;
+  enabled: boolean;
+  scope: "device" | "common";
+  source_file: string;
+  key_column: string;
+  value_column: string;
+  source_column: string;
+  device_type: string | null;
+  key_value: string | null;
+  description: string | null;
+};
+
+type CaseDocPlaceholderMappingListData = {
+  items: CaseDocPlaceholderMappingItemData[];
+};
+
+type CaseDocPlaceholderMappingListState = {
+  status: "loading" | "available" | "unavailable";
+  items: CaseDocPlaceholderMappingItemData[];
+  message: string;
+};
+
 type ApprovalStatusListItemData = {
   target_id: number;
   target_key: string;
@@ -497,6 +521,7 @@ function App() {
         <Route path="/documents/create" element={<DocumentEditPage />} />
         <Route path="/documents/:id" element={<DocumentDetailPage />} />
         <Route path="/case-docs" element={<CaseDocsPage />} />
+        <Route path="/case-docs/placeholders" element={<CaseDocPlaceholdersPage />} />
         <Route path="/approval" element={<ApprovalPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -526,6 +551,7 @@ function Shell() {
           <NavItem to="/documents/search" label="原本参照" icon="▤" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
           <NavItem to="/case-docs" label={caseDocText.title} icon="CS" />
+          <NavItem to="/case-docs/placeholders" label={caseDocPlaceholderText.title} icon="{}" />
           <NavItem to="/approval" label="承認状態確認" icon="✓" />
         </nav>
         <div className="flow-box">
@@ -4427,6 +4453,32 @@ const caseDocText = {
   generateFailed: "\u6848\u4ef6CS\u306e\u751f\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
 };
 
+const caseDocPlaceholderText = {
+  title: "プレースホルダ一覧",
+  description: "案件CS生成で利用できるプレースホルダと参照元を確認します。",
+  loading: "プレースホルダ定義を取得しています。",
+  loaded: "プレースホルダ定義を取得しました。",
+  failed: "プレースホルダ定義の取得に失敗しました。",
+  apiFailed: "APIに接続できませんでした。",
+  total: "定義数",
+  enabled: "有効",
+  disabled: "無効",
+  deviceScoped: "装置別",
+  commonScoped: "共通",
+  name: "プレースホルダ",
+  status: "状態",
+  scope: "適用範囲",
+  deviceType: "装置種別",
+  sourceFile: "参照ファイル",
+  keyColumn: "キー列",
+  valueColumn: "値列",
+  sourceColumn: "内部名",
+  keyValue: "共通キー",
+  descriptionColumn: "説明",
+  backToCaseDocs: "案件化へ戻る",
+  emptyTitle: "プレースホルダ定義がありません",
+};
+
 function CaseDocsPage() {
   const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
     status: "loading",
@@ -4820,6 +4872,129 @@ function CaseDocsPage() {
         <section className="empty-state">
           <h2>{caseDocText.emptyTitle}</h2>
           <p>{sourceDocListState.message} / {prefectureState.message} / {buildingState.message} / {unitConfigState.message}</p>
+        </section>
+      )}
+    </Page>
+  );
+}
+
+function CaseDocPlaceholdersPage() {
+  const [placeholderState, setPlaceholderState] = useState<CaseDocPlaceholderMappingListState>({
+    status: "loading",
+    items: [],
+    message: caseDocPlaceholderText.loading,
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchPlaceholders(): Promise<void> {
+      setPlaceholderState({ status: "loading", items: [], message: caseDocPlaceholderText.loading });
+
+      try {
+        const response = await fetch(buildApiUrl("/api/v1/case-docs/placeholders"), {
+          signal: abortController.signal,
+        });
+        const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderMappingListData>;
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setPlaceholderState({
+            status: "unavailable",
+            items: [],
+            message: responseBody.message || `${caseDocPlaceholderText.failed} HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setPlaceholderState({
+          status: "available",
+          items: responseBody.data.items,
+          message: responseBody.message || caseDocPlaceholderText.loaded,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setPlaceholderState({ status: "unavailable", items: [], message: caseDocPlaceholderText.apiFailed });
+      }
+    }
+
+    void fetchPlaceholders();
+
+    return () => {
+      abortController.abort();
+    };
+  }, []);
+
+  const enabledCount = placeholderState.items.filter((item) => item.enabled).length;
+  const deviceScopedCount = placeholderState.items.filter((item) => item.scope === "device").length;
+  const commonScopedCount = placeholderState.items.filter((item) => item.scope === "common").length;
+
+  return (
+    <Page title={caseDocPlaceholderText.title} description={caseDocPlaceholderText.description}>
+      <Toolbar>
+        <NavLink to="/case-docs" className="button-link">
+          <span aria-hidden="true">?</span>
+          {caseDocPlaceholderText.backToCaseDocs}
+        </NavLink>
+      </Toolbar>
+
+      <section className={`list-status list-status-${placeholderState.status}`} aria-live="polite">
+        <div>
+          <span>{caseDocPlaceholderText.total}</span>
+          <strong>{placeholderState.items.length}</strong>
+        </div>
+        <div>
+          <span>{caseDocPlaceholderText.enabled}</span>
+          <strong>{enabledCount}</strong>
+        </div>
+        <div>
+          <span>{caseDocPlaceholderText.deviceScoped}</span>
+          <strong>{deviceScopedCount}</strong>
+        </div>
+        <div>
+          <span>{caseDocPlaceholderText.commonScoped}</span>
+          <strong>{commonScopedCount}</strong>
+        </div>
+        <p>{placeholderState.message}</p>
+      </section>
+
+      {placeholderState.items.length > 0 ? (
+        <section className="section-band placeholder-list-section">
+          <h2>{caseDocPlaceholderText.title}</h2>
+          <DataTable
+            columns={[
+              caseDocPlaceholderText.name,
+              caseDocPlaceholderText.status,
+              caseDocPlaceholderText.scope,
+              caseDocPlaceholderText.deviceType,
+              caseDocPlaceholderText.sourceFile,
+              caseDocPlaceholderText.keyColumn,
+              caseDocPlaceholderText.valueColumn,
+              caseDocPlaceholderText.sourceColumn,
+              caseDocPlaceholderText.keyValue,
+              caseDocPlaceholderText.descriptionColumn,
+            ]}
+            rows={placeholderState.items.map((item) => [
+              <code>{item.name}</code>,
+              <span className={item.enabled ? "placeholder-state placeholder-state-enabled" : "placeholder-state placeholder-state-disabled"}>
+                {item.enabled ? caseDocPlaceholderText.enabled : caseDocPlaceholderText.disabled}
+              </span>,
+              item.scope === "device" ? caseDocPlaceholderText.deviceScoped : caseDocPlaceholderText.commonScoped,
+              item.device_type ?? "-",
+              item.source_file,
+              item.key_column,
+              item.value_column,
+              item.source_column,
+              item.key_value ?? "-",
+              item.description ?? "-",
+            ])}
+          />
+        </section>
+      ) : (
+        <section className="empty-state">
+          <h2>{caseDocPlaceholderText.emptyTitle}</h2>
+          <p>{placeholderState.message}</p>
         </section>
       )}
     </Page>
@@ -5326,6 +5501,7 @@ function routeTitle(path: string) {
     "/documents/search": "原本検索",
     "/documents/create": "原本作成 / 更新",
     "/case-docs": "\u6848\u4ef6\u5316",
+    "/case-docs/placeholders": "\u30d7\u30ec\u30fc\u30b9\u30db\u30eb\u30c0\u4e00\u89a7",
     "/approval": "承認状態確認",
   };
   if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list") {

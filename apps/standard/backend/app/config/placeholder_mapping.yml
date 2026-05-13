@@ -81,3 +81,147 @@ placeholders:
   value_column: value
   source_column: login_user
   description: ログインユーザー名
+- name: GUI_EMS_COMMAND_IP
+  enabled: false
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: EMSコマンド用IPアドレス
+  source_column: gui_ems_command_ip
+  description: GUI/EMSコマンド用IP。MVP仮候補。
+- name: GUI_EMS_ALARM_IP
+  enabled: false
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: EMSアラーム用IPアドレス
+  source_column: gui_ems_alarm_ip
+  description: GUI/EMSアラーム用IP。MVP仮候補。
+- name: GUI_APL_FLOATING_IP
+  enabled: false
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: APL付与のフローティングIPアドレス
+  source_column: gui_apl_floating_ip
+  description: GUI/APL向けフローティングIP。MVP仮候補。
+- name: GUI_APL_FLOATING_IP_NETMASK
+  enabled: false
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: APL付与のフローティングIPアドレスのサブネットマスク
+  source_column: gui_apl_floating_ip_netmask
+  description: GUI/APL向けフローティングIPのサブネットマスク。MVP仮候補。
+- name: GUI_BCR02_LOOPBACK_IP
+  enabled: false
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: BCR02のIPアドレス(ループバックIPアドレス)
+  source_column: gui_bcr02_loopback_ip
+  description: GUI/BCR02ループバックIP。MVP仮候補。
+- name: HFS_MONITOR_IP
+  enabled: false
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: 装置監視用 IPアドレス
+  source_column: hfs_monitor_ip
+  description: HFS装置監視用IP。MVP仮候補。
+- name: HFS_COMMAND_INPUT_IP
+  enabled: false
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: コマンド投入用 IPアドレス
+  source_column: hfs_command_input_ip
+  description: HFSコマンド投入用IP。MVP仮候補。
+- name: HFS_NTP_IP
+  enabled: false
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: NTP向け IPアドレス
+  source_column: hfs_ntp_ip
+  description: HFS NTP向けIP。MVP仮候補。
+- name: HFS_ALARM_SEND_IP
+  enabled: false
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: アラーム送信用 IPアドレス
+  source_column: hfs_alarm_send_ip
+  description: HFSアラーム送信用IP。MVP仮候補。
+- name: HFS_ILO_IP
+  enabled: false
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: iLO用 IPアドレス
+  source_column: hfs_ilo_ip
+  description: HFS iLO用IP。MVP仮候補。
+- name: HSS_MONITOR_IP
+  enabled: false
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: 装置監視用 IPアドレス
+  source_column: hss_monitor_ip
+  description: HSS装置監視用IP。MVP仮候補。
+- name: HSS_COMMAND_INPUT_IP
+  enabled: false
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: コマンド投入用 IPアドレス
+  source_column: hss_command_input_ip
+  description: HSSコマンド投入用IP。MVP仮候補。
+- name: HSS_NTP_IP
+  enabled: false
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: NTP向け IPアドレス
+  source_column: hss_ntp_ip
+  description: HSS NTP向けIP。MVP仮候補。
+- name: HSS_ALARM_SEND_IP
+  enabled: false
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: アラーム送信用 IPアドレス
+  source_column: hss_alarm_send_ip
+  description: HSSアラーム送信用IP。MVP仮候補。
+- name: HSS_ILO_IP
+  enabled: false
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: iLO用 IPアドレス
+  source_column: hss_ilo_ip
+  description: HSS iLO用IP。MVP仮候補。
+- name: HSS_ILO_DGW
+  enabled: false
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: iLO用DGW
+  source_column: hss_ilo_dgw
+  description: HSS iLO用デフォルトゲートウェイ。MVP仮候補。

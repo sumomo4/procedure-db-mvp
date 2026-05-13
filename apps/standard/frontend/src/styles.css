@@ -599,6 +599,41 @@ nav {
   justify-content: flex-end;
 }
 
+.placeholder-list-section {
+  display: grid;
+  gap: 14px;
+}
+
+.placeholder-list-section h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.placeholder-list-section table {
+  min-width: 1320px;
+}
+
+.placeholder-state {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.placeholder-state-enabled {
+  background: #e4f2ea;
+  color: #1f6840;
+}
+
+.placeholder-state-disabled {
+  background: #ece8e2;
+  color: #56636c;
+}
+
 .list-status {
   display: grid;
   grid-template-columns: repeat(3, minmax(150px, auto)) minmax(220px, 1fr);
