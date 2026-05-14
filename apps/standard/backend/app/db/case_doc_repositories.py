@@ -162,6 +162,7 @@ COMMON_VALUE_COLUMN_ALIASES = {
 }
 DEVICE_SLOT_SUFFIX = _u(r"\u7cfb")
 PLACEHOLDER_NAME_PATTERN = re.compile(r"^[A-Z0-9_]+$")
+DEFAULT_PLACEHOLDER_MAPPING_PATH = "app/config/placeholder_mapping.yml"
 
 
 def _resolve_placeholder_mapping_path(mapping_path: str) -> Path:
@@ -171,8 +172,21 @@ def _resolve_placeholder_mapping_path(mapping_path: str) -> Path:
     return path
 
 
-def _load_placeholder_mapping_payload(mapping_path: str) -> dict[str, object]:
+def _ensure_placeholder_mapping_file(mapping_path: str) -> Path:
     path = _resolve_placeholder_mapping_path(mapping_path)
+    if path.exists():
+        return path
+
+    default_path = _resolve_placeholder_mapping_path(DEFAULT_PLACEHOLDER_MAPPING_PATH)
+    if path != default_path and default_path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(default_path.read_text(encoding="utf-8-sig"), encoding="utf-8", newline="\n")
+        return path
+    return path
+
+
+def _load_placeholder_mapping_payload(mapping_path: str) -> dict[str, object]:
+    path = _ensure_placeholder_mapping_file(mapping_path)
     if not path.exists():
         raise ValueError(f"placeholder mapping file was not found: {path}")
 

@@ -630,7 +630,57 @@ nav {
 }
 
 .placeholder-list-section table {
-  min-width: 1320px;
+  min-width: 1520px;
+}
+
+.placeholder-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.placeholder-row-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.placeholder-editor-dialog {
+  width: min(880px, 100%);
+}
+
+.placeholder-editor-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.placeholder-editor-form label {
+  display: grid;
+  gap: 8px;
+  color: #4d5c66;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.placeholder-editor-form .wide {
+  grid-column: 1 / -1;
+}
+
+.field-hint {
+  color: #667781;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.placeholder-checkbox-field {
+  align-content: end;
+}
+
+.placeholder-editor-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #9f3f2f;
+  font-weight: 700;
 }
 
 .placeholder-state {
@@ -1917,6 +1967,7 @@ th {
   .search-form,
   .form-grid,
   .placeholder-filter-panel,
+  .placeholder-editor-form,
   .register-step-grid,
   .register-row-grid,
   .facts,

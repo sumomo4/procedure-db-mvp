@@ -416,6 +416,26 @@ type CaseDocPlaceholderMappingListState = {
 
 type CaseDocPlaceholderStatusFilter = "all" | "enabled" | "disabled";
 
+type CaseDocPlaceholderEditorMode = "create" | "edit";
+
+type CaseDocPlaceholderFormState = {
+  name: string;
+  enabled: boolean;
+  scope: "device" | "common";
+  device_type: string;
+  source_file: string;
+  key_column: string;
+  value_column: string;
+  source_column: string;
+  key_value: string;
+  description: string;
+};
+
+type CaseDocPlaceholderMutationState = {
+  status: "idle" | "submitting" | "success" | "error";
+  message: string;
+};
+
 type ApprovalStatusListItemData = {
   target_id: number;
   target_key: string;
@@ -4477,17 +4497,101 @@ const caseDocPlaceholderText = {
   sourceFile: "参照ファイル",
   keyColumn: "キー列",
   valueColumn: "値列",
-  sourceColumn: "内部名",
+  sourceColumn: "内部キー",
   keyValue: "共通キー",
   descriptionColumn: "説明",
   statusFilter: "状態で絞り込み",
   deviceTypeFilter: "装置種別で絞り込み",
   keyword: "キーワード検索",
   keywordPlaceholder: "名前、説明、参照元で検索",
+  actions: "操作",
+  add: "追加",
+  edit: "編集",
+  save: "保存",
+  cancel: "キャンセル",
+  enable: "有効化",
+  disable: "無効化",
+  editorCreateTitle: "プレースホルダを追加",
+  editorEditTitle: "プレースホルダを編集",
+  valueUnit: "値の単位",
+  created: "プレースホルダを追加しました。",
+  updated: "プレースホルダを更新しました。",
+  statusUpdated: "プレースホルダの状態を更新しました。",
+  saving: "プレースホルダを保存しています。",
+  updatingStatus: "プレースホルダの状態を更新しています。",
+  saveFailed: "プレースホルダの保存に失敗しました。",
+  sourceColumnAutoHelp: "内部キーはプレースホルダ名と装置種別から自動生成されます。",
+  mutationReady: "追加、編集、有効/無効切替を実行できます。",
   backToCaseDocs: "案件化へ戻る",
   emptyTitle: "プレースホルダ定義がありません",
   noMatchesTitle: "条件に一致する定義がありません",
 };
+
+function emptyCaseDocPlaceholderForm(): CaseDocPlaceholderFormState {
+  return {
+    name: "",
+    enabled: false,
+    scope: "device",
+    device_type: "SBC",
+    source_file: "",
+    key_column: "",
+    value_column: "",
+    source_column: "",
+    key_value: "",
+    description: "",
+  };
+}
+
+function toCaseDocPlaceholderForm(item: CaseDocPlaceholderMappingItemData): CaseDocPlaceholderFormState {
+  return {
+    name: item.name,
+    enabled: item.enabled,
+    scope: item.scope,
+    device_type: item.device_type ?? "",
+    source_file: item.source_file,
+    key_column: item.key_column,
+    value_column: item.value_column,
+    source_column: item.source_column,
+    key_value: item.key_value ?? "",
+    description: item.description ?? "",
+  };
+}
+
+function toGeneratedCaseDocPlaceholderSourceColumn(form: CaseDocPlaceholderFormState): string {
+  const normalizedName = form.name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+  const normalizedDeviceType = form.device_type
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+
+  if (form.scope === "device" && normalizedDeviceType && normalizedName.startsWith(`${normalizedDeviceType}_`)) {
+    return normalizedName.slice(normalizedDeviceType.length + 1) || normalizedName;
+  }
+
+  return normalizedName || "placeholder_value";
+}
+function toCaseDocPlaceholderPayload(form: CaseDocPlaceholderFormState): CaseDocPlaceholderMappingItemData {
+  const scope = form.scope;
+  return {
+    name: form.name.trim(),
+    enabled: form.enabled,
+    scope,
+    device_type: scope === "device" ? form.device_type.trim() || null : null,
+    source_file: form.source_file.trim(),
+    key_column: form.key_column.trim(),
+    value_column: form.value_column.trim(),
+    source_column: toGeneratedCaseDocPlaceholderSourceColumn(form),
+    key_value: scope === "common" ? form.key_value.trim() || null : form.key_value.trim() || null,
+    description: form.description.trim() || null,
+  };
+}
 
 function CaseDocsPage() {
   const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
@@ -4897,6 +5001,14 @@ function CaseDocPlaceholdersPage() {
   const [statusFilter, setStatusFilter] = useState<CaseDocPlaceholderStatusFilter>("all");
   const [deviceTypeFilter, setDeviceTypeFilter] = useState("all");
   const [keywordFilter, setKeywordFilter] = useState("");
+  const [reloadTick, setReloadTick] = useState(0);
+  const [editorMode, setEditorMode] = useState<CaseDocPlaceholderEditorMode | null>(null);
+  const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
+  const [formState, setFormState] = useState<CaseDocPlaceholderFormState>(() => emptyCaseDocPlaceholderForm());
+  const [mutationState, setMutationState] = useState<CaseDocPlaceholderMutationState>({
+    status: "idle",
+    message: caseDocPlaceholderText.mutationReady,
+  });
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -4937,7 +5049,7 @@ function CaseDocPlaceholdersPage() {
     return () => {
       abortController.abort();
     };
-  }, []);
+  }, [reloadTick]);
 
   const enabledCount = placeholderState.items.filter((item) => item.enabled).length;
   const disabledCount = placeholderState.items.length - enabledCount;
@@ -4945,6 +5057,8 @@ function CaseDocPlaceholdersPage() {
     new Set(placeholderState.items.map((item) => item.device_type).filter((deviceType): deviceType is string => Boolean(deviceType))),
   ).sort((left, right) => left.localeCompare(right));
   const normalizedKeyword = keywordFilter.trim().toLocaleLowerCase();
+  const generatedSourceColumn = toGeneratedCaseDocPlaceholderSourceColumn(formState);
+
   const filteredItems = placeholderState.items.filter((item) => {
     if (statusFilter === "enabled" && !item.enabled) {
       return false;
@@ -4977,6 +5091,91 @@ function CaseDocPlaceholdersPage() {
     return searchableText.includes(normalizedKeyword);
   });
 
+  function openCreateEditor(): void {
+    setEditorMode("create");
+    setEditingOriginalName(null);
+    setFormState(emptyCaseDocPlaceholderForm());
+    setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
+  }
+
+  function openEditEditor(item: CaseDocPlaceholderMappingItemData): void {
+    setEditorMode("edit");
+    setEditingOriginalName(item.name);
+    setFormState(toCaseDocPlaceholderForm(item));
+    setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
+  }
+
+  function closeEditor(): void {
+    setEditorMode(null);
+    setEditingOriginalName(null);
+    setFormState(emptyCaseDocPlaceholderForm());
+  }
+
+  function updateFormField<TKey extends keyof CaseDocPlaceholderFormState>(key: TKey, value: CaseDocPlaceholderFormState[TKey]): void {
+    setFormState((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleSubmitPlaceholder(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (editorMode === null) {
+      return;
+    }
+
+    setMutationState({ status: "submitting", message: caseDocPlaceholderText.saving });
+    const payload = toCaseDocPlaceholderPayload(formState);
+    const endpoint =
+      editorMode === "create"
+        ? buildApiUrl("/api/v1/case-docs/placeholders")
+        : buildApiUrl(`/api/v1/case-docs/placeholders/${encodeURIComponent(editingOriginalName ?? payload.name)}`);
+    const method = editorMode === "create" ? "POST" : "PUT";
+
+    try {
+      const response = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderMappingItemData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setMutationState({ status: "error", message: responseBody.message || `${caseDocPlaceholderText.saveFailed} HTTP ${response.status}` });
+        return;
+      }
+
+      setMutationState({
+        status: "success",
+        message: editorMode === "create" ? caseDocPlaceholderText.created : caseDocPlaceholderText.updated,
+      });
+      closeEditor();
+      setReloadTick((current) => current + 1);
+    } catch {
+      setMutationState({ status: "error", message: caseDocPlaceholderText.apiFailed });
+    }
+  }
+
+  async function handleToggleEnabled(item: CaseDocPlaceholderMappingItemData): Promise<void> {
+    setMutationState({ status: "submitting", message: caseDocPlaceholderText.updatingStatus });
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/v1/case-docs/placeholders/${encodeURIComponent(item.name)}/enabled`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !item.enabled }),
+      });
+      const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderMappingItemData>;
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setMutationState({ status: "error", message: responseBody.message || `${caseDocPlaceholderText.saveFailed} HTTP ${response.status}` });
+        return;
+      }
+
+      setMutationState({ status: "success", message: caseDocPlaceholderText.statusUpdated });
+      setReloadTick((current) => current + 1);
+    } catch {
+      setMutationState({ status: "error", message: caseDocPlaceholderText.apiFailed });
+    }
+  }
+
   return (
     <Page title={caseDocPlaceholderText.title} description={caseDocPlaceholderText.description}>
       <Toolbar>
@@ -4984,9 +5183,13 @@ function CaseDocPlaceholdersPage() {
           <span aria-hidden="true">{"\u2190"}</span>
           {caseDocPlaceholderText.backToCaseDocs}
         </NavLink>
+        <button className="primary" type="button" onClick={openCreateEditor}>
+          <span aria-hidden="true">+</span>
+          {caseDocPlaceholderText.add}
+        </button>
       </Toolbar>
 
-      <section className={`list-status list-status-${placeholderState.status}`} aria-live="polite">
+      <section className={`list-status list-status-${mutationState.status === "error" ? "unavailable" : mutationState.status === "success" ? "available" : placeholderState.status}`} aria-live="polite">
         <div>
           <span>{caseDocPlaceholderText.total}</span>
           <strong>{placeholderState.items.length}</strong>
@@ -5003,7 +5206,7 @@ function CaseDocPlaceholdersPage() {
           <span>{caseDocPlaceholderText.disabled}</span>
           <strong>{disabledCount}</strong>
         </div>
-        <p>{placeholderState.message}</p>
+        <p>{mutationState.status === "idle" ? placeholderState.message : mutationState.message}</p>
       </section>
 
       {placeholderState.items.length > 0 ? (
@@ -5051,6 +5254,7 @@ function CaseDocPlaceholdersPage() {
                   caseDocPlaceholderText.keyColumn,
                   caseDocPlaceholderText.keyValue,
                   caseDocPlaceholderText.sourceColumn,
+                  caseDocPlaceholderText.actions,
                 ]}
                 rows={filteredItems.map((item) => [
                   <span className={item.enabled ? "placeholder-state placeholder-state-enabled" : "placeholder-state placeholder-state-disabled"}>
@@ -5065,6 +5269,14 @@ function CaseDocPlaceholdersPage() {
                   item.key_column,
                   item.key_value ?? "-",
                   item.source_column,
+                  <div className="placeholder-row-actions">
+                    <button className="secondary" type="button" onClick={() => openEditEditor(item)}>
+                      {caseDocPlaceholderText.edit}
+                    </button>
+                    <button className="text-button" type="button" onClick={() => void handleToggleEnabled(item)} disabled={mutationState.status === "submitting"}>
+                      {item.enabled ? caseDocPlaceholderText.disable : caseDocPlaceholderText.enable}
+                    </button>
+                  </div>,
                 ])}
               />
             </section>
@@ -5081,6 +5293,71 @@ function CaseDocPlaceholdersPage() {
           <p>{placeholderState.message}</p>
         </section>
       )}
+
+      {editorMode !== null ? (
+        <div className="modal-backdrop" role="presentation">
+          <section aria-labelledby="placeholder-editor-title" aria-modal="true" className="modal-dialog placeholder-editor-dialog" role="dialog">
+            <h2 id="placeholder-editor-title">
+              {editorMode === "create" ? caseDocPlaceholderText.editorCreateTitle : caseDocPlaceholderText.editorEditTitle}
+            </h2>
+            <form className="placeholder-editor-form" onSubmit={(event) => void handleSubmitPlaceholder(event)}>
+              <label>
+                {caseDocPlaceholderText.name}
+                <input value={formState.name} onChange={(event) => updateFormField("name", event.target.value)} required pattern="[A-Z0-9_]+" />
+              </label>
+              <label className="checkbox-field placeholder-checkbox-field">
+                {caseDocPlaceholderText.enabled}
+                <input type="checkbox" checked={formState.enabled} onChange={(event) => updateFormField("enabled", event.target.checked)} />
+              </label>
+              <label>
+                {caseDocPlaceholderText.valueUnit}
+                <select value={formState.scope} onChange={(event) => updateFormField("scope", event.target.value as "device" | "common")}>
+                  <option value="device">{caseDocPlaceholderText.deviceScoped}</option>
+                  <option value="common">{caseDocPlaceholderText.commonScoped}</option>
+                </select>
+              </label>
+              <label>
+                {caseDocPlaceholderText.deviceType}
+                <input value={formState.device_type} onChange={(event) => updateFormField("device_type", event.target.value)} disabled={formState.scope === "common"} />
+              </label>
+              <label>
+                {caseDocPlaceholderText.sourceFile}
+                <input value={formState.source_file} onChange={(event) => updateFormField("source_file", event.target.value)} required />
+              </label>
+              <label>
+                {caseDocPlaceholderText.keyColumn}
+                <input value={formState.key_column} onChange={(event) => updateFormField("key_column", event.target.value)} required />
+              </label>
+              <label>
+                {caseDocPlaceholderText.valueColumn}
+                <input value={formState.value_column} onChange={(event) => updateFormField("value_column", event.target.value)} required />
+              </label>
+              <label>
+                {caseDocPlaceholderText.sourceColumn}
+                <input value={generatedSourceColumn} readOnly />
+                <span className="field-hint">{caseDocPlaceholderText.sourceColumnAutoHelp}</span>
+              </label>
+              <label>
+                {caseDocPlaceholderText.keyValue}
+                <input value={formState.key_value} onChange={(event) => updateFormField("key_value", event.target.value)} />
+              </label>
+              <label className="wide">
+                {caseDocPlaceholderText.descriptionColumn}
+                <textarea value={formState.description} onChange={(event) => updateFormField("description", event.target.value)} rows={3} />
+              </label>
+              {mutationState.status === "error" ? <p className="placeholder-editor-error">{mutationState.message}</p> : null}
+              <div className="modal-actions wide">
+                <button className="secondary" type="button" onClick={closeEditor}>
+                  {caseDocPlaceholderText.cancel}
+                </button>
+                <button className="primary" type="submit" disabled={mutationState.status === "submitting"}>
+                  {caseDocPlaceholderText.save}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </Page>
   );
 }
