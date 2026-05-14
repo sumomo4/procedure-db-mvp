@@ -435,9 +435,14 @@ def _slot_key_from_column_name(column_name: str) -> str | None:
     if column_name in ignored_columns:
         return None
     normalized_suffix = _normalize_key(DEVICE_SLOT_SUFFIX)
-    if not column_name.endswith(normalized_suffix):
+    if column_name.endswith(normalized_suffix):
+        slot_key = column_name.removesuffix(normalized_suffix).strip().upper()
+        return slot_key or None
+
+    numbered_slot_match = re.fullmatch(r"([a-z0-9_]+)\.(\d+)", column_name)
+    if numbered_slot_match is None:
         return None
-    slot_key = column_name.removesuffix(normalized_suffix).strip().upper()
+    slot_key = f"{numbered_slot_match.group(1)}_{numbered_slot_match.group(2)}".upper()
     return slot_key or None
 
 

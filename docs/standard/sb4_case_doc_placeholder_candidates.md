@@ -71,6 +71,39 @@
 | `GUI_AGENT_NO` | AGENT_NO | 識別子出力が必要な場合 |
 | `GUI_WEB_DEVICE_NO` | WEB_DEVICE_NO | Web装置番号が必要な場合 |
 
+## 初期YAMLへ追加済みの候補
+
+2026-05-14 時点で、以下は `placeholder_mapping.yml` に無効状態のMVP仮候補として追加済み。
+実運用でテンプレート内に登場したものから有効化し、必要に応じて名称・説明・取得列を見直す。
+
+| プレースホルダ | 装置 | Access列候補 |
+| --- | --- | --- |
+| `GUI_EMS_COMMAND_IP` | GUI | EMSコマンド用IPアドレス |
+| `GUI_EMS_ALARM_IP` | GUI | EMSアラーム用IPアドレス |
+| `GUI_APL_FLOATING_IP` | GUI | APL付与のフローティングIPアドレス |
+| `GUI_APL_FLOATING_IP_NETMASK` | GUI | APL付与のフローティングIPアドレスのサブネットマスク |
+| `GUI_BCR02_LOOPBACK_IP` | GUI | BCR02のIPアドレス(ループバックIPアドレス) |
+| `HFS_MONITOR_IP` | HFS | 装置監視用 IPアドレス |
+| `HFS_COMMAND_INPUT_IP` | HFS | コマンド投入用 IPアドレス |
+| `HFS_NTP_IP` | HFS | NTP向け IPアドレス |
+| `HFS_ALARM_SEND_IP` | HFS | アラーム送信用 IPアドレス |
+| `HFS_ILO_IP` | HFS | iLO用 IPアドレス |
+| `HSS_MONITOR_IP` | HSS | 装置監視用 IPアドレス |
+| `HSS_COMMAND_INPUT_IP` | HSS | コマンド投入用 IPアドレス |
+| `HSS_NTP_IP` | HSS | NTP向け IPアドレス |
+| `HSS_ALARM_SEND_IP` | HSS | アラーム送信用 IPアドレス |
+| `HSS_ILO_IP` | HSS | iLO用 IPアドレス |
+| `HSS_ILO_DGW` | HSS | iLO用DGW |
+| `FS_MAINT_LAN_FLOATING_IP` | FS | 保守LANフローティングIPアドレス |
+| `FS_REMOTE_SHELL_FLOATING_IP` | FS | リモートシェルコマンド用フローティングIPアドレス |
+| `FS_COMMAND_FLOATING_IP` | FS | コマンド用フローティングIPアドレス |
+| `MSW_MAINT_MONITOR_IP` | MSW | 保守・装置監視用 |
+| `RAID_MAINT_MONITOR_IP` | RAID | 保守・装置監視用 |
+| `RAID_MSW_PORT_NO` | RAID | MSW収容ポート番号 |
+| `SCCE_MAINT_MONITOR_IP` | SCCE | 保守・装置監視用 |
+| `SCCE_VLAN_TGEX_0_4` | SCCE | VLAN「TGEX/0/4」 |
+| `SCCE_UNTAG_VLAN_TGEX_0_4` | SCCE | untagVLAN「TGEX/0/4」 |
+
 ## 追加候補: FS/HFS/HSS/MSW/RAID/SCCE系
 
 各装置ファイルは共通して `ホスト名` をキーにできる可能性がある。

@@ -84,6 +84,8 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
                 "SBC_CL1_0 \u7cfb",
                 "SBC_CL1_1\u3000\u7cfb",
                 "GUI_0\u7cfb",
+                "SCCE.1",
+                "SCCE.2",
             ],
             [
                 "FS-CL-REAL-02",
@@ -93,6 +95,8 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
                 "sbc-real-cl1-0",
                 "sbc-real-cl1-1",
                 "gui-real-0",
+                "scce-real-1",
+                "scce-real-2",
             ],
             [
                 "FS-CL-REAL-01",
@@ -102,6 +106,8 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
                 "sbc-real2-cl1-0",
                 "",
                 "gui-real2-0",
+                "",
+                "",
             ],
         ],
     )
@@ -198,6 +204,10 @@ def test_export_file_repository_accepts_real_file_names_and_header_variants(tmp_
     assert tokyo_units.items[0].unit_config_id == "unit-export-2"
     assert context.target_assignment.slot_key == "SBC_CL1_1"
     assert context.target_assignment.host_name == "sbc-real-cl1-1"
+    host_assignments = {item.slot_key: item for item in context.host_assignments}
+    assert host_assignments["SCCE_1"].device_type == "SCCE"
+    assert host_assignments["SCCE_1"].host_name == "scce-real-1"
+    assert host_assignments["SCCE_2"].host_name == "scce-real-2"
     target_placeholders = {
         item.placeholder: item.value
         for item in context.resolved_placeholders
