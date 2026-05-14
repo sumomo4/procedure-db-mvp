@@ -504,16 +504,39 @@ def _select_target_host_assignment(
 ) -> CaseDocHostAssignmentData:
     """Select the target SBC host assignment used as the document value key."""
 
+    return _select_target_host_assignments(host_assignments, target_slot_key, None)[0]
+
+
+def _select_target_host_assignments(
+    host_assignments: list[CaseDocHostAssignmentData],
+    target_slot_key: str | None,
+    target_slot_keys: list[str] | None,
+) -> list[CaseDocHostAssignmentData]:
+    """Select one or more target SBC host assignments used for document output."""
+
     sbc_assignments = [assignment for assignment in host_assignments if assignment.device_type == "SBC"]
-    if target_slot_key:
-        for assignment in sbc_assignments:
-            if assignment.slot_key == target_slot_key:
-                return assignment
-        raise ValueError("target SBC slot was not found.")
+    requested_slot_keys = [slot_key for slot_key in (target_slot_keys or []) if slot_key]
+    if not requested_slot_keys and target_slot_key:
+        requested_slot_keys = [target_slot_key]
+
+    if requested_slot_keys:
+        selected_assignments: list[CaseDocHostAssignmentData] = []
+        seen_slot_keys: set[str] = set()
+        assignments_by_slot_key = {assignment.slot_key: assignment for assignment in sbc_assignments}
+        for slot_key in requested_slot_keys:
+            if slot_key in seen_slot_keys:
+                continue
+            assignment = assignments_by_slot_key.get(slot_key)
+            if assignment is None:
+                raise ValueError("target SBC slot was not found.")
+            selected_assignments.append(assignment)
+            seen_slot_keys.add(slot_key)
+        if selected_assignments:
+            return selected_assignments
 
     if not sbc_assignments:
         raise ValueError("target SBC slot was not found.")
-    return sbc_assignments[0]
+    return [sbc_assignments[0]]
 
 
 def _to_host_assignments(hosts: dict[str, object]) -> list[CaseDocHostAssignmentData]:
@@ -719,7 +742,7 @@ class SeedCaseDocMasterRepository:
             raise ValueError("unit configuration hosts are invalid.")
 
         host_assignments = _to_host_assignments(hosts)
-        target_assignment = _select_target_host_assignment(host_assignments, payload.target_slot_key)
+        target_assignments = _select_target_host_assignments(host_assignments, payload.target_slot_key, payload.target_slot_keys)
         mappings = self._load_placeholder_mappings()
         common_values = _list_common_values(mappings)
         resolved_placeholders = [
@@ -730,7 +753,8 @@ class SeedCaseDocMasterRepository:
         return CaseDocResolveContextData(
             source_doc_id=payload.source_doc_id,
             unit_config=_to_unit_config_item(unit_config),
-            target_assignment=target_assignment,
+            target_assignment=target_assignments[0],
+            target_assignments=target_assignments,
             host_assignments=host_assignments,
             common_values=common_values,
             resolved_placeholders=resolved_placeholders,
@@ -807,7 +831,7 @@ class ExportFileCaseDocMasterRepository:
             raise ValueError("unit configuration hosts are invalid.")
 
         host_assignments = _to_host_assignments(hosts)
-        target_assignment = _select_target_host_assignment(host_assignments, payload.target_slot_key)
+        target_assignments = _select_target_host_assignments(host_assignments, payload.target_slot_key, payload.target_slot_keys)
         mappings = self._load_placeholder_mappings()
         common_values = self._load_common_values(mappings)
         resolved_placeholders = [
@@ -818,7 +842,8 @@ class ExportFileCaseDocMasterRepository:
         return CaseDocResolveContextData(
             source_doc_id=payload.source_doc_id,
             unit_config=_to_unit_config_item(unit_config),
-            target_assignment=target_assignment,
+            target_assignment=target_assignments[0],
+            target_assignments=target_assignments,
             host_assignments=host_assignments,
             common_values=common_values,
             resolved_placeholders=resolved_placeholders,

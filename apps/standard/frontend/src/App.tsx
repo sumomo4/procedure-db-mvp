@@ -360,6 +360,7 @@ type CaseDocResolveContextData = {
   source_doc_id: number;
   unit_config: CaseDocUnitConfigItemData;
   target_assignment: CaseDocHostAssignmentData;
+  target_assignments: CaseDocHostAssignmentData[];
   host_assignments: CaseDocHostAssignmentData[];
   common_values: CaseDocCommonValueData[];
   resolved_placeholders: CaseDocResolvedPlaceholderData[];
@@ -4474,6 +4475,7 @@ const caseDocText = {
   generating: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u3066\u3044\u307e\u3059\u3002",
   generated: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u307e\u3057\u305f\u3002",
   generateFailed: "\u6848\u4ef6CS\u306e\u751f\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  selectTargetRequired: "対象装置を1台以上選択してください。",
 };
 
 const caseDocPlaceholderText = {
@@ -4628,7 +4630,7 @@ function CaseDocsPage() {
   const [selectedPrefecture, setSelectedPrefecture] = useState("");
   const [selectedBuilding, setSelectedBuilding] = useState("");
   const [selectedUnitConfigId, setSelectedUnitConfigId] = useState("");
-  const [selectedTargetSlotKey, setSelectedTargetSlotKey] = useState("");
+  const [selectedTargetSlotKeys, setSelectedTargetSlotKeys] = useState<string[]>([]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -4753,8 +4755,22 @@ function CaseDocsPage() {
   const selectedSourceDoc = sourceDocListState.items.find((item) => String(item.source_doc_id) === selectedSourceDocId) ?? null;
   const selectedUnitConfig = unitConfigState.items.find((item) => item.unit_config_id === selectedUnitConfigId) ?? null;
   const targetAssignmentOptions = resolveState.item?.host_assignments.filter((item) => item.device_type === "SBC") ?? [];
-  const selectedTargetAssignment =
-    targetAssignmentOptions.find((item) => item.slot_key === selectedTargetSlotKey) ?? resolveState.item?.target_assignment ?? null;
+  const selectedTargetAssignments =
+    selectedTargetSlotKeys.length > 0
+      ? targetAssignmentOptions.filter((item) => selectedTargetSlotKeys.includes(item.slot_key))
+      : resolveState.item?.target_assignments ?? [];
+  const selectedTargetSummary =
+    selectedTargetAssignments.length > 0
+      ? selectedTargetAssignments.map((item) => item.host_name).join(" / ")
+      : caseDocText.none;
+
+  function toggleTargetSlotKey(slotKey: string): void {
+    setSelectedTargetSlotKeys((current) =>
+      current.includes(slotKey)
+        ? current.filter((currentSlotKey) => currentSlotKey !== slotKey)
+        : [...current, slotKey],
+    );
+  }
 
   async function handleResolveContext(): Promise<void> {
     if (!selectedSourceDocId || !selectedPrefecture || !selectedBuilding || !selectedUnitConfig) {
@@ -4775,7 +4791,7 @@ function CaseDocsPage() {
           fs_cluster_name: selectedUnitConfig.fs_cluster_name,
           block: selectedUnitConfig.block,
           unit_config_id: selectedUnitConfig.unit_config_id,
-          target_slot_key: selectedTargetSlotKey || undefined,
+          target_slot_keys: selectedTargetSlotKeys.length > 0 ? selectedTargetSlotKeys : undefined,
         }),
       });
       const responseBody = (await response.json()) as ApiResponse<CaseDocResolveContextData>;
@@ -4786,7 +4802,7 @@ function CaseDocsPage() {
       }
 
       setResolveState({ status: "success", item: responseBody.data, message: caseDocText.resolved });
-      setSelectedTargetSlotKey(responseBody.data.target_assignment.slot_key);
+      setSelectedTargetSlotKeys(responseBody.data.target_assignments.map((item) => item.slot_key));
       setGenerateState({ status: "idle", filename: null, message: caseDocText.generateReady });
     } catch {
       setResolveState({ status: "error", item: null, message: caseDocText.apiFailed });
@@ -4805,6 +4821,11 @@ function CaseDocsPage() {
       return;
     }
 
+    if (selectedTargetSlotKeys.length === 0) {
+      setGenerateState({ status: "error", filename: null, message: caseDocText.selectTargetRequired });
+      return;
+    }
+
     setGenerateState({ status: "submitting", filename: null, message: caseDocText.generating });
 
     try {
@@ -4818,7 +4839,7 @@ function CaseDocsPage() {
           fs_cluster_name: selectedUnitConfig.fs_cluster_name,
           block: selectedUnitConfig.block,
           unit_config_id: selectedUnitConfig.unit_config_id,
-          target_slot_key: selectedTargetSlotKey || undefined,
+          target_slot_keys: selectedTargetSlotKeys,
         }),
       });
 
@@ -4919,23 +4940,28 @@ function CaseDocsPage() {
         </div>
         <div>
           <span>{caseDocText.targetDevice}</span>
-          <strong>{selectedTargetAssignment ? selectedTargetAssignment.host_name : caseDocText.none}</strong>
+          <strong>{selectedTargetSummary}</strong>
         </div>
         <p>{resolveState.message}</p>
       </section>
 
       {resolveState.item ? (
         <section className={`list-status list-status-${generateState.status === "error" ? "unavailable" : generateState.status === "success" ? "available" : "loading"} case-doc-generate-panel`} aria-live="polite">
-          <label className="case-doc-target-select">
+          <div className="case-doc-target-select">
             <span>{caseDocText.targetDevice}</span>
-            <select value={selectedTargetSlotKey} onChange={(event) => setSelectedTargetSlotKey(event.target.value)}>
+            <div className="case-doc-target-options">
               {targetAssignmentOptions.map((item) => (
-                <option key={item.slot_key} value={item.slot_key}>
-                  {item.slot_key} / {item.host_name}
-                </option>
+                <label key={item.slot_key} className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={selectedTargetSlotKeys.includes(item.slot_key)}
+                    onChange={() => toggleTargetSlotKey(item.slot_key)}
+                  />
+                  <span>{item.slot_key} / {item.host_name}</span>
+                </label>
               ))}
-            </select>
-          </label>
+            </div>
+          </div>
           <div>
             <span>{caseDocText.generateStatus}</span>
             <strong>{generateState.filename ?? (generateState.status === "submitting" ? caseDocText.generating : caseDocText.generateReady)}</strong>

@@ -537,6 +537,7 @@ class CaseDocResolveContextRequest(BaseModel):
     block: str | None = None
     unit_config_id: str | None = None
     target_slot_key: str | None = None
+    target_slot_keys: list[str] | None = None
 
 
 class CaseDocHostAssignmentData(BaseModel):
@@ -616,6 +617,7 @@ class CaseDocResolveContextData(BaseModel):
     source_doc_id: int
     unit_config: CaseDocUnitConfigItemData
     target_assignment: CaseDocHostAssignmentData
+    target_assignments: list[CaseDocHostAssignmentData]
     host_assignments: list[CaseDocHostAssignmentData]
     common_values: list[CaseDocCommonValueData]
     resolved_placeholders: list[CaseDocResolvedPlaceholderData]

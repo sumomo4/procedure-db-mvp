@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.core.responses import CaseDocResolveContextData, ModuleRowData, SourceDocDetailData
+from app.core.responses import CaseDocHostAssignmentData, CaseDocResolveContextData, ModuleRowData, SourceDocDetailData
 
 
 XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12"
@@ -21,6 +21,8 @@ BODY_HEADER_MARKERS = {"\u5927", "\u4e2d", "\u5c0f", "\u4f5c\u696d\u5185\u5bb9",
 FOOTER_START_MARKERS = {"\u9023\u7d61\u4e8b\u9805"}
 FOOTER_GAP_ROWS = 3
 BODY_MAX_COLUMN = 13
+TARGET_BLOCK_START_COLUMN = 10
+TARGET_BLOCK_WIDTH = 4
 BODY_HEADER_TO_FIELD = {
     "\u5927": "major_no",
     "\u4e2d": "middle_no",
@@ -75,6 +77,15 @@ def _clear_sheet(sheet: Worksheet) -> None:
 def _write_row(sheet: Worksheet, row_index: int, values: list[object]) -> None:
     for column_index, value in enumerate(values, start=1):
         sheet.cell(row=row_index, column=column_index, value=value)
+
+
+def _copy_cell_format(source_cell, target_cell) -> None:
+    target_cell.font = copy(source_cell.font)
+    target_cell.fill = copy(source_cell.fill)
+    target_cell.border = copy(source_cell.border)
+    target_cell.alignment = copy(source_cell.alignment)
+    target_cell.number_format = source_cell.number_format
+    target_cell.protection = copy(source_cell.protection)
 
 
 def _style_heading(sheet: Worksheet, row_index: int) -> None:
@@ -218,9 +229,43 @@ def _apply_thick_bottom_border(sheet: Worksheet, row_index: int, max_column: int
         cell.border = _with_bottom_border(cell.border, thick_side)
 
 
-def _write_footer_label(sheet: Worksheet, row_index: int, styles: list[dict[str, object]], height: float | None) -> None:
+def _target_block_start_column(block_index: int) -> int:
+    return TARGET_BLOCK_START_COLUMN + (block_index * TARGET_BLOCK_WIDTH)
+
+
+def _body_max_column_for_targets(target_assignments: list[CaseDocHostAssignmentData]) -> int:
+    target_count = max(1, len(target_assignments))
+    return TARGET_BLOCK_START_COLUMN + (target_count * TARGET_BLOCK_WIDTH) - 1
+
+
+def _copy_column_dimension(sheet: Worksheet, source_column_index: int, target_column_index: int) -> None:
+    source_letter = sheet.cell(row=1, column=source_column_index).column_letter
+    target_letter = sheet.cell(row=1, column=target_column_index).column_letter
+    source_dimension = sheet.column_dimensions[source_letter]
+    target_dimension = sheet.column_dimensions[target_letter]
+    target_dimension.width = source_dimension.width
+    target_dimension.hidden = source_dimension.hidden
+    target_dimension.outlineLevel = source_dimension.outlineLevel
+
+
+def _copy_target_device_blocks(sheet: Worksheet, target_assignments: list[CaseDocHostAssignmentData]) -> None:
+    target_count = max(1, len(target_assignments))
+    for block_index in range(1, target_count):
+        destination_start_column = _target_block_start_column(block_index)
+        for offset in range(TARGET_BLOCK_WIDTH):
+            source_column = TARGET_BLOCK_START_COLUMN + offset
+            destination_column = destination_start_column + offset
+            _copy_column_dimension(sheet, source_column, destination_column)
+            for row_index in range(1, sheet.max_row + 1):
+                source_cell = sheet.cell(row=row_index, column=source_column)
+                destination_cell = sheet.cell(row=row_index, column=destination_column)
+                _copy_cell_format(source_cell, destination_cell)
+                destination_cell.value = source_cell.value
+
+
+def _write_footer_label(sheet: Worksheet, row_index: int, styles: list[dict[str, object]], height: float | None, max_column: int) -> None:
     _apply_row_style(sheet, row_index, styles, height)
-    for column_index in range(1, BODY_MAX_COLUMN + 1):
+    for column_index in range(1, max_column + 1):
         sheet.cell(row=row_index, column=column_index, value=None)
     footer_cell = sheet.cell(row=row_index, column=1, value=_u("\u9023\u7d61\u4e8b\u9805"))
     footer_cell.font = copy(footer_cell.font)
@@ -234,7 +279,11 @@ def _write_footer_label(sheet: Worksheet, row_index: int, styles: list[dict[str,
     )
 
 
-def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> None:
+def _write_source_doc_body_sheet(
+    workbook,
+    source_doc: SourceDocDetailData,
+    target_assignments: list[CaseDocHostAssignmentData],
+) -> None:
     body_sheet = _find_case_doc_body_sheet(workbook)
     if body_sheet is None:
         return
@@ -252,7 +301,9 @@ def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> N
     )
     source_rows = _flatten_enabled_source_doc_rows(source_doc)
     body_columns = _detect_body_columns(body_sheet, header_row)
+    body_max_column = max(_body_max_column_for_targets(target_assignments), max(body_columns.values()))
 
+    _copy_target_device_blocks(body_sheet, target_assignments)
     _unmerge_ranges_from_row(body_sheet, start_row)
     _delete_rows_from(body_sheet, start_row)
 
@@ -260,7 +311,7 @@ def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> N
         row_index = start_row + offset
         styles, height = (major_style, major_height) if _is_major_heading_row(source_row) else (normal_style, normal_height)
         _apply_row_style(body_sheet, row_index, styles, height)
-        for column_index in range(1, 14):
+        for column_index in range(1, body_max_column + 1):
             body_sheet.cell(row=row_index, column=column_index, value=None)
         body_sheet.cell(row=row_index, column=body_columns["major_no"], value=source_row.major_no)
         body_sheet.cell(row=row_index, column=body_columns["middle_no"], value=source_row.middle_no)
@@ -268,17 +319,26 @@ def _write_source_doc_body_sheet(workbook, source_doc: SourceDocDetailData) -> N
         body_sheet.cell(row=row_index, column=body_columns["tech_doc_text"], value=source_row.tech_doc_text)
         body_sheet.cell(row=row_index, column=body_columns["work_text"], value=source_row.work_text)
         body_sheet.cell(row=row_index, column=body_columns["expected_result"], value=source_row.expected_result)
-        body_sheet.cell(row=row_index, column=body_columns["time_text"], value=source_row.time_text)
-        body_sheet.cell(row=row_index, column=body_columns["window_text"], value=source_row.window_text)
-        body_sheet.cell(row=row_index, column=body_columns["p_text"], value=source_row.p_text)
-        body_sheet.cell(row=row_index, column=body_columns["command_text"], value=source_row.command_text)
+
+        target_count = max(1, len(target_assignments))
+        for block_index in range(target_count):
+            destination_start_column = _target_block_start_column(block_index)
+            for offset, field_name in enumerate(("time_text", "window_text", "p_text", "command_text")):
+                source_column = body_columns[field_name]
+                destination_column = destination_start_column + offset
+                if destination_column != source_column:
+                    _copy_cell_format(
+                        body_sheet.cell(row=row_index, column=source_column),
+                        body_sheet.cell(row=row_index, column=destination_column),
+                    )
+                body_sheet.cell(row=row_index, column=destination_column, value=getattr(source_row, field_name))
 
     if source_rows:
         last_source_row_index = start_row + len(source_rows) - 1
-        _apply_thick_bottom_border(body_sheet, last_source_row_index, max(BODY_MAX_COLUMN, max(body_columns.values())))
+        _apply_thick_bottom_border(body_sheet, last_source_row_index, body_max_column)
 
     footer_row_index = start_row + len(source_rows) + FOOTER_GAP_ROWS
-    _write_footer_label(body_sheet, footer_row_index, footer_style, footer_height)
+    _write_footer_label(body_sheet, footer_row_index, footer_style, footer_height, body_max_column)
 
 
 def _value_for_target_host(context: CaseDocResolveContextData, placeholder: str) -> str | None:
@@ -290,6 +350,17 @@ def _value_for_target_host(context: CaseDocResolveContextData, placeholder: str)
             item.value
             for item in context.resolved_placeholders
             if item.placeholder == placeholder and item.host_name == target_host_name
+        ),
+        None,
+    )
+
+
+def _value_for_host(context: CaseDocResolveContextData, placeholder: str, host_name: str) -> str | None:
+    return next(
+        (
+            item.value
+            for item in context.resolved_placeholders
+            if item.placeholder == placeholder and item.host_name == host_name
         ),
         None,
     )
@@ -318,6 +389,25 @@ def _build_placeholder_values(context: CaseDocResolveContextData) -> dict[str, s
     return values
 
 
+def _build_placeholder_values_for_assignment(
+    context: CaseDocResolveContextData,
+    target_assignment: CaseDocHostAssignmentData,
+) -> dict[str, str]:
+    values = {item.key: item.value for item in context.common_values}
+    values["TARGET_DEVICE_HOSTNAME"] = target_assignment.host_name
+
+    target_command_floating_ip = _value_for_host(context, "SBC_COMMAND_FLOATING_IP", target_assignment.host_name)
+    if target_command_floating_ip:
+        values["SBC_COMMAND_FLOATING_IP"] = target_command_floating_ip
+
+    for item in context.resolved_placeholders:
+        if item.host_name in {None, target_assignment.host_name}:
+            values.setdefault(item.placeholder, item.value)
+
+    _add_legacy_placeholder_aliases(values)
+    return values
+
+
 def _replace_placeholders(sheet: Worksheet, values: dict[str, str]) -> None:
     """Replace {{PLACEHOLDER}} strings in one template worksheet."""
 
@@ -329,6 +419,24 @@ def _replace_placeholders(sheet: Worksheet, values: dict[str, str]) -> None:
             for key, value in values.items():
                 replaced = replaced.replace(f"{{{{{key}}}}}", value)
             cell.value = replaced
+
+
+def _replace_placeholders_in_columns(sheet: Worksheet, values: dict[str, str], min_column: int, max_column: int) -> None:
+    for row in sheet.iter_rows(min_col=min_column, max_col=max_column):
+        for cell in row:
+            if not isinstance(cell.value, str) or "{{" not in cell.value:
+                continue
+            replaced = cell.value
+            for key, value in values.items():
+                replaced = replaced.replace(f"{{{{{key}}}}}", value)
+            cell.value = replaced
+
+
+def _replace_target_device_block_placeholders(sheet: Worksheet, context: CaseDocResolveContextData) -> None:
+    for block_index, target_assignment in enumerate(context.target_assignments or [context.target_assignment]):
+        start_column = _target_block_start_column(block_index)
+        values = _build_placeholder_values_for_assignment(context, target_assignment)
+        _replace_placeholders_in_columns(sheet, values, start_column, start_column + TARGET_BLOCK_WIDTH - 1)
 
 
 def _write_resolved_values_sheet(sheet: Worksheet, context: CaseDocResolveContextData) -> None:
@@ -516,9 +624,12 @@ def build_case_doc_workbook_bytes(
 
     workbook = load_workbook(TEMPLATE_PATH, keep_vba=True)
     if source_doc is not None:
-        _write_source_doc_body_sheet(workbook, source_doc)
+        _write_source_doc_body_sheet(workbook, source_doc, context.target_assignments)
 
     placeholder_values = _build_placeholder_values(context)
+    body_sheet = _find_case_doc_body_sheet(workbook)
+    if body_sheet is not None:
+        _replace_target_device_block_placeholders(body_sheet, context)
     for sheet in workbook.worksheets:
         if sheet.title != RESOLVED_VALUES_SHEET_NAME:
             _replace_placeholders(sheet, placeholder_values)

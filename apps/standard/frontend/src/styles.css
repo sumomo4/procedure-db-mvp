@@ -572,6 +572,27 @@ nav {
   font-weight: 700;
 }
 
+.case-doc-target-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.case-doc-target-options .checkbox-field {
+  display: flex;
+  align-items: center;
+  border: 1px solid #cfd8de;
+  border-radius: 8px;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.case-doc-target-options .checkbox-field span {
+  color: #13232d;
+  font-size: 13px;
+}
+
 .case-doc-result-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -590,6 +611,15 @@ nav {
 .case-doc-result-grid .section-band h2 {
   margin: 0;
   font-size: 18px;
+}
+
+.case-doc-result-grid .section-band:not(.case-doc-wide-section) .table-wrap table {
+  min-width: 540px;
+}
+
+.case-doc-result-grid .section-band:not(.case-doc-wide-section) .table-wrap th,
+.case-doc-result-grid .section-band:not(.case-doc-wide-section) .table-wrap td {
+  overflow-wrap: anywhere;
 }
 
 .toolbar {

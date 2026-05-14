@@ -312,6 +312,7 @@ def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -
     assert data["unit_config"]["unit_config_id"] == "unit-tokyo-001"
     assert data["target_assignment"]["slot_key"] == "SBC_CL1_0"
     assert data["target_assignment"]["host_name"] == "sbc-tyo-cl1-0"
+    assert [item["slot_key"] for item in data["target_assignments"]] == ["SBC_CL1_0"]
     assert data["host_assignments"]
     assert data["common_values"] == [
         {
@@ -338,6 +339,48 @@ def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -
     login_user_placeholder = next(item for item in data["resolved_placeholders"] if item["placeholder"] == "LOGIN_USER")
     assert login_user_placeholder["source_table"] == "case_common_values"
     assert login_user_placeholder["source_column"] == "login_user"
+
+
+def test_resolve_case_doc_context_accepts_multiple_target_sbc_slots(client: TestClient) -> None:
+    """Resolve context API should accept multiple selected target SBC slots."""
+
+    response = client.post(
+        "/api/v1/case-docs/resolve-context",
+        json={
+            "source_doc_id": 1,
+            "prefecture": _tokyo_prefecture(client),
+            "building": _tokyo_building(client),
+            "unit_config_id": "unit-tokyo-001",
+            "target_slot_keys": ["SBC_CL1_1", "SBC_CL1_0"],
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()["data"]
+    assert data["target_assignment"]["slot_key"] == "SBC_CL1_1"
+    assert [item["slot_key"] for item in data["target_assignments"]] == ["SBC_CL1_1", "SBC_CL1_0"]
+    assert [item["host_name"] for item in data["target_assignments"]] == ["sbc-tyo-cl1-1", "sbc-tyo-cl1-0"]
+
+
+def test_resolve_case_doc_context_target_slot_keys_takes_precedence_over_legacy_key(client: TestClient) -> None:
+    """Resolve context API should prefer target_slot_keys when both fields are provided."""
+
+    response = client.post(
+        "/api/v1/case-docs/resolve-context",
+        json={
+            "source_doc_id": 1,
+            "prefecture": _tokyo_prefecture(client),
+            "building": _tokyo_building(client),
+            "unit_config_id": "unit-tokyo-001",
+            "target_slot_key": "SBC_CL1_0",
+            "target_slot_keys": ["SBC_CL1_1"],
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()["data"]
+    assert data["target_assignment"]["slot_key"] == "SBC_CL1_1"
+    assert [item["slot_key"] for item in data["target_assignments"]] == ["SBC_CL1_1"]
 
 
 def test_resolve_case_doc_context_rejects_unknown_unit(client: TestClient) -> None:
@@ -490,3 +533,32 @@ def test_generate_case_doc_uses_selected_target_sbc_slot(client: TestClient, mon
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
     assert template_sheet["M4"].value == "sbc-tyo-cl1-1"
     assert template_sheet["M6"].value == "10.10.1.11"
+
+
+def test_generate_case_doc_expands_multiple_target_sbc_blocks(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Generate API should expand J:M target blocks for selected SBC slots."""
+
+    _mock_source_doc_detail(monkeypatch)
+
+    response = client.post(
+        "/api/v1/case-docs/generate",
+        json={
+            "source_doc_id": 1,
+            "prefecture": _tokyo_prefecture(client),
+            "building": _tokyo_building(client),
+            "unit_config_id": "unit-tokyo-001",
+            "target_slot_keys": ["SBC_CL1_0", "SBC_CL1_1"],
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    workbook = load_workbook(BytesIO(response.content), keep_vba=True)
+    template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
+    assert template_sheet["M4"].value == "sbc-tyo-cl1-0"
+    assert template_sheet["Q4"].value == "sbc-tyo-cl1-1"
+    assert template_sheet["J5"].value == "\u6642\u523b"
+    assert template_sheet["N5"].value == "\u6642\u523b"
+    assert template_sheet["M5"].value == "\u30b3\u30de\u30f3\u30c9"
+    assert template_sheet["Q5"].value == "\u30b3\u30de\u30f3\u30c9"
+    assert template_sheet["M6"].value == "10.10.1.10"
+    assert template_sheet["Q6"].value == "10.10.1.11"
