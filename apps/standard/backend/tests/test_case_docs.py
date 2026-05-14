@@ -1,12 +1,14 @@
 """Tests for case document routes."""
 
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
+from app.core.config import AppSettings
 from app.core.responses import ModuleRowData, SourceDocDetailData, SourceDocModuleItemData
 
 
@@ -99,6 +101,42 @@ def _mock_source_doc_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _write_placeholder_mapping(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "placeholders:",
+                "- name: LOGIN_USER",
+                "  enabled: true",
+                "  scope: common",
+                "  source_file: case_common_values.xlsx",
+                "  key_column: key",
+                "  key_value: LOGIN_USER",
+                "  value_column: value",
+                "  source_column: login_user",
+                "  description: login user",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _placeholder_payload(name: str = "TEST_DEVICE_IP") -> dict[str, object]:
+    return {
+        "name": name,
+        "enabled": False,
+        "scope": "device",
+        "device_type": "SBC",
+        "source_file": "SBC.xlsx",
+        "key_column": "host_name",
+        "value_column": "command_ip",
+        "source_column": "command_ip",
+        "description": "test placeholder",
+    }
+
+
 def test_read_case_doc_prefectures_returns_options(client: TestClient) -> None:
     """Prefecture master API should return selectable options."""
 
@@ -147,6 +185,111 @@ def test_read_case_doc_placeholder_mappings_returns_configured_items(client: Tes
     assert placeholders["SBC_COMMAND_FLOATING_IP"]["scope"] == "device"
     assert placeholders["SBC_COMMAND_FLOATING_IP"]["device_type"] == "SBC"
     assert placeholders["LOGIN_USER"]["scope"] == "common"
+
+
+def test_validate_case_doc_placeholder_mapping_does_not_write(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Validate API should accept a mapping without writing to the YAML file."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_mapping(mapping_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+
+    response = client.post("/api/v1/case-docs/placeholders/validate", json=_placeholder_payload())
+
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["result"] == "success"
+    assert body["data"]["name"] == "TEST_DEVICE_IP"
+    assert "TEST_DEVICE_IP" not in mapping_path.read_text(encoding="utf-8")
+
+
+def test_create_case_doc_placeholder_mapping_writes_yaml(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Create API should append a placeholder mapping to the YAML file."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_mapping(mapping_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+
+    response = client.post("/api/v1/case-docs/placeholders", json=_placeholder_payload())
+
+    assert response.status_code == status.HTTP_201_CREATED
+    body = response.json()
+    assert body["result"] == "success"
+    assert body["data"]["name"] == "TEST_DEVICE_IP"
+
+    list_response = client.get("/api/v1/case-docs/placeholders")
+    placeholders = {item["name"]: item for item in list_response.json()["data"]["items"]}
+    assert placeholders["TEST_DEVICE_IP"]["value_column"] == "command_ip"
+    assert "TEST_DEVICE_IP" in mapping_path.read_text(encoding="utf-8")
+
+
+def test_create_case_doc_placeholder_mapping_rejects_duplicate_name(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Create API should reject duplicate placeholder names."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_mapping(mapping_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+
+    response = client.post("/api/v1/case-docs/placeholders", json=_placeholder_payload("LOGIN_USER"))
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_update_case_doc_placeholder_mapping_writes_yaml(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Update API should replace an existing placeholder mapping."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_mapping(mapping_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+    client.post("/api/v1/case-docs/placeholders", json=_placeholder_payload())
+
+    payload = _placeholder_payload("TEST_DEVICE_COMMAND_IP")
+    payload["description"] = "updated placeholder"
+    response = client.put("/api/v1/case-docs/placeholders/TEST_DEVICE_IP", json=payload)
+
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["data"]["name"] == "TEST_DEVICE_COMMAND_IP"
+    placeholders = {item["name"]: item for item in client.get("/api/v1/case-docs/placeholders").json()["data"]["items"]}
+    assert "TEST_DEVICE_IP" not in placeholders
+    assert placeholders["TEST_DEVICE_COMMAND_IP"]["description"] == "updated placeholder"
+
+
+def test_set_case_doc_placeholder_mapping_enabled_writes_yaml(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Enabled API should toggle a placeholder mapping without deleting it."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_mapping(mapping_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+    client.post("/api/v1/case-docs/placeholders", json=_placeholder_payload())
+
+    response = client.patch("/api/v1/case-docs/placeholders/TEST_DEVICE_IP/enabled", json={"enabled": True})
+
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["data"]["enabled"] is True
+    placeholders = {item["name"]: item for item in client.get("/api/v1/case-docs/placeholders").json()["data"]["items"]}
+    assert placeholders["TEST_DEVICE_IP"]["enabled"] is True
 
 
 def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -> None:

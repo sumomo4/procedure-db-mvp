@@ -17,8 +17,10 @@ from app.core.responses import (
     CaseDocCommonValueData,
     CaseDocHostAssignmentData,
     CaseDocMasterOptionData,
+    CaseDocPlaceholderMappingEnabledRequest,
     CaseDocPlaceholderMappingItemData,
     CaseDocPlaceholderMappingListData,
+    CaseDocPlaceholderMappingUpsertRequest,
     CaseDocMasterOptionsData,
     CaseDocResolvedPlaceholderData,
     CaseDocResolveContextData,
@@ -159,37 +161,168 @@ COMMON_VALUE_COLUMN_ALIASES = {
     "source_column": ("source_column", _u(r"\u51fa\u5178\u30ab\u30e9\u30e0")),
 }
 DEVICE_SLOT_SUFFIX = _u(r"\u7cfb")
+PLACEHOLDER_NAME_PATTERN = re.compile(r"^[A-Z0-9_]+$")
 
 
-def _load_placeholder_mappings(mapping_path: str) -> list[CaseDocPlaceholderMappingItemData]:
+def _resolve_placeholder_mapping_path(mapping_path: str) -> Path:
     path = Path(mapping_path)
     if not path.is_absolute():
         path = Path.cwd() / path
+    return path
+
+
+def _load_placeholder_mapping_payload(mapping_path: str) -> dict[str, object]:
+    path = _resolve_placeholder_mapping_path(mapping_path)
     if not path.exists():
         raise ValueError(f"placeholder mapping file was not found: {path}")
 
     with path.open(encoding="utf-8-sig") as file:
         payload = yaml.safe_load(file) or {}
+    if not isinstance(payload, dict):
+        raise ValueError("placeholder mapping file must contain an object.")
+    return payload
+
+
+def _validate_placeholder_mapping_item(item: CaseDocPlaceholderMappingItemData) -> None:
+    if not PLACEHOLDER_NAME_PATTERN.fullmatch(item.name):
+        raise ValueError(f"placeholder mapping name is invalid: {item.name}")
+    if item.scope == "device" and not item.device_type:
+        raise ValueError(f"device placeholder requires device_type: {item.name}")
+    if item.scope == "common" and not item.key_value:
+        raise ValueError(f"common placeholder requires key_value: {item.name}")
+
+
+def _validate_placeholder_mappings(mappings: Iterable[CaseDocPlaceholderMappingItemData]) -> list[CaseDocPlaceholderMappingItemData]:
+    validated = list(mappings)
+    seen: set[str] = set()
+    for item in validated:
+        _validate_placeholder_mapping_item(item)
+        if item.name in seen:
+            raise ValueError(f"placeholder mapping name is duplicated: {item.name}")
+        seen.add(item.name)
+    return validated
+
+
+def _load_placeholder_mappings(mapping_path: str) -> list[CaseDocPlaceholderMappingItemData]:
+    payload = _load_placeholder_mapping_payload(mapping_path)
 
     raw_items = payload.get("placeholders", [])
     if not isinstance(raw_items, list):
         raise ValueError("placeholder mapping file must contain a placeholders list.")
 
     mappings: list[CaseDocPlaceholderMappingItemData] = []
-    seen: set[str] = set()
     for raw_item in raw_items:
         if not isinstance(raw_item, dict):
             raise ValueError("placeholder mapping entries must be objects.")
-        item = CaseDocPlaceholderMappingItemData(**raw_item)
-        if item.name in seen:
-            raise ValueError(f"placeholder mapping name is duplicated: {item.name}")
-        seen.add(item.name)
-        if item.scope == "device" and not item.device_type:
-            raise ValueError(f"device placeholder requires device_type: {item.name}")
-        if item.scope == "common" and not item.key_value:
-            raise ValueError(f"common placeholder requires key_value: {item.name}")
-        mappings.append(item)
-    return mappings
+        mappings.append(CaseDocPlaceholderMappingItemData(**raw_item))
+    return _validate_placeholder_mappings(mappings)
+
+
+def _placeholder_mapping_to_dict(item: CaseDocPlaceholderMappingItemData) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "name": item.name,
+        "enabled": item.enabled,
+        "scope": item.scope,
+    }
+    if item.device_type is not None:
+        payload["device_type"] = item.device_type
+    payload.update(
+        {
+            "source_file": item.source_file,
+            "key_column": item.key_column,
+        }
+    )
+    if item.key_value is not None:
+        payload["key_value"] = item.key_value
+    payload.update(
+        {
+            "value_column": item.value_column,
+            "source_column": item.source_column,
+        }
+    )
+    if item.description is not None:
+        payload["description"] = item.description
+    return payload
+
+
+def _write_placeholder_mappings(
+    mapping_path: str,
+    mappings: Iterable[CaseDocPlaceholderMappingItemData],
+) -> CaseDocPlaceholderMappingListData:
+    path = _resolve_placeholder_mapping_path(mapping_path)
+    validated = _validate_placeholder_mappings(mappings)
+    payload = {
+        "version": 1,
+        "placeholders": [_placeholder_mapping_to_dict(item) for item in validated],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as file:
+        yaml.safe_dump(payload, file, allow_unicode=True, sort_keys=False)
+    return CaseDocPlaceholderMappingListData(items=validated)
+
+
+def _to_placeholder_mapping_item(
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    return CaseDocPlaceholderMappingItemData(**payload.model_dump())
+
+
+def _create_placeholder_mapping(
+    mapping_path: str,
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    mappings = _load_placeholder_mappings(mapping_path)
+    item = _to_placeholder_mapping_item(payload)
+    if any(existing.name == item.name for existing in mappings):
+        raise ValueError(f"placeholder mapping name is duplicated: {item.name}")
+    _validate_placeholder_mapping_item(item)
+    mappings.append(item)
+    _write_placeholder_mappings(mapping_path, mappings)
+    return item
+
+
+def _update_placeholder_mapping(
+    mapping_path: str,
+    name: str,
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    mappings = _load_placeholder_mappings(mapping_path)
+    item = _to_placeholder_mapping_item(payload)
+    _validate_placeholder_mapping_item(item)
+    matched = False
+    updated: list[CaseDocPlaceholderMappingItemData] = []
+    for existing in mappings:
+        if existing.name == name:
+            updated.append(item)
+            matched = True
+        else:
+            updated.append(existing)
+    if not matched:
+        raise ValueError(f"placeholder mapping was not found: {name}")
+    _write_placeholder_mappings(mapping_path, updated)
+    return item
+
+
+def _set_placeholder_mapping_enabled(
+    mapping_path: str,
+    name: str,
+    payload: CaseDocPlaceholderMappingEnabledRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    mappings = _load_placeholder_mappings(mapping_path)
+    matched = False
+    updated_item: CaseDocPlaceholderMappingItemData | None = None
+    updated: list[CaseDocPlaceholderMappingItemData] = []
+    for existing in mappings:
+        if existing.name == name:
+            updated_item = existing.model_copy(update={"enabled": payload.enabled})
+            updated.append(updated_item)
+            matched = True
+        else:
+            updated.append(existing)
+    if not matched or updated_item is None:
+        raise ValueError(f"placeholder mapping was not found: {name}")
+    _write_placeholder_mappings(mapping_path, updated)
+    return updated_item
 
 
 def _enabled_device_mappings(
@@ -478,6 +611,32 @@ class CaseDocMasterRepository(Protocol):
     def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
         """Return placeholder mappings used for case document generation."""
 
+    def validate_placeholder_mapping(
+        self,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        """Validate a placeholder mapping without writing it."""
+
+    def create_placeholder_mapping(
+        self,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        """Create a placeholder mapping."""
+
+    def update_placeholder_mapping(
+        self,
+        name: str,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        """Update a placeholder mapping."""
+
+    def set_placeholder_mapping_enabled(
+        self,
+        name: str,
+        payload: CaseDocPlaceholderMappingEnabledRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        """Enable or disable a placeholder mapping."""
+
 
 class SeedCaseDocMasterRepository:
     """Deterministic case document master data used before Access export import."""
@@ -487,6 +646,34 @@ class SeedCaseDocMasterRepository:
 
     def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
         return CaseDocPlaceholderMappingListData(items=_load_placeholder_mappings(self.placeholder_mapping_path))
+
+    def validate_placeholder_mapping(
+        self,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        item = _to_placeholder_mapping_item(payload)
+        _validate_placeholder_mapping_item(item)
+        return item
+
+    def create_placeholder_mapping(
+        self,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        return _create_placeholder_mapping(self.placeholder_mapping_path, payload)
+
+    def update_placeholder_mapping(
+        self,
+        name: str,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        return _update_placeholder_mapping(self.placeholder_mapping_path, name, payload)
+
+    def set_placeholder_mapping_enabled(
+        self,
+        name: str,
+        payload: CaseDocPlaceholderMappingEnabledRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        return _set_placeholder_mapping_enabled(self.placeholder_mapping_path, name, payload)
 
     def _load_placeholder_mappings(self) -> list[CaseDocPlaceholderMappingItemData]:
         return _load_placeholder_mappings(self.placeholder_mapping_path)
@@ -545,6 +732,34 @@ class ExportFileCaseDocMasterRepository:
 
     def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
         return CaseDocPlaceholderMappingListData(items=_load_placeholder_mappings(self.placeholder_mapping_path))
+
+    def validate_placeholder_mapping(
+        self,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        item = _to_placeholder_mapping_item(payload)
+        _validate_placeholder_mapping_item(item)
+        return item
+
+    def create_placeholder_mapping(
+        self,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        return _create_placeholder_mapping(self.placeholder_mapping_path, payload)
+
+    def update_placeholder_mapping(
+        self,
+        name: str,
+        payload: CaseDocPlaceholderMappingUpsertRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        return _update_placeholder_mapping(self.placeholder_mapping_path, name, payload)
+
+    def set_placeholder_mapping_enabled(
+        self,
+        name: str,
+        payload: CaseDocPlaceholderMappingEnabledRequest,
+    ) -> CaseDocPlaceholderMappingItemData:
+        return _set_placeholder_mapping_enabled(self.placeholder_mapping_path, name, payload)
 
     def _load_placeholder_mappings(self) -> list[CaseDocPlaceholderMappingItemData]:
         return _load_placeholder_mappings(self.placeholder_mapping_path)

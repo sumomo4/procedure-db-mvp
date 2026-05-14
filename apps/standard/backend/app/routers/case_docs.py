@@ -12,7 +12,10 @@ from app.core.responses import (
     ApiResponse,
     CaseDocGenerateRequest,
     CaseDocMasterOptionsData,
+    CaseDocPlaceholderMappingEnabledRequest,
+    CaseDocPlaceholderMappingItemData,
     CaseDocPlaceholderMappingListData,
+    CaseDocPlaceholderMappingUpsertRequest,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -21,11 +24,15 @@ from app.core.responses import (
     success_response,
 )
 from app.db.case_docs import (
+    create_case_doc_placeholder_mapping,
     list_case_doc_buildings,
     list_case_doc_placeholder_mappings,
     list_case_doc_prefectures,
     list_case_doc_unit_configs,
     resolve_case_doc_context,
+    set_case_doc_placeholder_mapping_enabled,
+    update_case_doc_placeholder_mapping,
+    validate_case_doc_placeholder_mapping,
 )
 from app.db.source_docs import get_source_doc_detail
 from app.routers.health import get_app_settings
@@ -62,6 +69,26 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
                 method="GET",
                 path="/api/v1/case-docs/placeholders",
                 purpose="Case document placeholder mappings used during generation.",
+            ),
+            RouterEndpointData(
+                method="POST",
+                path="/api/v1/case-docs/placeholders",
+                purpose="Create a case document placeholder mapping.",
+            ),
+            RouterEndpointData(
+                method="PUT",
+                path="/api/v1/case-docs/placeholders/{name}",
+                purpose="Update a case document placeholder mapping.",
+            ),
+            RouterEndpointData(
+                method="PATCH",
+                path="/api/v1/case-docs/placeholders/{name}/enabled",
+                purpose="Enable or disable a case document placeholder mapping.",
+            ),
+            RouterEndpointData(
+                method="POST",
+                path="/api/v1/case-docs/placeholders/validate",
+                purpose="Validate a placeholder mapping without saving it.",
             ),
             RouterEndpointData(
                 method="POST",
@@ -125,6 +152,80 @@ def read_case_doc_placeholder_mappings(
             detail=str(exception),
         ) from exception
     return success_response(data, "Case document placeholder mappings were retrieved.")
+
+
+@router.post("/placeholders/validate", response_model=ApiResponse[CaseDocPlaceholderMappingItemData])
+def validate_case_doc_placeholder_mapping_payload(
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
+    """Validate a placeholder mapping without saving it."""
+
+    try:
+        data = validate_case_doc_placeholder_mapping(settings, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    return success_response(data, "Case document placeholder mapping is valid.")
+
+
+@router.post(
+    "/placeholders",
+    response_model=ApiResponse[CaseDocPlaceholderMappingItemData],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_case_doc_placeholder_mapping_payload(
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
+    """Create a placeholder mapping used for case document generation."""
+
+    try:
+        data = create_case_doc_placeholder_mapping(settings, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    return success_response(data, "Case document placeholder mapping was created.")
+
+
+@router.put("/placeholders/{name}", response_model=ApiResponse[CaseDocPlaceholderMappingItemData])
+def update_case_doc_placeholder_mapping_payload(
+    name: str,
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
+    """Update a placeholder mapping used for case document generation."""
+
+    try:
+        data = update_case_doc_placeholder_mapping(settings, name, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    return success_response(data, "Case document placeholder mapping was updated.")
+
+
+@router.patch("/placeholders/{name}/enabled", response_model=ApiResponse[CaseDocPlaceholderMappingItemData])
+def set_case_doc_placeholder_mapping_enabled_payload(
+    name: str,
+    payload: CaseDocPlaceholderMappingEnabledRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
+    """Enable or disable a placeholder mapping used for case document generation."""
+
+    try:
+        data = set_case_doc_placeholder_mapping_enabled(settings, name, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    return success_response(data, "Case document placeholder mapping status was updated.")
 
 
 @router.post("/resolve-context", response_model=ApiResponse[CaseDocResolveContextData])

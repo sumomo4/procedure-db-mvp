@@ -3,7 +3,10 @@
 from app.core.config import AppSettings
 from app.core.responses import (
     CaseDocMasterOptionsData,
+    CaseDocPlaceholderMappingEnabledRequest,
+    CaseDocPlaceholderMappingItemData,
     CaseDocPlaceholderMappingListData,
+    CaseDocPlaceholderMappingUpsertRequest,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -66,3 +69,41 @@ def list_case_doc_placeholder_mappings(settings: AppSettings) -> CaseDocPlacehol
     """Return placeholder mappings used for case document generation."""
 
     return get_case_doc_master_repository(settings).list_placeholder_mappings()
+
+
+def validate_case_doc_placeholder_mapping(
+    settings: AppSettings,
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    """Validate a placeholder mapping without writing it."""
+
+    return get_case_doc_master_repository(settings).validate_placeholder_mapping(payload)
+
+
+def create_case_doc_placeholder_mapping(
+    settings: AppSettings,
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    """Create a placeholder mapping."""
+
+    return get_case_doc_master_repository(settings).create_placeholder_mapping(payload)
+
+
+def update_case_doc_placeholder_mapping(
+    settings: AppSettings,
+    name: str,
+    payload: CaseDocPlaceholderMappingUpsertRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    """Update a placeholder mapping."""
+
+    return get_case_doc_master_repository(settings).update_placeholder_mapping(name, payload)
+
+
+def set_case_doc_placeholder_mapping_enabled(
+    settings: AppSettings,
+    name: str,
+    payload: CaseDocPlaceholderMappingEnabledRequest,
+) -> CaseDocPlaceholderMappingItemData:
+    """Enable or disable a placeholder mapping."""
+
+    return get_case_doc_master_repository(settings).set_placeholder_mapping_enabled(name, payload)
