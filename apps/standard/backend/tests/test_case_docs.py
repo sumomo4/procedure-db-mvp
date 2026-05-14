@@ -433,6 +433,20 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert source_doc_sheet["B2"].value == 1
     assert source_doc_sheet["B3"].value == "BP-STD-001"
     assert source_doc_sheet["I11"].value == "\u4f5c\u696d\u3067\u4f7f\u7528\u3059\u308bPC\u306eTeraTerm\u8a2d\u5b9a\u3092\u5909\u66f4\u3059\u308b\u3002"
+    source_doc_values = [
+        cell.value
+        for row in source_doc_sheet.iter_rows()
+        for cell in row
+    ]
+    assert "10.10.1.10" in source_doc_values
+    remaining_placeholders = [
+        cell.value
+        for sheet in workbook.worksheets
+        for row in sheet.iter_rows()
+        for cell in row
+        if isinstance(cell.value, str) and "{{" in cell.value
+    ]
+    assert remaining_placeholders == []
 
 
 def test_resolve_case_doc_context_accepts_target_sbc_slot(client: TestClient) -> None:

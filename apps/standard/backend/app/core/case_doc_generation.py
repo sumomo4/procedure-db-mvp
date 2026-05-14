@@ -535,8 +535,8 @@ def build_case_doc_workbook_bytes(
         else:
             source_doc_sheet = workbook.create_sheet(SOURCE_DOC_EXPANSION_SHEET_NAME)
         _write_source_doc_expansion_sheet(source_doc_sheet, source_doc)
+        _replace_placeholders(source_doc_sheet, placeholder_values)
 
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
-
