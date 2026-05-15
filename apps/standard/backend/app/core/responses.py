@@ -127,6 +127,20 @@ class ModuleListData(BaseModel):
     items: list[ModuleListItemData]
 
 
+class ModuleRowImageData(BaseModel):
+    """Image metadata attached to one module row."""
+
+    module_row_image_id: int
+    image_key: str
+    image_path: str
+    anchor_cell: str
+    offset_x_px: int = 0
+    offset_y_px: int = 0
+    width_px: int | None = None
+    height_px: int | None = None
+    image_order: int = 1
+
+
 class ModuleRowData(BaseModel):
     """Module row response payload.
 
@@ -146,6 +160,7 @@ class ModuleRowData(BaseModel):
         p_text: Prompt column text.
         command_text: Command column text.
         note: Optional note.
+        images: Image metadata attached to this row.
     """
 
     module_row_id: int
@@ -164,6 +179,7 @@ class ModuleRowData(BaseModel):
     command_text: str | None
     note: str | None
     device_entries: list["ModuleRowDeviceEntryData"] = Field(default_factory=list)
+    images: list[ModuleRowImageData] = Field(default_factory=list)
 
 
 class ModuleRowDeviceEntryData(BaseModel):

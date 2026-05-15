@@ -68,6 +68,19 @@ type ModuleDetailRowData = {
   command_text: string | null;
   note: string | null;
   device_entries: ModuleRowDeviceEntryData[];
+  images: ModuleRowImageData[];
+};
+
+type ModuleRowImageData = {
+  module_row_image_id: number;
+  image_key: string;
+  image_path: string;
+  anchor_cell: string;
+  offset_x_px: number;
+  offset_y_px: number;
+  width_px: number | null;
+  height_px: number | null;
+  image_order: number;
 };
 
 type ModuleRowDeviceEntryData = {
@@ -4325,6 +4338,7 @@ function convertImportPreviewToModuleDetail(item: ModuleImportPreviewData): Modu
         p_text: entry.p_text,
         command_text: entry.command_text,
       })),
+      images: [],
     })),
   };
 }

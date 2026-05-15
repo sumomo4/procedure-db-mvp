@@ -17,6 +17,7 @@ from app.core.responses import (
     ModuleListItemData,
     ModuleRowData,
     ModuleRowDeviceEntryData,
+    ModuleRowImageData,
 )
 
 
@@ -158,6 +159,7 @@ def _build_module_detail_query() -> str:
             sv.target_text,
             sv.common_p_text,
             sv.target_device_text,
+            sv.device_headers_json,
             sv.created_at,
             sv.updated_at,
             r.module_row_id,
@@ -174,12 +176,31 @@ def _build_module_detail_query() -> str:
             r.window_template_default,
             r.p_template_default,
             r.command_template_default,
-            r.device_entries_json
+            r.device_entries_json,
+            COALESCE(row_images.images_json, '[]'::jsonb) AS images_json
         FROM proc.modules m
         JOIN selected_version sv
             ON sv.module_id = m.module_id
         LEFT JOIN proc.module_rows r
             ON r.module_version_id = sv.module_version_id
+        LEFT JOIN LATERAL (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'module_row_image_id', mri.module_row_image_id,
+                    'image_key', mri.image_key,
+                    'image_path', mri.image_path,
+                    'anchor_cell', mri.anchor_cell,
+                    'offset_x_px', mri.offset_x_px,
+                    'offset_y_px', mri.offset_y_px,
+                    'width_px', mri.width_px,
+                    'height_px', mri.height_px,
+                    'image_order', mri.image_order
+                )
+                ORDER BY mri.image_order, mri.module_row_image_id
+            ) AS images_json
+            FROM proc.module_row_images mri
+            WHERE mri.module_row_id = r.module_row_id
+        ) row_images ON true
         WHERE m.module_id = %(module_id)s
         ORDER BY r.row_order;
     """
@@ -291,6 +312,33 @@ def _map_device_entries(
     ]
 
 
+def _map_row_images(value: Any) -> list[ModuleRowImageData]:
+    """Convert row image JSON values to response payloads."""
+
+    raw_images = sorted(
+        _coerce_json_array(value),
+        key=lambda item: (int(item.get("image_order") or 1), int(item.get("module_row_image_id") or 0)),
+    )
+    return [
+        ModuleRowImageData(
+            module_row_image_id=int(item["module_row_image_id"]),
+            image_key=str(item["image_key"]),
+            image_path=str(item["image_path"]),
+            anchor_cell=str(item["anchor_cell"]),
+            offset_x_px=int(item.get("offset_x_px") or 0),
+            offset_y_px=int(item.get("offset_y_px") or 0),
+            width_px=int(item["width_px"]) if item.get("width_px") is not None else None,
+            height_px=int(item["height_px"]) if item.get("height_px") is not None else None,
+            image_order=int(item.get("image_order") or 1),
+        )
+        for item in raw_images
+        if item.get("module_row_image_id") is not None
+        and item.get("image_key") is not None
+        and item.get("image_path") is not None
+        and item.get("anchor_cell") is not None
+    ]
+
+
 def _normalize_device_headers(payload: ModuleCreateRequest) -> list[ModuleCreateDeviceHeaderInput]:
     """Return normalized device header inputs with a slot 1 fallback."""
 
@@ -381,6 +429,7 @@ def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData
                 field(row, row_base_index + 12),
                 field(row, row_base_index + 13),
             ),
+            images=_map_row_images(field(row, row_base_index + 15)),
         )
         for row in rows
         if field(row, row_base_index) is not None

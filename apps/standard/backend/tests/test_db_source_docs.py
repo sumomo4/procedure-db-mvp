@@ -177,6 +177,7 @@ def test_get_source_doc_detail_returns_detail(monkeypatch: pytest.MonkeyPatch) -
                         "console",
                         ">",
                         "show status",
+                        '[{"module_row_image_id": 901, "image_key": "BP-STD-001_r1_img1", "image_path": "storage/standard/module_images/MOD-001/BP-STD-001_r1_img1.png", "anchor_cell": "F10", "offset_x_px": 0, "offset_y_px": 1, "width_px": 200, "height_px": 100, "image_order": 1}]',
                     )
                 ],
             ]
@@ -191,6 +192,7 @@ def test_get_source_doc_detail_returns_detail(monkeypatch: pytest.MonkeyPatch) -
     assert result.source_doc_key == "BP-STD-001"
     assert result.module_count == 1
     assert result.items[0].rows[0].command_text == "show status"
+    assert result.items[0].rows[0].images[0].anchor_cell == "F10"
 
 
 def test_create_source_doc_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -> None:

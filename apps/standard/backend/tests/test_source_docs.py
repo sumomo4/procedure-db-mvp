@@ -254,6 +254,7 @@ def test_read_source_doc_detail_returns_success_response(
                                 "command_text": "show status",
                                 "note": "Tech doc",
                                 "device_entries": [],
+                                "images": [],
                             }
                         ],
                     },

@@ -227,6 +227,7 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     "CS",
                     ">",
                     "device-01",
+                    '[{"slot_no": 1, "header_time_text": "09:00", "target_text": "CS", "p_text": ">", "target_device_text": "device-01"}]',
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
                     100,
@@ -243,6 +244,8 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     None,
                     "TT",
                     "show status",
+                    None,
+                    '[{"module_row_image_id": 900, "image_key": "MOD-001_r1_img1", "image_path": "storage/standard/module_images/MOD-001/MOD-001_r1_img1.png", "anchor_cell": "E8", "offset_x_px": 2, "offset_y_px": 3, "width_px": 120, "height_px": 80, "image_order": 1}]',
                 ),
                 (
                     1,
@@ -258,6 +261,7 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     "CS",
                     ">",
                     "device-01",
+                    '[{"slot_no": 1, "header_time_text": "09:00", "target_text": "CS", "p_text": ">", "target_device_text": "device-01"}]',
                     datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
                     datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
                     101,
@@ -274,6 +278,8 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
                     None,
                     "TT",
                     "show log",
+                    None,
+                    "[]",
                 ),
             ]
         ),
@@ -298,6 +304,9 @@ def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) 
     assert result.rows[0].major_no == "1"
     assert result.rows[0].tech_doc_text == "Tech doc"
     assert result.rows[0].indent_level == 1
+    assert result.rows[0].images[0].image_key == "MOD-001_r1_img1"
+    assert result.rows[0].images[0].anchor_cell == "E8"
+    assert result.rows[0].images[0].width_px == 120
     assert result.rows[0].time_text == "□"
     assert result.rows[1].command_text == "show log"
 

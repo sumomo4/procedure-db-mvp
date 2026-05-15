@@ -15,7 +15,7 @@ from app.core.responses import (
     SourceDocListItemData,
     SourceDocModuleItemData,
 )
-from app.db.modules import MODULE_STATUS_LABELS
+from app.db.modules import MODULE_STATUS_LABELS, _map_row_images
 
 
 SOURCE_DOC_STATUS_LABELS = {
@@ -202,12 +202,31 @@ def _build_source_doc_module_rows_query() -> str:
             r.time_text,
             r.window_template_default,
             r.p_template_default,
-            r.command_template_default
+            r.command_template_default,
+            COALESCE(row_images.images_json, '[]'::jsonb) AS images_json
         FROM selected_version sv
         JOIN proc.blueprint_items bi
             ON bi.blueprint_version_id = sv.blueprint_version_id
         JOIN proc.module_rows r
             ON r.module_version_id = bi.module_version_id
+        LEFT JOIN LATERAL (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'module_row_image_id', mri.module_row_image_id,
+                    'image_key', mri.image_key,
+                    'image_path', mri.image_path,
+                    'anchor_cell', mri.anchor_cell,
+                    'offset_x_px', mri.offset_x_px,
+                    'offset_y_px', mri.offset_y_px,
+                    'width_px', mri.width_px,
+                    'height_px', mri.height_px,
+                    'image_order', mri.image_order
+                )
+                ORDER BY mri.image_order, mri.module_row_image_id
+            ) AS images_json
+            FROM proc.module_row_images mri
+            WHERE mri.module_row_id = r.module_row_id
+        ) row_images ON true
         ORDER BY bi.item_order, r.row_order;
     """
 
@@ -257,6 +276,7 @@ def _map_source_doc_detail_rows(
                 p_text=row[13],
                 command_text=row[14],
                 note=row[7],
+                images=_map_row_images(row[15] if len(row) > 15 else None),
             )
         )
 

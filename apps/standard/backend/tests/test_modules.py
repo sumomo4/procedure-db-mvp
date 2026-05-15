@@ -252,6 +252,7 @@ def test_read_module_detail_returns_success_response(
                             "command_text": "show status",
                         }
                     ],
+                    "images": [],
                 }
             ],
         },
