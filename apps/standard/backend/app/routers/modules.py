@@ -183,6 +183,7 @@ def normalize_module_sheet_resource(
 
 @router.post("/import", response_model=ApiResponse[ModuleCreateRequest])
 def import_module_workbook_resource(
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
     payload: bytes = Body(),
     filename: Annotated[str, Query(min_length=1)] = "",
     created_by: Annotated[str | None, Query()] = None,
@@ -200,6 +201,7 @@ def import_module_workbook_resource(
             filename=filename,
             created_by=created_by,
             sheet_name=sheet_name,
+            image_storage_dir=settings.module_image_storage_dir,
         )
     except ValueError as exception:
         raise HTTPException(

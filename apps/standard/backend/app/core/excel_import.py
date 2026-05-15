@@ -3,7 +3,9 @@
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from io import BytesIO
+import posixpath
 from pathlib import Path
+import re
 from typing import Any
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
@@ -12,6 +14,7 @@ from app.core.responses import (
     ModuleCreateDeviceHeaderInput,
     ModuleCreateRequest,
     ModuleCreateRowDeviceEntryInput,
+    ModuleCreateRowImageInput,
     ModuleCreateRowInput,
 )
 
@@ -26,10 +29,13 @@ COMMON_ROW_COLUMN_MAP = {
 }
 MAX_DEVICE_SLOTS = 20
 OFFICE_DOCUMENT_NS = {
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
     "pkgrel": "http://schemas.openxmlformats.org/package/2006/relationships",
 }
+EMU_PER_PIXEL = 9525
 HEADER_LABEL_SKIP_SET = {
     "時刻",
     "target",
@@ -108,6 +114,44 @@ def _split_cell_reference(cell_reference: str) -> tuple[str, int]:
     return column_letters, int(row_digits)
 
 
+def _resolve_related_part_path(source_part_path: str, target: str) -> str:
+    """Resolve an OOXML relationship target to a ZIP part path."""
+
+    normalized_target = target.replace("\\", "/")
+    if normalized_target.startswith("/"):
+        return normalized_target.lstrip("/")
+    return posixpath.normpath(posixpath.join(posixpath.dirname(source_part_path), normalized_target))
+
+
+def _relationship_map(archive: ZipFile, rels_path: str) -> dict[str, tuple[str, str]]:
+    """Read an OOXML relationship file as ``id -> (type, target)``."""
+
+    if rels_path not in archive.namelist():
+        return {}
+
+    root = ElementTree.fromstring(archive.read(rels_path))
+    return {
+        rel.attrib["Id"]: (rel.attrib.get("Type", ""), rel.attrib.get("Target", ""))
+        for rel in root.findall("pkgrel:Relationship", OFFICE_DOCUMENT_NS)
+        if "Id" in rel.attrib
+    }
+
+
+def _safe_image_key_part(value: str) -> str:
+    """Normalize a text fragment for image keys and paths."""
+
+    normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_")
+    return normalized.lower() or "module"
+
+
+def _emu_to_px(value: str | int | None) -> int:
+    """Convert Excel EMU coordinates to approximate pixels."""
+
+    if value in (None, ""):
+        return 0
+    return round(int(value) / EMU_PER_PIXEL)
+
+
 def _read_xlsx_shared_strings(archive: ZipFile) -> list[str]:
     """Read shared strings from an XLSX/XLSM archive when present."""
 
@@ -162,6 +206,103 @@ def _extract_sheet_rows(archive: ZipFile, sheet_path: str) -> tuple[str | None, 
     return sheet_name, rows
 
 
+def _extract_sheet_images(
+    *,
+    archive: ZipFile,
+    sheet_path: str,
+    image_storage_dir: str | Path | None,
+    source_sha256: str,
+) -> dict[int, list[dict[str, int | str | None]]]:
+    """Extract worksheet images, save them, and return metadata by Excel row."""
+
+    if image_storage_dir is None:
+        return {}
+
+    sheet_rels_path = posixpath.join(
+        posixpath.dirname(sheet_path),
+        "_rels",
+        f"{posixpath.basename(sheet_path)}.rels",
+    )
+    sheet_relationships = _relationship_map(archive, sheet_rels_path)
+    drawing_targets = [
+        target
+        for relationship_type, target in sheet_relationships.values()
+        if relationship_type.endswith("/drawing") and target
+    ]
+    if not drawing_targets:
+        return {}
+
+    storage_root = Path(image_storage_dir)
+    source_key = _safe_image_key_part(source_sha256[:12])
+    target_dir = storage_root / source_key
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    images_by_row: dict[int, list[dict[str, int | str | None]]] = {}
+    image_counts_by_row: dict[int, int] = {}
+
+    for drawing_target in drawing_targets:
+        drawing_path = _resolve_related_part_path(sheet_path, drawing_target)
+        if drawing_path not in archive.namelist():
+            continue
+
+        drawing_rels_path = posixpath.join(
+            posixpath.dirname(drawing_path),
+            "_rels",
+            f"{posixpath.basename(drawing_path)}.rels",
+        )
+        drawing_relationships = _relationship_map(archive, drawing_rels_path)
+        drawing_root = ElementTree.fromstring(archive.read(drawing_path))
+
+        for anchor_node in list(drawing_root.findall("xdr:oneCellAnchor", OFFICE_DOCUMENT_NS)) + list(
+            drawing_root.findall("xdr:twoCellAnchor", OFFICE_DOCUMENT_NS)
+        ):
+            from_node = anchor_node.find("xdr:from", OFFICE_DOCUMENT_NS)
+            blip_node = anchor_node.find(".//a:blip", OFFICE_DOCUMENT_NS)
+            if from_node is None or blip_node is None:
+                continue
+
+            embed_id = blip_node.attrib.get(f"{{{OFFICE_DOCUMENT_NS['rel']}}}embed")
+            if embed_id is None or embed_id not in drawing_relationships:
+                continue
+
+            _, media_target = drawing_relationships[embed_id]
+            media_path = _resolve_related_part_path(drawing_path, media_target)
+            if media_path not in archive.namelist():
+                continue
+
+            row_node = from_node.find("xdr:row", OFFICE_DOCUMENT_NS)
+            col_node = from_node.find("xdr:col", OFFICE_DOCUMENT_NS)
+            if row_node is None or col_node is None or row_node.text is None or col_node.text is None:
+                continue
+
+            row_index = int(row_node.text) + 1
+            column_index = int(col_node.text) + 1
+            image_counts_by_row[row_index] = image_counts_by_row.get(row_index, 0) + 1
+            image_order = image_counts_by_row[row_index]
+            image_key = f"img_{source_key}_r{row_index}_img{image_order}"
+            extension = Path(media_path).suffix.lower() or ".png"
+            image_path = target_dir / f"{image_key}{extension}"
+            image_path.write_bytes(archive.read(media_path))
+
+            ext_node = anchor_node.find("xdr:ext", OFFICE_DOCUMENT_NS)
+            col_off_node = from_node.find("xdr:colOff", OFFICE_DOCUMENT_NS)
+            row_off_node = from_node.find("xdr:rowOff", OFFICE_DOCUMENT_NS)
+            images_by_row.setdefault(row_index, []).append(
+                {
+                    "image_key": image_key,
+                    "image_path": image_path.as_posix(),
+                    "anchor_cell": f"{_column_index_to_letters(column_index)}{row_index}",
+                    "offset_x_px": _emu_to_px(col_off_node.text if col_off_node is not None else None),
+                    "offset_y_px": _emu_to_px(row_off_node.text if row_off_node is not None else None),
+                    "width_px": _emu_to_px(ext_node.attrib.get("cx")) if ext_node is not None else None,
+                    "height_px": _emu_to_px(ext_node.attrib.get("cy")) if ext_node is not None else None,
+                    "image_order": image_order,
+                }
+            )
+
+    return images_by_row
+
+
 def _resolve_workbook_sheet_path(archive: ZipFile, sheet_name: str | None = None) -> tuple[str, str]:
     """Resolve the first or named sheet path inside the workbook archive."""
 
@@ -201,10 +342,16 @@ def _resolve_workbook_sheet_path(archive: ZipFile, sheet_name: str | None = None
 def _find_header_row_index(rows: Sequence[tuple[int, dict[str, str | None]]]) -> int | None:
     """Find the table header row by matching common procedure labels."""
 
-    required_labels = {"大", "中", "小", "作業内容"}
+    required_label_sets = (
+        {"大", "中", "小", "作業内容"},
+        {"major", "middle", "minor", "work"},
+    )
     for row_index, cell_map in rows:
         normalized_values = {_normalize_label_text(value) for value in cell_map.values() if value}
-        if all(_normalize_label_text(label) in normalized_values for label in required_labels):
+        if any(
+            all(_normalize_label_text(label) in normalized_values for label in required_labels)
+            for required_labels in required_label_sets
+        ):
             return row_index
     return None
 
@@ -241,12 +388,14 @@ def _extract_device_headers_from_rows(
 def _build_sheet_rows_from_cells(
     rows_after_header: Sequence[tuple[int, dict[str, str | None]]],
     device_count: int,
+    row_images_by_row_index: Mapping[int, Sequence[Mapping[str, int | str | None]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert worksheet rows after the header into helper-compatible row cells."""
 
     normalized_rows: list[dict[str, Any]] = []
+    row_images_by_row_index = row_images_by_row_index or {}
 
-    for _, cell_map in rows_after_header:
+    for row_index, cell_map in rows_after_header:
         row_payload: dict[str, Any] = {column_name: cell_map.get(column_name) for column_name in COMMON_ROW_COLUMN_MAP}
         row_payload.update({column_name: cell_map.get(column_name) for column_name in WORK_TEXT_COLUMNS})
 
@@ -264,6 +413,7 @@ def _build_sheet_rows_from_cells(
             )
 
         row_payload["device_entries"] = device_entries
+        row_payload["images"] = list(row_images_by_row_index.get(row_index, []))
         normalized_rows.append(row_payload)
 
     return normalized_rows
@@ -369,6 +519,27 @@ def _normalize_sheet_row_device_entries(
     return sorted(normalized_entries, key=lambda item: item.slot_no)
 
 
+def _normalize_sheet_row_images(
+    raw_images: Sequence[Mapping[str, object | None]],
+) -> list[ModuleCreateRowImageInput]:
+    """Normalize image metadata extracted from one Excel row."""
+
+    normalized_images = [
+        ModuleCreateRowImageInput(
+            image_key=str(raw_image.get("image_key") or "").strip(),
+            image_path=str(raw_image.get("image_path") or "").strip(),
+            anchor_cell=str(raw_image.get("anchor_cell") or "").strip(),
+            offset_x_px=int(raw_image.get("offset_x_px") or 0),
+            offset_y_px=int(raw_image.get("offset_y_px") or 0),
+            width_px=int(raw_image["width_px"]) if raw_image.get("width_px") is not None else None,
+            height_px=int(raw_image["height_px"]) if raw_image.get("height_px") is not None else None,
+            image_order=int(raw_image.get("image_order") or 1),
+        )
+        for raw_image in raw_images
+    ]
+    return sorted(normalized_images, key=lambda item: item.image_order)
+
+
 def build_module_create_request_from_sheet_data(
     *,
     module_name: str,
@@ -413,11 +584,13 @@ def build_module_create_request_from_sheet_data(
             raw_row.get("device_entries", []) or [],
             allowed_slot_nos,
         )
+        images = _normalize_sheet_row_images(raw_row.get("images", []) or [])
 
         if (
             work_text is None
             and all(value is None for value in common_values.values())
             and not device_entries
+            and not images
         ):
             continue
 
@@ -433,6 +606,7 @@ def build_module_create_request_from_sheet_data(
                 indent_level=indent_level,
                 expected_result=common_values["expected_result"],
                 device_entries=device_entries,
+                images=images,
             )
         )
 
@@ -460,6 +634,7 @@ def build_module_create_request_from_workbook_bytes(
     filename: str,
     created_by: str | None = None,
     sheet_name: str | None = None,
+    image_storage_dir: str | Path | None = None,
 ) -> ModuleCreateRequest:
     """Convert an uploaded XLSX/XLSM workbook into ``ModuleCreateRequest``.
 
@@ -474,10 +649,17 @@ def build_module_create_request_from_workbook_bytes(
     if extension not in {".xlsx", ".xlsm"}:
         raise ValueError("filename must end with .xlsx or .xlsm.")
 
+    source_hash = sha256(workbook_bytes).hexdigest()
     try:
         with ZipFile(BytesIO(workbook_bytes)) as archive:
             selected_sheet_name, sheet_path = _resolve_workbook_sheet_path(archive, sheet_name=sheet_name)
             _, extracted_rows = _extract_sheet_rows(archive, sheet_path)
+            row_images_by_row_index = _extract_sheet_images(
+                archive=archive,
+                sheet_path=sheet_path,
+                image_storage_dir=image_storage_dir,
+                source_sha256=source_hash,
+            )
     except BadZipFile as exception:
         raise ValueError("Uploaded file is not a valid XLSX/XLSM workbook.") from exception
     except KeyError as exception:
@@ -513,8 +695,8 @@ def build_module_create_request_from_workbook_bytes(
         description=None,
         change_note="imported from workbook upload",
         source_xlsx_path=filename,
-        source_sha256=sha256(workbook_bytes).hexdigest(),
+        source_sha256=source_hash,
         created_by=created_by,
         device_header_cells=_extract_device_headers_from_rows(rows_before_header, device_count),
-        row_cells=_build_sheet_rows_from_cells(rows_after_header, device_count),
+        row_cells=_build_sheet_rows_from_cells(rows_after_header, device_count, row_images_by_row_index),
     )

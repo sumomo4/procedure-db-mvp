@@ -184,6 +184,7 @@ type ModuleImportPreviewRowData = {
   command_text: string | null;
   note: string | null;
   device_entries: ModuleImportPreviewRowDeviceEntryData[];
+  images: ModuleRowImageData[];
 };
 
 type ModuleImportPreviewData = {
@@ -221,6 +222,7 @@ type ModuleRegisterRowDraft = {
   workText: string;
   expectedResult: string;
   deviceEntries: ModuleRegisterDeviceEntryDraft[];
+  images: ModuleRowImageData[];
 };
 
 type ModuleRegisterDeviceHeaderDraft = {
@@ -1506,6 +1508,7 @@ function ModuleRegisterPage() {
           commandText: "show version",
         },
       ],
+      images: [],
     },
   ]);
   const [createState, setCreateState] = useState<ModuleCreateState>({
@@ -1642,6 +1645,7 @@ function ModuleRegisterPage() {
           pText: "",
           commandText: "",
         })),
+        images: [],
       },
     ]);
     setRowSeed((currentSeed) => currentSeed + 1);
@@ -1696,6 +1700,7 @@ function ModuleRegisterPage() {
               p_text: entry.pText.trim() || undefined,
               command_text: entry.commandText.trim() || undefined,
             })),
+            images: row.images,
           })),
         }),
       });
@@ -2153,6 +2158,7 @@ function ModuleRegisterPageV2() {
     workText: string;
     expectedResult: string;
     deviceEntries: ModuleRegisterDeviceEntryDraft[];
+    images: ModuleRowImageData[];
   };
 
   const navigate = useNavigate();
@@ -2192,6 +2198,7 @@ function ModuleRegisterPageV2() {
           commandText: "show version",
         },
       ],
+      images: [],
     },
   ]);
   const [createState, setCreateState] = useState<ModuleCreateState>({
@@ -2242,6 +2249,7 @@ function ModuleRegisterPageV2() {
       workText: "",
       expectedResult: "",
       deviceEntries: deviceHeaders.map((header) => blankDeviceEntry(header.slotNo)),
+      images: [],
     };
   }
 
@@ -2368,6 +2376,7 @@ function ModuleRegisterPageV2() {
             techDocText: row.tech_doc_text ?? "",
             workText: row.work_text ?? "",
             expectedResult: row.expected_result ?? "",
+            images: row.images ?? [],
             deviceEntries: nextHeaders.map((header) => {
               const entry = row.device_entries.find((candidate) => candidate.slot_no === header.slotNo);
               return {
@@ -4338,7 +4347,7 @@ function convertImportPreviewToModuleDetail(item: ModuleImportPreviewData): Modu
         p_text: entry.p_text,
         command_text: entry.command_text,
       })),
-      images: [],
+      images: row.images ?? [],
     })),
   };
 }

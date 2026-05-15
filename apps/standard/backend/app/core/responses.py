@@ -212,6 +212,19 @@ class ModuleCreateRowDeviceEntryInput(BaseModel):
     command_text: str | None = None
 
 
+class ModuleCreateRowImageInput(BaseModel):
+    """Image metadata input attached to one module row."""
+
+    image_key: str = Field(min_length=1)
+    image_path: str = Field(min_length=1)
+    anchor_cell: str = Field(min_length=1)
+    offset_x_px: int = 0
+    offset_y_px: int = 0
+    width_px: int | None = None
+    height_px: int | None = None
+    image_order: int = Field(default=1, gt=0)
+
+
 class ModuleCreateDeviceHeaderInput(BaseModel):
     """Device-specific header input payload for a module version."""
 
@@ -240,6 +253,7 @@ class ModuleCreateRowInput(BaseModel):
     command_text: str | None = None
     note: str | None = None
     device_entries: list[ModuleCreateRowDeviceEntryInput] = Field(default_factory=list)
+    images: list[ModuleCreateRowImageInput] = Field(default_factory=list)
 
 
 class ModuleCreateRequest(BaseModel):

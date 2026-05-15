@@ -63,6 +63,7 @@ def test_get_settings_loads_case_doc_master_env(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("CASE_DOC_MASTER_SOURCE", "seed")
     monkeypatch.setenv("CASE_DOC_ACCESS_EXPORT_DIR", "/tmp/access_exports")
     monkeypatch.setenv("CASE_DOC_IMPORT_STRICT", "false")
+    monkeypatch.setenv("MODULE_IMAGE_STORAGE_DIR", "/tmp/module_images")
     get_settings.cache_clear()
 
     settings = get_settings()
@@ -70,5 +71,6 @@ def test_get_settings_loads_case_doc_master_env(monkeypatch: pytest.MonkeyPatch)
     assert settings.case_doc_master_source == "seed"
     assert settings.case_doc_access_export_dir == "/tmp/access_exports"
     assert settings.case_doc_import_strict is False
+    assert settings.module_image_storage_dir == "/tmp/module_images"
 
     get_settings.cache_clear()

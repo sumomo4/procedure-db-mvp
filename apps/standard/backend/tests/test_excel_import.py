@@ -1,6 +1,7 @@
 """Tests for future Excel import helpers."""
 
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
@@ -16,6 +17,8 @@ from app.core.excel_import import (
 def _create_test_workbook_bytes(
     sheet_name: str,
     rows: list[dict[str, str]],
+    *,
+    image_anchor_cell: str | None = None,
 ) -> bytes:
     """Build a minimal XLSX archive for parser tests."""
 
@@ -33,10 +36,15 @@ def _create_test_workbook_bytes(
             )
         row_xml_parts.append(f'<row r="{row_index}">{"".join(cell_xml_parts)}</row>')
 
+    drawing_xml = '<drawing r:id="rIdDrawing1"/>'
+    worksheet_attributes = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    if image_anchor_cell is not None:
+        worksheet_attributes += ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
     worksheet_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"<worksheet {worksheet_attributes}>"
         f"<sheetData>{''.join(row_xml_parts)}</sheetData>"
+        f"{drawing_xml if image_anchor_cell is not None else ''}"
         "</worksheet>"
     )
     workbook_xml = (
@@ -61,6 +69,49 @@ def _create_test_workbook_bytes(
         archive.writestr("xl/workbook.xml", workbook_xml)
         archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
         archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
+        if image_anchor_cell is not None:
+            column_letters = "".join(character for character in image_anchor_cell if character.isalpha())
+            row_digits = "".join(character for character in image_anchor_cell if character.isdigit())
+            column_index = 0
+            for letter in column_letters:
+                column_index = column_index * 26 + (ord(letter.upper()) - ord("A") + 1)
+            row_index = int(row_digits)
+            worksheet_rels_xml = (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rIdDrawing1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" '
+                'Target="../drawings/drawing1.xml"/>'
+                "</Relationships>"
+            )
+            drawing_part_xml = (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" '
+                'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+                'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                "<xdr:oneCellAnchor>"
+                "<xdr:from>"
+                f"<xdr:col>{column_index - 1}</xdr:col><xdr:colOff>9525</xdr:colOff>"
+                f"<xdr:row>{row_index - 1}</xdr:row><xdr:rowOff>19050</xdr:rowOff>"
+                "</xdr:from>"
+                '<xdr:ext cx="95250" cy="190500"/>'
+                "<xdr:pic><xdr:blipFill><a:blip r:embed=\"rIdImage1\"/></xdr:blipFill></xdr:pic>"
+                "<xdr:clientData/>"
+                "</xdr:oneCellAnchor>"
+                "</xdr:wsDr>"
+            )
+            drawing_rels_xml = (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rIdImage1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+                'Target="../media/image1.png"/>'
+                "</Relationships>"
+            )
+            archive.writestr("xl/worksheets/_rels/sheet1.xml.rels", worksheet_rels_xml)
+            archive.writestr("xl/drawings/drawing1.xml", drawing_part_xml)
+            archive.writestr("xl/drawings/_rels/drawing1.xml.rels", drawing_rels_xml)
+            archive.writestr("xl/media/image1.png", b"fake-png-bytes")
 
     return buffer.getvalue()
 
@@ -269,16 +320,15 @@ def test_build_module_create_request_from_workbook_bytes_supports_minimal_xlsx()
         "SheetImport",
         rows=[
             {
-                "A1": "大",
-                "B1": "中",
-                "C1": "小",
-                "D1": "技術資料名",
-                "F1": "作業内容",
-                "I1": "確認事項",
-                "J1": "時刻",
+                "A1": "major",
+                "B1": "middle",
+                "C1": "minor",
+                "F1": "work",
+                "I1": "expected",
+                "J1": "time",
                 "K1": "window",
                 "L1": "P",
-                "M1": "コマンド",
+                "M1": "command",
             },
             {
                 "A2": "1",
@@ -307,6 +357,45 @@ def test_build_module_create_request_from_workbook_bytes_supports_minimal_xlsx()
     assert len(payload.device_headers) == 1
     assert payload.rows[0].work_text == "Check command"
     assert payload.rows[0].device_entries[0].command_text == "show version"
+
+
+def test_build_module_create_request_from_workbook_bytes_extracts_row_images(tmp_path) -> None:
+    """Images anchored to data rows should be saved and attached to row metadata."""
+
+    workbook_bytes = _create_test_workbook_bytes(
+        "SheetImport",
+        rows=[
+            {
+                "A1": "major",
+                "B1": "middle",
+                "C1": "minor",
+                "F1": "work",
+            },
+            {
+                "A2": "1",
+                "B2": "1",
+                "C2": "1",
+                "E2": "Step with image",
+            },
+        ],
+        image_anchor_cell="E2",
+    )
+
+    payload = build_module_create_request_from_workbook_bytes(
+        workbook_bytes=workbook_bytes,
+        filename="sample.xlsx",
+        image_storage_dir=tmp_path / "module_images",
+    )
+
+    assert len(payload.rows[0].images) == 1
+    image = payload.rows[0].images[0]
+    assert image.anchor_cell == "E2"
+    assert image.offset_x_px == 1
+    assert image.offset_y_px == 2
+    assert image.width_px == 10
+    assert image.height_px == 20
+    assert image.image_path.endswith(".png")
+    assert Path(image.image_path).read_bytes() == b"fake-png-bytes"
 
 
 def test_build_module_create_request_from_workbook_bytes_rejects_invalid_extension() -> None:

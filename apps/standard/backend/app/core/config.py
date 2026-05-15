@@ -33,6 +33,7 @@ class AppSettings(BaseModel):
         case_doc_access_export_dir: Directory where Access export files are placed.
         case_doc_import_strict: Whether Access export import should fail on validation warnings.
         case_doc_placeholder_mapping_path: YAML path for case document placeholder mappings.
+        module_image_storage_dir: Directory where extracted module row images are stored.
     """
 
     app_env: str = Field(default="standard")
@@ -49,6 +50,7 @@ class AppSettings(BaseModel):
     case_doc_access_export_dir: str = Field(default="/app/storage/access_exports")
     case_doc_import_strict: bool = Field(default=True)
     case_doc_placeholder_mapping_path: str = Field(default="app/config/placeholder_mapping.yml")
+    module_image_storage_dir: str = Field(default="/app/storage/module_images")
 
     @property
     def database_url(self) -> str:
@@ -142,4 +144,5 @@ def get_settings() -> AppSettings:
             "CASE_DOC_PLACEHOLDER_MAPPING_PATH",
             "app/config/placeholder_mapping.yml",
         ),
+        module_image_storage_dir=os.environ.get("MODULE_IMAGE_STORAGE_DIR", "/app/storage/module_images"),
     )

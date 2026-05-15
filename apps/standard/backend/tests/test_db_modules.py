@@ -8,7 +8,7 @@ import pytest
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.core.responses import ModuleCreateRequest, ModuleCreateRowInput
+from app.core.responses import ModuleCreateRequest, ModuleCreateRowImageInput, ModuleCreateRowInput
 from app.db.modules import create_module, get_module_detail, list_modules
 
 
@@ -432,6 +432,18 @@ def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -
                 window_text="console",
                 p_text=">",
                 command_text="show version",
+                images=[
+                    ModuleCreateRowImageInput(
+                        image_key="MOD-004_r2_img1",
+                        image_path="storage/standard/module_images/MOD-004/MOD-004_r2_img1.png",
+                        anchor_cell="E12",
+                        offset_x_px=1,
+                        offset_y_px=2,
+                        width_px=120,
+                        height_px=80,
+                        image_order=1,
+                    )
+                ],
             ),
             ModuleCreateRowInput(
                 row_order=1,
@@ -458,6 +470,7 @@ def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -
     assert "INSERT INTO proc.modules" in executed_queries
     assert "INSERT INTO proc.module_versions" in executed_queries
     assert "INSERT INTO proc.module_rows" in executed_queries
+    assert "INSERT INTO proc.module_row_images" in executed_queries
 
 
 def test_create_module_rejects_duplicate_row_order() -> None:

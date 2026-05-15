@@ -492,6 +492,9 @@ def _validate_module_create_request(payload: ModuleCreateRequest) -> None:
         row_slot_nos = [entry.slot_no for entry in _normalize_row_device_entries(row, allowed_slot_nos)]
         if len(row_slot_nos) != len(set(row_slot_nos)):
             raise ValueError("slot_no must be unique within row device_entries.")
+        image_keys = [image.image_key for image in row.images]
+        if len(image_keys) != len(set(image_keys)):
+            raise ValueError("image_key must be unique within row images.")
 
 
 def _generate_next_module_key(cursor: Any) -> str:
@@ -761,7 +764,49 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                             ),
                         },
                     )
-                    cursor.fetchone()
+                    inserted_row = cursor.fetchone()
+                    if inserted_row is None:
+                        raise DatabaseConnectionError("Module create failed.")
+                    module_row_id = int(inserted_row[0])
+
+                    for image in sorted(row.images, key=lambda item: item.image_order):
+                        cursor.execute(
+                            """
+                            INSERT INTO proc.module_row_images (
+                                module_row_id,
+                                image_key,
+                                image_path,
+                                anchor_cell,
+                                offset_x_px,
+                                offset_y_px,
+                                width_px,
+                                height_px,
+                                image_order
+                            )
+                            VALUES (
+                                %(module_row_id)s,
+                                %(image_key)s,
+                                %(image_path)s,
+                                %(anchor_cell)s,
+                                %(offset_x_px)s,
+                                %(offset_y_px)s,
+                                %(width_px)s,
+                                %(height_px)s,
+                                %(image_order)s
+                            );
+                            """,
+                            {
+                                "module_row_id": module_row_id,
+                                "image_key": image.image_key,
+                                "image_path": image.image_path,
+                                "anchor_cell": image.anchor_cell,
+                                "offset_x_px": image.offset_x_px,
+                                "offset_y_px": image.offset_y_px,
+                                "width_px": image.width_px,
+                                "height_px": image.height_px,
+                                "image_order": image.image_order,
+                            },
+                        )
 
             if module_id is None:
                 raise DatabaseConnectionError("Module create failed.")
