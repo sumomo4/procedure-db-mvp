@@ -166,6 +166,9 @@ def test_standard_seed_does_not_use_legacy_case_doc_placeholders() -> None:
     assert "{{DEVICE_NAME}}" not in sql_text
     assert "{{HOST}}" not in sql_text
     assert "大項番作業名ダイコウバンサギョウメイ" not in sql_text
+    assert "CREATE TABLE IF NOT EXISTS proc.module_row_images" in sql_text
+    assert "REFERENCES proc.module_rows (module_row_id) ON DELETE CASCADE" in sql_text
+    assert "UNIQUE (module_row_id, image_key)" in sql_text
     assert "testpass" not in sql_text
     assert "su_testpass" not in sql_text
     assert "show tty" not in sql_text

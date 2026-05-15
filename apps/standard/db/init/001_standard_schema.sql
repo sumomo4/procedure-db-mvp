@@ -77,6 +77,25 @@ CREATE TABLE IF NOT EXISTS proc.module_rows (
 CREATE INDEX IF NOT EXISTS idx_module_rows_module_version_id
     ON proc.module_rows (module_version_id);
 
+CREATE TABLE IF NOT EXISTS proc.module_row_images (
+    module_row_image_id bigserial PRIMARY KEY,
+    module_row_id bigint NOT NULL REFERENCES proc.module_rows (module_row_id) ON DELETE CASCADE,
+    image_key text NOT NULL,
+    image_path text NOT NULL,
+    anchor_cell text NOT NULL,
+    offset_x_px integer NOT NULL DEFAULT 0,
+    offset_y_px integer NOT NULL DEFAULT 0,
+    width_px integer,
+    height_px integer,
+    image_order integer NOT NULL DEFAULT 1 CHECK (image_order > 0),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (module_row_id, image_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_module_row_images_module_row_id
+    ON proc.module_row_images (module_row_id);
+
 ALTER TABLE proc.module_rows
     ADD COLUMN IF NOT EXISTS time_text text;
 
@@ -544,7 +563,7 @@ SET device_entries_json = jsonb_build_array(
 WHERE device_entries_json = '[]'::jsonb;
 
 INSERT INTO app_metadata (key, value)
-VALUES ('schema_version', '0.4.0')
+VALUES ('schema_version', '0.5.0')
 ON CONFLICT (key)
 DO UPDATE SET
     value = EXCLUDED.value,
