@@ -202,14 +202,14 @@ SELECT
 FROM (
     VALUES
         ('MOD-001', 1, 'header', '大', '中', '小', '技術資料名', '作業内容', '確認事項', 'window', 'P', 'コマンド'),
-        ('MOD-001', 2, 'step', '1', '', '', '初期点検資料', '作業開始前の状態を確認する', '対象装置が作業可能な状態であること', '{{HOST}}', '{{USER}}', 'show status'),
-        ('MOD-001', 3, 'step', '1', '1', '', '初期点検資料', '作業開始前のログを取得する', 'ログ取得が完了していること', '{{HOST}}', '{{USER}}', 'show log'),
+        ('MOD-001', 2, 'step', '1', '', '', '初期点検資料', '作業開始前の状態を確認する', '対象装置が作業可能な状態であること', '{{TARGET_DEVICE_HOSTNAME}}', '{{LOGIN_USER}}', 'show status'),
+        ('MOD-001', 3, 'step', '1', '1', '', '初期点検資料', '作業開始前のログを取得する', 'ログ取得が完了していること', '{{TARGET_DEVICE_HOSTNAME}}', '{{LOGIN_USER}}', 'show log'),
         ('MOD-002', 1, 'header', '大', '中', '小', '技術資料名', '作業内容', '確認事項', 'window', 'P', 'コマンド'),
-        ('MOD-002', 2, 'step', '2', '', '', '部品交換資料', '交換対象部品を確認する', '交換対象が一致していること', '{{DEVICE_NAME}}', '{{USER}}', 'show inventory'),
-        ('MOD-002', 3, 'step', '2', '1', '', '部品交換資料', '部品交換後の状態を確認する', '異常がないこと', '{{DEVICE_NAME}}', '{{USER}}', 'show hardware'),
+        ('MOD-002', 2, 'step', '2', '', '', '部品交換資料', '交換対象部品を確認する', '交換対象が一致していること', '{{TARGET_DEVICE_HOSTNAME}}', '{{LOGIN_USER}}', 'show inventory'),
+        ('MOD-002', 3, 'step', '2', '1', '', '部品交換資料', '部品交換後の状態を確認する', '異常がないこと', '{{TARGET_DEVICE_HOSTNAME}}', '{{LOGIN_USER}}', 'show hardware'),
         ('MOD-003', 1, 'header', '大', '中', '小', '技術資料名', '作業内容', '確認事項', 'window', 'P', 'コマンド'),
-        ('MOD-003', 2, 'step', '3', '', '', '復旧確認資料', '通信状態を確認する', '疎通が正常であること', '{{NW_ADDRESS}}', '{{USER}}', 'ping {{NW_ADDRESS}}'),
-        ('MOD-003', 3, 'step', '3', '1', '', '復旧確認資料', '復旧後のサービス状態を確認する', 'サービスが正常であること', '{{HOST}}', '{{USER}}', 'show service')
+        ('MOD-003', 2, 'step', '3', '', '', '復旧確認資料', '通信状態を確認する', '疎通が正常であること', '{{SBC_COMMAND_FLOATING_IP}}', '{{LOGIN_USER}}', 'ping {{SBC_COMMAND_FLOATING_IP}}'),
+        ('MOD-003', 3, 'step', '3', '1', '', '復旧確認資料', '復旧後のサービス状態を確認する', 'サービスが正常であること', '{{TARGET_DEVICE_HOSTNAME}}', '{{LOGIN_USER}}', 'show service')
 ) AS seed(
     module_key,
     row_order,
@@ -330,7 +330,7 @@ SELECT
     seed.command_template_default
 FROM (
     VALUES
-        ('MOD-001', 6, 'header', '0', '0', '0', NULL, '大項番作業名ダイコウバンサギョウメイ', NULL, NULL, NULL, NULL, NULL),
+        ('MOD-001', 6, 'header', '0', '0', '0', NULL, '大項番作業名', NULL, NULL, NULL, NULL, NULL),
         ('MOD-001', 7, 'step', '0', '1', '1', NULL, '作業で使用するPCのTeraTerm設定を下記の通り変更する。', NULL, NULL, NULL, NULL, NULL),
         ('MOD-001', 8, 'step', '0', '1', '2', NULL, '①TeraTermを起動し、「設定」→「その他の設定」→「ログ」を開く', 'ログ画面が開くこと', '□', NULL, 'TT', NULL),
         ('MOD-001', 9, 'step', '0', '1', '3', NULL, '②その他の設定画面で以下の通り設定する', '設定が完了すること', NULL, NULL, NULL, NULL),
@@ -343,16 +343,16 @@ FROM (
         ('MOD-001', 16, 'step', '0', '1', '4', NULL, '③OKを押し、「設定」→「設定の保存」を実施する。', '設定が保存できること', '□', NULL, 'TT', NULL),
         ('MOD-001', 18, 'step', '0', '2', '1', NULL, '作業端末(Windows)の時刻設定を実施する。(ずれている場合のみでOK)', NULL, NULL, NULL, NULL, NULL),
         ('MOD-001', 19, 'step', '0', '2', '2', NULL, '①タスクバーの時計を右クリックし「日付と時刻の調整」を選択する。', '日付と時刻の調整が開くこと', '□', NULL, 'WIN', NULL),
-        ('MOD-001', 20, 'step', '0', '2', '3', NULL, '②右記サーバと時刻同期を行う', '同期が成功すること', '□', NULL, 'WIN', '{{NW_ADDRESS}}'),
+        ('MOD-001', 20, 'step', '0', '2', '3', NULL, '②右記サーバと時刻同期を行う', '同期が成功すること', '□', NULL, 'WIN', '{{SBC_COMMAND_FLOATING_IP}}'),
         ('MOD-001', 22, 'step', '0', '3', '1', NULL, '装置が同一TTSに接続されていることを確認する', '工事情報入力シートを確認してTTSホスト名がすべて同一であること', '□', NULL, 'chk', NULL),
         ('MOD-001', 24, 'step', '0', '4', '1', NULL, 'XXX番号を伝えて工事開始連絡を行う　※対象TTSが商用INしている場合', '正常に工事開始連絡できること', '□', NULL, 'chk', NULL),
         ('MOD-001', 25, 'step', '0', '4', '2', NULL, '連絡先：xx-xxxx-xxxx', NULL, NULL, NULL, NULL, NULL),
         ('MOD-001', 38, 'meta', NULL, NULL, NULL, NULL, '連絡事項', NULL, NULL, NULL, NULL, NULL),
-        ('MOD-002', 6, 'header', '1', '0', '0', NULL, '大項番作業名ダイコウバンサギョウメイ', NULL, NULL, NULL, NULL, NULL),
-        ('MOD-002', 7, 'step', '1', '1', '1', NULL, 'TeraTermを起動し、TTSに右記設定で接続する', 'ホスト：', '□', NULL, 'TT', '{{NW_ADDRESS}}'),
+        ('MOD-002', 6, 'header', '1', '0', '0', NULL, '大項番作業名', NULL, NULL, NULL, NULL, NULL),
+        ('MOD-002', 7, 'step', '1', '1', '1', NULL, 'TeraTermを起動し、TTSに右記設定で接続する', 'ホスト：', '□', NULL, 'TT', '{{SBC_COMMAND_FLOATING_IP}}'),
         ('MOD-002', 8, 'step', NULL, NULL, NULL, NULL, NULL, 'サービス：', '□', NULL, 'TT', 'Telnet'),
         ('MOD-002', 9, 'step', NULL, NULL, NULL, NULL, NULL, 'TCPポート：', '□', NULL, 'TT', '23'),
-        ('MOD-002', 10, 'step', NULL, NULL, NULL, NULL, NULL, 'ユーザ名：', '□', NULL, 'TT', '{{USER}}'),
+        ('MOD-002', 10, 'step', NULL, NULL, NULL, NULL, NULL, 'ユーザ名：', '□', NULL, 'TT', '{{LOGIN_USER}}'),
         ('MOD-002', 11, 'step', NULL, NULL, NULL, NULL, NULL, 'パスフレーズ：', '□', NULL, 'TT', 'testpass'),
         ('MOD-002', 12, 'step', NULL, NULL, NULL, NULL, NULL, 'メニューに表示されるホスト名がTEST-tts-001500であること', '□', NULL, 'chk', NULL),
         ('MOD-002', 14, 'step', '1', '2', '1', NULL, '特権モードに変更する', 'コマンドエラーないこと', '□', NULL, '>', 'su'),

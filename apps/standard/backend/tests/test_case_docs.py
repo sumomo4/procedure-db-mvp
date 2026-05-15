@@ -74,6 +74,23 @@ def _fake_source_doc_detail(source_doc_id: int) -> SourceDocDetailData:
                     ModuleRowData(
                         module_row_id=1001,
                         row_order=2,
+                        row_type="work",
+                        major_no="0",
+                        middle_no="1",
+                        minor_no="2",
+                        tech_doc_text="",
+                        work_text="\u2460TeraTerm\u3092\u8d77\u52d5\u3059\u308b",
+                        indent_level=1,
+                        expected_result="\u30ed\u30b0\u753b\u9762\u304c\u958b\u304f\u3053\u3068",
+                        time_text=None,
+                        window_text=None,
+                        p_text=None,
+                        command_text="{{SBC_COMMAND_FLOATING_IP}}",
+                        note=None,
+                    ),
+                    ModuleRowData(
+                        module_row_id=1002,
+                        row_order=3,
                         row_type="footer",
                         major_no=None,
                         middle_no=None,
@@ -135,6 +152,20 @@ def _placeholder_payload(name: str = "TEST_DEVICE_IP") -> dict[str, object]:
         "source_column": "command_ip",
         "description": "test placeholder",
     }
+
+
+def test_standard_seed_does_not_use_legacy_case_doc_placeholders() -> None:
+    """Standard seed data should use formal case document placeholder names."""
+
+    repo_root = Path(__file__).resolve().parents[4]
+    schema_sql = repo_root / "apps" / "standard" / "db" / "init" / "001_standard_schema.sql"
+    sql_text = schema_sql.read_text(encoding="utf-8")
+
+    assert "{{NW_ADDRESS}}" not in sql_text
+    assert "{{USER}}" not in sql_text
+    assert "{{DEVICE_NAME}}" not in sql_text
+    assert "{{HOST}}" not in sql_text
+    assert "大項番作業名ダイコウバンサギョウメイ" not in sql_text
 
 
 def test_read_case_doc_prefectures_returns_options(client: TestClient) -> None:
@@ -442,20 +473,34 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     workbook = load_workbook(BytesIO(response.content), keep_vba=True)
     assert "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS" in workbook.sheetnames
     assert "\u89e3\u6c7a\u5024" in workbook.sheetnames
+    assert "\u539f\u672c\u5c55\u958b" in workbook.sheetnames
+    assert workbook["\u539f\u672c\u5c55\u958b"].sheet_state == "hidden"
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
+    assert template_sheet["A1"].value == "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63"
+    assert template_sheet["K1"].value == "target"
     assert template_sheet["M4"].value == "sbc-tyo-cl1-0"
+    assert template_sheet.column_dimensions["H"].width >= 56
     assert template_sheet["A6"].value == "0"
     assert template_sheet["B6"].value == "1"
     assert template_sheet["C6"].value == "1"
     assert template_sheet["E6"].value == "\u4f5c\u696d\u3067\u4f7f\u7528\u3059\u308bPC\u306eTeraTerm\u8a2d\u5b9a\u3092\u5909\u66f4\u3059\u308b\u3002"
+    assert template_sheet["E6"].alignment.wrap_text in {False, None}
+    assert template_sheet["E6"].alignment.indent == 0
+    assert template_sheet["E7"].value is None
+    assert template_sheet["F7"].value == "\u2460TeraTerm\u3092\u8d77\u52d5\u3059\u308b"
+    assert template_sheet["F7"].alignment.wrap_text in {False, None}
+    assert template_sheet["F7"].alignment.indent == 0
+    assert template_sheet["I7"].value == "\u30ed\u30b0\u753b\u9762\u304c\u958b\u304f\u3053\u3068"
+    assert template_sheet["I7"].alignment.wrap_text is True
+    assert template_sheet["M7"].value == "10.10.1.10"
     assert template_sheet["M6"].value == "10.10.1.10"
-    assert template_sheet["A6"].border.bottom.style == "thick"
-    assert template_sheet["M6"].border.bottom.style == "thick"
-    assert template_sheet["A7"].value is None
+    assert template_sheet["A7"].border.bottom.style == "thick"
+    assert template_sheet["M7"].border.bottom.style == "thick"
     assert template_sheet["A8"].value is None
     assert template_sheet["A9"].value is None
-    assert template_sheet["A10"].value == "\u9023\u7d61\u4e8b\u9805"
-    assert template_sheet["E10"].value is None
+    assert template_sheet["A10"].value is None
+    assert template_sheet["A11"].value == "\u9023\u7d61\u4e8b\u9805"
+    assert template_sheet["E11"].value is None
     assert all(merged_range.min_row < 6 for merged_range in template_sheet.merged_cells.ranges)
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
@@ -554,6 +599,8 @@ def test_generate_case_doc_expands_multiple_target_sbc_blocks(client: TestClient
     assert response.status_code == status.HTTP_200_OK
     workbook = load_workbook(BytesIO(response.content), keep_vba=True)
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
+    assert template_sheet["A1"].value == "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63"
+    assert template_sheet["K1"].value == "target"
     assert template_sheet["M4"].value == "sbc-tyo-cl1-0"
     assert template_sheet["Q4"].value == "sbc-tyo-cl1-1"
     assert template_sheet["J5"].value == "\u6642\u523b"

@@ -7,7 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 from openpyxl import load_workbook
-from openpyxl.styles import Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.core.responses import CaseDocHostAssignmentData, CaseDocResolveContextData, ModuleRowData, SourceDocDetailData
@@ -23,6 +23,8 @@ FOOTER_GAP_ROWS = 3
 BODY_MAX_COLUMN = 13
 TARGET_BLOCK_START_COLUMN = 10
 TARGET_BLOCK_WIDTH = 4
+WORK_CONTENT_TRAILING_COLUMN = "H"
+WORK_CONTENT_TRAILING_COLUMN_MIN_WIDTH = 56
 BODY_HEADER_TO_FIELD = {
     "\u5927": "major_no",
     "\u4e2d": "middle_no",
@@ -229,6 +231,31 @@ def _apply_thick_bottom_border(sheet: Worksheet, row_index: int, max_column: int
         cell.border = _with_bottom_border(cell.border, thick_side)
 
 
+def _with_text_alignment(alignment, *, wrap_text: bool) -> Alignment:
+    return Alignment(
+        horizontal=alignment.horizontal,
+        vertical=alignment.vertical,
+        text_rotation=alignment.text_rotation,
+        wrap_text=wrap_text,
+        shrink_to_fit=alignment.shrink_to_fit,
+        indent=0,
+    )
+
+
+def _work_text_column_for_indent(body_columns: dict[str, int], source_row: ModuleRowData) -> int:
+    indent_level = int(source_row.indent_level or 0)
+    max_work_column = body_columns["expected_result"] - 1
+    return min(body_columns["work_text"] + max(0, indent_level), max_work_column)
+
+
+def _apply_source_row_text_alignment(sheet: Worksheet, row_index: int, body_columns: dict[str, int], work_text_column: int) -> None:
+    work_cell = sheet.cell(row=row_index, column=work_text_column)
+    work_cell.alignment = _with_text_alignment(work_cell.alignment, wrap_text=False)
+
+    expected_cell = sheet.cell(row=row_index, column=body_columns["expected_result"])
+    expected_cell.alignment = _with_text_alignment(expected_cell.alignment, wrap_text=True)
+
+
 def _target_block_start_column(block_index: int) -> int:
     return TARGET_BLOCK_START_COLUMN + (block_index * TARGET_BLOCK_WIDTH)
 
@@ -261,6 +288,40 @@ def _copy_target_device_blocks(sheet: Worksheet, target_assignments: list[CaseDo
                 destination_cell = sheet.cell(row=row_index, column=destination_column)
                 _copy_cell_format(source_cell, destination_cell)
                 destination_cell.value = source_cell.value
+
+
+def _find_target_device_header_row(sheet: Worksheet) -> int | None:
+    target_device_header = _u("\u5bfe\u8c61\u88c5\u7f6e")
+    for row_index in range(1, sheet.max_row + 1):
+        for column_index in range(1, sheet.max_column + 1):
+            if _cell_text(sheet.cell(row=row_index, column=column_index).value) == target_device_header:
+                return row_index
+    return None
+
+
+def _write_target_device_headers(sheet: Worksheet, target_assignments: list[CaseDocHostAssignmentData]) -> None:
+    target_header_row = _find_target_device_header_row(sheet)
+    if target_header_row is None:
+        return
+
+    host_name_row = target_header_row + 3
+    for block_index, assignment in enumerate(target_assignments[: max(1, len(target_assignments))]):
+        target_column = _target_block_start_column(block_index) + TARGET_BLOCK_WIDTH - 1
+        sheet.cell(row=host_name_row, column=target_column, value=assignment.host_name)
+
+
+def _write_case_doc_title(sheet: Worksheet) -> None:
+    title_cell = sheet["A1"]
+    if _cell_text(title_cell.value):
+        return
+    title = sheet.title.removesuffix("_CS")
+    title_cell.value = title
+
+
+def _ensure_work_content_width(sheet: Worksheet) -> None:
+    column_dimension = sheet.column_dimensions[WORK_CONTENT_TRAILING_COLUMN]
+    current_width = column_dimension.width or 0
+    column_dimension.width = max(current_width, WORK_CONTENT_TRAILING_COLUMN_MIN_WIDTH)
 
 
 def _write_footer_label(sheet: Worksheet, row_index: int, styles: list[dict[str, object]], height: float | None, max_column: int) -> None:
@@ -304,6 +365,9 @@ def _write_source_doc_body_sheet(
     body_max_column = max(_body_max_column_for_targets(target_assignments), max(body_columns.values()))
 
     _copy_target_device_blocks(body_sheet, target_assignments)
+    _write_case_doc_title(body_sheet)
+    _ensure_work_content_width(body_sheet)
+    _write_target_device_headers(body_sheet, target_assignments)
     _unmerge_ranges_from_row(body_sheet, start_row)
     _delete_rows_from(body_sheet, start_row)
 
@@ -316,9 +380,11 @@ def _write_source_doc_body_sheet(
         body_sheet.cell(row=row_index, column=body_columns["major_no"], value=source_row.major_no)
         body_sheet.cell(row=row_index, column=body_columns["middle_no"], value=source_row.middle_no)
         body_sheet.cell(row=row_index, column=body_columns["minor_no"], value=source_row.minor_no)
+        work_text_column = _work_text_column_for_indent(body_columns, source_row)
         body_sheet.cell(row=row_index, column=body_columns["tech_doc_text"], value=source_row.tech_doc_text)
-        body_sheet.cell(row=row_index, column=body_columns["work_text"], value=source_row.work_text)
+        body_sheet.cell(row=row_index, column=work_text_column, value=source_row.work_text)
         body_sheet.cell(row=row_index, column=body_columns["expected_result"], value=source_row.expected_result)
+        _apply_source_row_text_alignment(body_sheet, row_index, body_columns, work_text_column)
 
         target_count = max(1, len(target_assignments))
         for block_index in range(target_count):
@@ -647,6 +713,7 @@ def build_case_doc_workbook_bytes(
             source_doc_sheet = workbook.create_sheet(SOURCE_DOC_EXPANSION_SHEET_NAME)
         _write_source_doc_expansion_sheet(source_doc_sheet, source_doc)
         _replace_placeholders(source_doc_sheet, placeholder_values)
+        source_doc_sheet.sheet_state = "hidden"
 
     output = BytesIO()
     workbook.save(output)
