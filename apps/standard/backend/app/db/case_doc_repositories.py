@@ -109,7 +109,27 @@ _DEVICE_VALUES_BY_HOST_NAME = {
 }
 
 _COMMON_VALUE_SOURCE_TABLE = "case_common_values"
-_COMMON_VALUES_BY_KEY = {"LOGIN_USER": "cs-operator"}
+_COMMON_VALUES_BY_KEY = {
+    "LOGIN_USER": "cs-operator",
+    "LOGIN_PASSWORD": "testpass",
+    "PRIVILEGED_PASSWORD": "su_testpass",
+    "TERATERM_LOG_FILE_NAME": "%Y%m%d_%H%M%S_&h.log",
+    "TERATERM_LOG_FOLDER_NOTE": "任意のフォルダ(工事後ログ回収することを前提に！)",
+    "TTS_SERVICE": "Telnet",
+    "TTS_MENU_HOSTNAME": "TEST-tts-001500",
+    "TTS_SHOW_TTY_COMMAND": "show tty",
+    "TTS_SET_TTY_BAUD_COMMAND": "set tty 13 baud",
+    "TTS_TARGET_PORT_PRIMARY": "TEST-0100ss",
+    "TTS_TARGET_PORT_SECONDARY": "TEST-0110ss",
+    "TTS_EXPECTED_BAUD_PRIMARY": "13.*115200",
+    "TTS_EXPECTED_BAUD_SECONDARY": "15.*115200",
+    "CONFIG_SHOW_COMMAND": "show config",
+    "STARTUP_CONFIG_SHOW_COMMAND": "show config startup",
+    "CONFIG_OUTPUT_FORMAT_COMMAND": "AAAAA",
+    "CONFIG_SAVE_COMMAND": "AAAA",
+    "CONFIRM_YES": "y",
+    "WORK_CONTACT_PHONE": "xx-xxxx-xxxx",
+}
 
 UNIT_CONFIG_FILE_NAMES = ("unit_config.xlsx", _u(r"\u30e6\u30cb\u30c3\u30c8\u69cb\u6210.xlsx"))
 SBC_FILE_NAMES = ("SBC.xlsx", "sbc.xlsx")

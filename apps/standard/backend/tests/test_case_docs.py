@@ -166,6 +166,11 @@ def test_standard_seed_does_not_use_legacy_case_doc_placeholders() -> None:
     assert "{{DEVICE_NAME}}" not in sql_text
     assert "{{HOST}}" not in sql_text
     assert "大項番作業名ダイコウバンサギョウメイ" not in sql_text
+    assert "testpass" not in sql_text
+    assert "su_testpass" not in sql_text
+    assert "show tty" not in sql_text
+    assert "set tty 13 baud" not in sql_text
+    assert "TEST-0100ss" not in sql_text
 
 
 def test_read_case_doc_prefectures_returns_options(client: TestClient) -> None:
@@ -345,15 +350,16 @@ def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -
     assert data["target_assignment"]["host_name"] == "sbc-tyo-cl1-0"
     assert [item["slot_key"] for item in data["target_assignments"]] == ["SBC_CL1_0"]
     assert data["host_assignments"]
-    assert data["common_values"] == [
-        {
-            "key": "LOGIN_USER",
-            "value": "cs-operator",
-            "source_table": "case_common_values",
-            "source_column": "login_user",
-            "source": "case_common_values.login_user",
-        }
-    ]
+    common_values = {item["key"]: item for item in data["common_values"]}
+    assert common_values["LOGIN_USER"] == {
+        "key": "LOGIN_USER",
+        "value": "cs-operator",
+        "source_table": "case_common_values",
+        "source_column": "login_user",
+        "source": "case_common_values.login_user",
+    }
+    assert common_values["LOGIN_PASSWORD"]["value"] == "testpass"
+    assert common_values["TTS_SHOW_TTY_COMMAND"]["value"] == "show tty"
     target_placeholders = {
         item["placeholder"]: item
         for item in data["resolved_placeholders"]
@@ -504,12 +510,18 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert all(merged_range.min_row < 6 for merged_range in template_sheet.merged_cells.ranges)
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
-    assert resolved_sheet["A22"].value == "SBC_COMMAND_FLOATING_IP"
+    all_resolved_values = {
+        resolved_sheet.cell(row=row_index, column=1).value: resolved_sheet.cell(row=row_index, column=2).value
+        for row_index in range(1, resolved_sheet.max_row + 1)
+    }
+    assert all_resolved_values["LOGIN_PASSWORD"] == "testpass"
+    assert all_resolved_values["TTS_SHOW_TTY_COMMAND"] == "show tty"
     target_resolved_values = {
         resolved_sheet.cell(row=row_index, column=1).value: resolved_sheet.cell(row=row_index, column=2).value
         for row_index in range(1, resolved_sheet.max_row + 1)
         if resolved_sheet.cell(row=row_index, column=5).value == "sbc-tyo-cl1-0"
     }
+    assert target_resolved_values["SBC_COMMAND_FLOATING_IP"] == "10.10.1.10"
     assert target_resolved_values["SBC_CALL_PROCESS_FLOATING_IP"] == "10.10.2.10"
     assert target_resolved_values["SBC_MAINT_ALARM_LAN_FLOATING_IP"] == "10.10.3.10"
     assert target_resolved_values["SBC_REMOTE_SHELL_FLOATING_IP"] == "10.10.4.10"
