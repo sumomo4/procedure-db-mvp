@@ -10,6 +10,8 @@ from typing import Any
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
+from PIL import Image as PILImage
+
 from app.core.responses import (
     ModuleCreateDeviceHeaderInput,
     ModuleCreateRequest,
@@ -152,6 +154,16 @@ def _emu_to_px(value: str | int | None) -> int:
     return round(int(value) / EMU_PER_PIXEL)
 
 
+def _image_size_px(archive: ZipFile, media_path: str) -> tuple[int | None, int | None]:
+    """Read image dimensions from an OOXML media part."""
+
+    try:
+        with PILImage.open(BytesIO(archive.read(media_path))) as image:
+            return image.size
+    except Exception:
+        return None, None
+
+
 def _read_xlsx_shared_strings(archive: ZipFile) -> list[str]:
     """Read shared strings from an XLSX/XLSM archive when present."""
 
@@ -189,6 +201,8 @@ def _extract_sheet_rows(archive: ZipFile, sheet_path: str) -> tuple[str | None, 
             if cell_type == "inlineStr":
                 inline_texts = [text_node.text or "" for text_node in cell_node.findall(".//main:t", OFFICE_DOCUMENT_NS)]
                 value = "".join(inline_texts)
+            elif cell_type == "e" and "vm" in cell_node.attrib:
+                value = None
             else:
                 value_node = cell_node.find("main:v", OFFICE_DOCUMENT_NS)
                 if value_node is None or value_node.text is None:
@@ -204,6 +218,50 @@ def _extract_sheet_rows(archive: ZipFile, sheet_path: str) -> tuple[str | None, 
 
     sheet_name = root.attrib.get("name")
     return sheet_name, rows
+
+
+def _extract_rich_data_image_media_paths(archive: ZipFile) -> list[str]:
+    """Extract media paths used by Excel rich data local images."""
+
+    rich_value_rel_path = "xl/richData/richValueRel.xml"
+    rich_value_rels_path = "xl/richData/_rels/richValueRel.xml.rels"
+    if rich_value_rel_path not in archive.namelist() or rich_value_rels_path not in archive.namelist():
+        return []
+
+    relationships = _relationship_map(archive, rich_value_rels_path)
+    root = ElementTree.fromstring(archive.read(rich_value_rel_path))
+    media_paths: list[str] = []
+
+    for rel_node in root:
+        rel_id = rel_node.attrib.get(f"{{{OFFICE_DOCUMENT_NS['rel']}}}id")
+        if rel_id is None or rel_id not in relationships:
+            continue
+
+        relationship_type, target = relationships[rel_id]
+        if not relationship_type.endswith("/image") or not target:
+            continue
+
+        media_path = _resolve_related_part_path(rich_value_rel_path, target)
+        if media_path in archive.namelist():
+            media_paths.append(media_path)
+
+    return media_paths
+
+
+def _extract_rich_data_image_cells(archive: ZipFile, sheet_path: str) -> list[tuple[int, int, str]]:
+    """Return cells that carry rich data value metadata."""
+
+    root = ElementTree.fromstring(archive.read(sheet_path))
+    image_cells: list[tuple[int, int, str]] = []
+    for cell_node in root.findall(".//main:c", OFFICE_DOCUMENT_NS):
+        reference = cell_node.attrib.get("r")
+        if reference is None or "vm" not in cell_node.attrib:
+            continue
+
+        column_letters, row_index = _split_cell_reference(reference)
+        image_cells.append((row_index, _column_letters_to_index(column_letters), reference))
+
+    return sorted(image_cells, key=lambda item: (item[0], item[1], item[2]))
 
 
 def _extract_sheet_images(
@@ -229,7 +287,8 @@ def _extract_sheet_images(
         for relationship_type, target in sheet_relationships.values()
         if relationship_type.endswith("/drawing") and target
     ]
-    if not drawing_targets:
+    rich_data_media_paths = _extract_rich_data_image_media_paths(archive)
+    if not drawing_targets and not rich_data_media_paths:
         return {}
 
     storage_root = Path(image_storage_dir)
@@ -239,6 +298,36 @@ def _extract_sheet_images(
 
     images_by_row: dict[int, list[dict[str, int | str | None]]] = {}
     image_counts_by_row: dict[int, int] = {}
+
+    def save_image_metadata(
+        *,
+        row_index: int,
+        column_index: int,
+        media_path: str,
+        offset_x_px: int = 0,
+        offset_y_px: int = 0,
+        width_px: int | None = None,
+        height_px: int | None = None,
+    ) -> None:
+        image_counts_by_row[row_index] = image_counts_by_row.get(row_index, 0) + 1
+        image_order = image_counts_by_row[row_index]
+        image_key = f"img_{source_key}_r{row_index}_img{image_order}"
+        extension = Path(media_path).suffix.lower() or ".png"
+        image_path = target_dir / f"{image_key}{extension}"
+        image_path.write_bytes(archive.read(media_path))
+
+        images_by_row.setdefault(row_index, []).append(
+            {
+                "image_key": image_key,
+                "image_path": image_path.as_posix(),
+                "anchor_cell": f"{_column_index_to_letters(column_index)}{row_index}",
+                "offset_x_px": offset_x_px,
+                "offset_y_px": offset_y_px,
+                "width_px": width_px,
+                "height_px": height_px,
+                "image_order": image_order,
+            }
+        )
 
     for drawing_target in drawing_targets:
         drawing_path = _resolve_related_part_path(sheet_path, drawing_target)
@@ -277,28 +366,29 @@ def _extract_sheet_images(
 
             row_index = int(row_node.text) + 1
             column_index = int(col_node.text) + 1
-            image_counts_by_row[row_index] = image_counts_by_row.get(row_index, 0) + 1
-            image_order = image_counts_by_row[row_index]
-            image_key = f"img_{source_key}_r{row_index}_img{image_order}"
-            extension = Path(media_path).suffix.lower() or ".png"
-            image_path = target_dir / f"{image_key}{extension}"
-            image_path.write_bytes(archive.read(media_path))
-
             ext_node = anchor_node.find("xdr:ext", OFFICE_DOCUMENT_NS)
             col_off_node = from_node.find("xdr:colOff", OFFICE_DOCUMENT_NS)
             row_off_node = from_node.find("xdr:rowOff", OFFICE_DOCUMENT_NS)
-            images_by_row.setdefault(row_index, []).append(
-                {
-                    "image_key": image_key,
-                    "image_path": image_path.as_posix(),
-                    "anchor_cell": f"{_column_index_to_letters(column_index)}{row_index}",
-                    "offset_x_px": _emu_to_px(col_off_node.text if col_off_node is not None else None),
-                    "offset_y_px": _emu_to_px(row_off_node.text if row_off_node is not None else None),
-                    "width_px": _emu_to_px(ext_node.attrib.get("cx")) if ext_node is not None else None,
-                    "height_px": _emu_to_px(ext_node.attrib.get("cy")) if ext_node is not None else None,
-                    "image_order": image_order,
-                }
+            save_image_metadata(
+                row_index=row_index,
+                column_index=column_index,
+                media_path=media_path,
+                offset_x_px=_emu_to_px(col_off_node.text if col_off_node is not None else None),
+                offset_y_px=_emu_to_px(row_off_node.text if row_off_node is not None else None),
+                width_px=_emu_to_px(ext_node.attrib.get("cx")) if ext_node is not None else None,
+                height_px=_emu_to_px(ext_node.attrib.get("cy")) if ext_node is not None else None,
             )
+
+    rich_data_image_cells = _extract_rich_data_image_cells(archive, sheet_path)
+    for (row_index, column_index, _), media_path in zip(rich_data_image_cells, rich_data_media_paths, strict=False):
+        width_px, height_px = _image_size_px(archive, media_path)
+        save_image_metadata(
+            row_index=row_index,
+            column_index=column_index,
+            media_path=media_path,
+            width_px=width_px,
+            height_px=height_px,
+        )
 
     return images_by_row
 

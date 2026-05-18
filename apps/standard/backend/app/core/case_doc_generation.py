@@ -7,7 +7,9 @@ from io import BytesIO
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.core.responses import CaseDocHostAssignmentData, CaseDocResolveContextData, ModuleRowData, SourceDocDetailData
@@ -25,6 +27,9 @@ TARGET_BLOCK_START_COLUMN = 10
 TARGET_BLOCK_WIDTH = 4
 WORK_CONTENT_TRAILING_COLUMN = "H"
 WORK_CONTENT_TRAILING_COLUMN_MIN_WIDTH = 56
+IMAGE_ROW_HEIGHT_POINTS = 150
+IMAGE_MAX_WIDTH_PX = 520
+IMAGE_MAX_HEIGHT_PX = 190
 BODY_HEADER_TO_FIELD = {
     "\u5927": "major_no",
     "\u4e2d": "middle_no",
@@ -63,6 +68,16 @@ def _u(value: str) -> str:
         return value.encode("ascii").decode("unicode_escape")
     except UnicodeEncodeError:
         return value
+
+
+def _fit_image_size(width_px: int, height_px: int) -> tuple[int, int]:
+    """Fit image dimensions into the MVP row image box."""
+
+    if width_px <= 0 or height_px <= 0:
+        return IMAGE_MAX_WIDTH_PX, IMAGE_MAX_HEIGHT_PX
+
+    scale = min(IMAGE_MAX_WIDTH_PX / width_px, IMAGE_MAX_HEIGHT_PX / height_px, 1)
+    return max(1, round(width_px * scale)), max(1, round(height_px * scale))
 
 
 def _clear_sheet(sheet: Worksheet) -> None:
@@ -145,13 +160,20 @@ def _is_major_heading_row(module_row: ModuleRowData) -> bool:
 
 def _is_footer_like_module_row(module_row: ModuleRowData) -> bool:
     footer_markers = {_u(marker) for marker in FOOTER_START_MARKERS}
-    values = {
+    values = [
+        _cell_text(module_row.major_no),
+        _cell_text(module_row.middle_no),
+        _cell_text(module_row.minor_no),
         _cell_text(module_row.tech_doc_text),
         _cell_text(module_row.work_text),
         _cell_text(module_row.expected_result),
+        _cell_text(module_row.time_text),
+        _cell_text(module_row.window_text),
+        _cell_text(module_row.p_text),
         _cell_text(module_row.command_text),
-    }
-    return bool(values & footer_markers)
+        _cell_text(module_row.note),
+    ]
+    return any(marker in value for value in values for marker in footer_markers)
 
 
 def _flatten_enabled_source_doc_rows(source_doc: SourceDocDetailData) -> list[ModuleRowData]:
@@ -159,11 +181,10 @@ def _flatten_enabled_source_doc_rows(source_doc: SourceDocDetailData) -> list[Mo
     for module in sorted(source_doc.items, key=lambda item: item.item_order):
         if not module.enabled:
             continue
-        rows.extend(
-            row
-            for row in sorted(module.rows, key=lambda row: row.row_order)
-            if not _is_footer_like_module_row(row)
-        )
+        for row in sorted(module.rows, key=lambda row: row.row_order):
+            if _is_footer_like_module_row(row):
+                break
+            rows.append(row)
     return rows
 
 
@@ -254,6 +275,42 @@ def _apply_source_row_text_alignment(sheet: Worksheet, row_index: int, body_colu
 
     expected_cell = sheet.cell(row=row_index, column=body_columns["expected_result"])
     expected_cell.alignment = _with_text_alignment(expected_cell.alignment, wrap_text=True)
+
+
+def _source_image_column_index(anchor_cell: str) -> int | None:
+    try:
+        column_letter, _ = coordinate_from_string(anchor_cell)
+    except ValueError:
+        return None
+    return column_index_from_string(column_letter)
+
+
+def _target_image_anchor_column(sheet: Worksheet, target_row_index: int, body_columns: dict[str, int], anchor_cell: str) -> str:
+    source_column_index = _source_image_column_index(anchor_cell)
+    if source_column_index is not None and body_columns["expected_result"] <= source_column_index < TARGET_BLOCK_START_COLUMN:
+        return sheet.cell(row=target_row_index, column=body_columns["expected_result"]).column_letter
+    return sheet.cell(row=target_row_index, column=body_columns["work_text"]).column_letter
+
+
+def _add_source_row_images(sheet: Worksheet, source_row: ModuleRowData, target_row_index: int, body_columns: dict[str, int]) -> None:
+    """Attach source row images to the generated workbook row."""
+
+    if source_row.images:
+        current_height = sheet.row_dimensions[target_row_index].height or 0
+        sheet.row_dimensions[target_row_index].height = max(current_height, IMAGE_ROW_HEIGHT_POINTS)
+
+    for image_metadata in sorted(source_row.images, key=lambda item: item.image_order):
+        image_path = Path(image_metadata.image_path)
+        if not image_path.exists():
+            continue
+
+        image = OpenpyxlImage(str(image_path))
+        source_width = image_metadata.width_px or image.width
+        source_height = image_metadata.height_px or image.height
+        image.width, image.height = _fit_image_size(source_width, source_height)
+
+        anchor_column = _target_image_anchor_column(sheet, target_row_index, body_columns, image_metadata.anchor_cell)
+        sheet.add_image(image, f"{anchor_column}{target_row_index}")
 
 
 def _target_block_start_column(block_index: int) -> int:
@@ -398,6 +455,8 @@ def _write_source_doc_body_sheet(
                         body_sheet.cell(row=row_index, column=destination_column),
                     )
                 body_sheet.cell(row=row_index, column=destination_column, value=getattr(source_row, field_name))
+
+        _add_source_row_images(body_sheet, source_row, row_index, body_columns)
 
     if source_rows:
         last_source_row_index = start_row + len(source_rows) - 1

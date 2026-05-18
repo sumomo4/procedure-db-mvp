@@ -534,6 +534,32 @@ function buildApiUrl(path: string): string {
   return path;
 }
 
+async function readApiResponse<TData>(response: Response): Promise<ApiResponse<TData>> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const responseText = await response.text();
+
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(responseText) as ApiResponse<TData>;
+    } catch {
+      return {
+        result: "error",
+        data: null,
+        message: `API応答JSONの解析に失敗しました。HTTP ${response.status}`,
+      };
+    }
+  }
+
+  return {
+    result: "error",
+    data: null,
+    message:
+      response.status === 413
+        ? "Excelファイルのサイズがアップロード上限を超えています。管理者にアップロード上限の確認を依頼してください。"
+        : `APIからJSONではない応答が返りました。HTTP ${response.status}`,
+  };
+}
+
 const modules: ModuleRow[] = [
   { id: "MOD-001", name: "初期点検手順", category: "点検", owner: "開発担当A", updatedAt: "2026-04-10", status: "Draft", version: "0.2" },
   { id: "MOD-002", name: "部品交換手順", category: "保守", owner: "開発担当B", updatedAt: "2026-04-12", status: "approval", version: "0.3" },
@@ -1690,7 +1716,7 @@ function ModuleRegisterPage() {
             middle_no: row.middleNo.trim() || undefined,
             minor_no: row.minorNo.trim() || undefined,
             tech_doc_text: row.techDocText.trim() || undefined,
-            work_text: row.workText.trim() || moduleNameInput.trim(),
+            work_text: row.workText.trim() || undefined,
             indent_level: row.indentLevel,
             expected_result: row.expectedResult.trim() || undefined,
             device_entries: row.deviceEntries.map((entry) => ({
@@ -1705,7 +1731,7 @@ function ModuleRegisterPage() {
         }),
       });
 
-      const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
+      const responseBody = await readApiResponse<ModuleDetailData>(response);
 
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
         setCreateState({
@@ -1776,7 +1802,7 @@ function ModuleRegisterPage() {
         }),
       });
 
-      const responseBody = (await response.json()) as ApiResponse<ModuleImportPreviewData>;
+      const responseBody = await readApiResponse<ModuleImportPreviewData>(response);
 
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
         setImportPreviewState({
@@ -2213,6 +2239,7 @@ function ModuleRegisterPageV2() {
   });
   const [isWorkbookImportApplied, setIsWorkbookImportApplied] = useState(false);
   const [isImportPreviewFullscreenOpen, setIsImportPreviewFullscreenOpen] = useState(false);
+  const canSaveImportedModule = isWorkbookImportApplied || importPreviewState.status === "success";
 
   useEffect(() => {
     if (!importPreviewState.item) {
@@ -2408,7 +2435,7 @@ function ModuleRegisterPageV2() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
 
-    if (!isWorkbookImportApplied) {
+    if (!canSaveImportedModule) {
       setCreateState({
         status: "error",
         item: null,
@@ -2449,9 +2476,10 @@ function ModuleRegisterPageV2() {
             middle_no: row.middleNo.trim() || undefined,
             minor_no: row.minorNo.trim() || undefined,
             tech_doc_text: row.techDocText.trim() || undefined,
-            work_text: row.workText.trim() || moduleNameInput.trim(),
+            work_text: row.workText.trim() || undefined,
             indent_level: row.indentLevel,
             expected_result: row.expectedResult.trim() || undefined,
+            images: row.images ?? [],
             device_entries: row.deviceEntries.map((entry) => ({
               slot_no: entry.slotNo,
               time_text: entry.timeText.trim() || undefined,
@@ -2463,7 +2491,7 @@ function ModuleRegisterPageV2() {
         }),
       });
 
-      const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
+      const responseBody = await readApiResponse<ModuleDetailData>(response);
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
         setCreateState({
           status: "error",
@@ -2518,7 +2546,7 @@ function ModuleRegisterPageV2() {
         body: await selectedImportFile.arrayBuffer(),
       });
 
-      const responseBody = (await response.json()) as ApiResponse<ModuleImportPreviewData>;
+      const responseBody = await readApiResponse<ModuleImportPreviewData>(response);
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
         setImportPreviewState({
           status: "error",
@@ -2592,7 +2620,7 @@ function ModuleRegisterPageV2() {
         }),
       });
 
-      const responseBody = (await response.json()) as ApiResponse<ModuleImportPreviewData>;
+      const responseBody = await readApiResponse<ModuleImportPreviewData>(response);
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
         setImportPreviewState({
           status: "error",
@@ -3030,7 +3058,7 @@ function ModuleRegisterPageV2() {
               詳細を開く
             </button>
           ) : null}
-          <button className="primary" type="submit" disabled={createState.status === "submitting" || !isWorkbookImportApplied}>
+          <button className="primary" type="submit" disabled={createState.status === "submitting" || !canSaveImportedModule}>
             <span aria-hidden="true">✔</span>
             {createState.status === "submitting" ? "保存中..." : "保存実行"}
           </button>

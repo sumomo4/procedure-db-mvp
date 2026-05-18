@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from app.core.config import AppSettings
-from app.core.responses import ModuleRowData, SourceDocDetailData, SourceDocModuleItemData
+from app.core.responses import ModuleRowData, ModuleRowImageData, SourceDocDetailData, SourceDocModuleItemData
+
+
+PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200efbfa7db0000000049454e44ae426082"
+)
 
 
 def _tokyo_prefecture(client: TestClient) -> str:
@@ -25,7 +30,28 @@ def _tokyo_building(client: TestClient) -> str:
     return response.json()["data"]["items"][0]["value"]
 
 
-def _fake_source_doc_detail(source_doc_id: int) -> SourceDocDetailData:
+def _fake_source_doc_detail(
+    source_doc_id: int,
+    image_path: str | None = None,
+    image_anchor_cell: str = "E2",
+) -> SourceDocDetailData:
+    row_images = (
+        [
+            ModuleRowImageData(
+                module_row_image_id=1,
+                image_key="test-row-image",
+                image_path=image_path,
+                anchor_cell=image_anchor_cell,
+                offset_x_px=0,
+                offset_y_px=0,
+                width_px=1000,
+                height_px=1200,
+                image_order=1,
+            )
+        ]
+        if image_path is not None
+        else []
+    )
     return SourceDocDetailData(
         source_doc_id=source_doc_id,
         source_doc_key="BP-STD-001",
@@ -87,16 +113,17 @@ def _fake_source_doc_detail(source_doc_id: int) -> SourceDocDetailData:
                         p_text=None,
                         command_text="{{SBC_COMMAND_FLOATING_IP}}",
                         note=None,
+                        images=row_images,
                     ),
                     ModuleRowData(
                         module_row_id=1002,
                         row_order=3,
                         row_type="footer",
-                        major_no=None,
+                        major_no="\u9023\u7d61\u4e8b\u9805\u30ec\u30f3\u30e9\u30af\u30b8\u30b3\u30a6",
                         middle_no=None,
                         minor_no=None,
                         tech_doc_text=None,
-                        work_text="\u9023\u7d61\u4e8b\u9805",
+                        work_text=None,
                         indent_level=0,
                         expected_result=None,
                         time_text=None,
@@ -104,7 +131,24 @@ def _fake_source_doc_detail(source_doc_id: int) -> SourceDocDetailData:
                         p_text=None,
                         command_text=None,
                         note=None,
-                    )
+                    ),
+                    ModuleRowData(
+                        module_row_id=1003,
+                        row_order=4,
+                        row_type="work",
+                        major_no="9",
+                        middle_no="9",
+                        minor_no="9",
+                        tech_doc_text=None,
+                        work_text="\u6848\u4ef6CS\u672c\u6587\u306b\u51fa\u3057\u3066\u306f\u3044\u3051\u306a\u3044\u884c",
+                        indent_level=0,
+                        expected_result="\u3053\u306e\u78ba\u8a8d\u9805\u76ee\u3082\u51fa\u3057\u3066\u306f\u3044\u3051\u306a\u3044",
+                        time_text=None,
+                        window_text=None,
+                        p_text=None,
+                        command_text="\u51fa\u529b\u7981\u6b62\u30b3\u30de\u30f3\u30c9",
+                        note=None,
+                    ),
                 ],
             )
         ],
@@ -511,6 +555,13 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert template_sheet["A11"].value == "\u9023\u7d61\u4e8b\u9805"
     assert template_sheet["E11"].value is None
     assert all(merged_range.min_row < 6 for merged_range in template_sheet.merged_cells.ranges)
+    template_values = [
+        cell.value
+        for row in template_sheet.iter_rows()
+        for cell in row
+    ]
+    assert "\u6848\u4ef6CS\u672c\u6587\u306b\u51fa\u3057\u3066\u306f\u3044\u3051\u306a\u3044\u884c" not in template_values
+    assert "\u51fa\u529b\u7981\u6b62\u30b3\u30de\u30f3\u30c9" not in template_values
     resolved_sheet = workbook["\u89e3\u6c7a\u5024"]
     assert resolved_sheet["A1"].value == "\u6848\u4ef6CS \u751f\u6210\u7d50\u679c"
     all_resolved_values = {
@@ -550,6 +601,76 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
         if isinstance(cell.value, str) and "{{" in cell.value
     ]
     assert remaining_placeholders == []
+
+
+def test_generate_case_doc_embeds_module_row_images(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Generate API should place saved module row images onto generated rows."""
+
+    image_path = tmp_path / "row-image.png"
+    image_path.write_bytes(PNG_BYTES)
+    monkeypatch.setattr(
+        "app.routers.case_docs.get_source_doc_detail",
+        lambda settings, source_doc_id: _fake_source_doc_detail(source_doc_id, str(image_path)),
+    )
+
+    response = client.post(
+        "/api/v1/case-docs/generate",
+        json={
+            "source_doc_id": 1,
+            "prefecture": _tokyo_prefecture(client),
+            "building": _tokyo_building(client),
+            "unit_config_id": "unit-tokyo-001",
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    workbook = load_workbook(BytesIO(response.content), keep_vba=True)
+    template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
+    assert len(template_sheet._images) == 1
+    embedded_image = template_sheet._images[0]
+    assert embedded_image.anchor._from.col == 4
+    assert embedded_image.anchor._from.row == 6
+    assert embedded_image.width <= 520
+    assert embedded_image.height <= 190
+    assert template_sheet.row_dimensions[7].height >= 150
+
+
+def test_generate_case_doc_places_expected_result_images_in_expected_result_column(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Generate API should keep images from the expected-result area in column I."""
+
+    image_path = tmp_path / "expected-result-image.png"
+    image_path.write_bytes(PNG_BYTES)
+    monkeypatch.setattr(
+        "app.routers.case_docs.get_source_doc_detail",
+        lambda settings, source_doc_id: _fake_source_doc_detail(source_doc_id, str(image_path), "I2"),
+    )
+
+    response = client.post(
+        "/api/v1/case-docs/generate",
+        json={
+            "source_doc_id": 1,
+            "prefecture": _tokyo_prefecture(client),
+            "building": _tokyo_building(client),
+            "unit_config_id": "unit-tokyo-001",
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    workbook = load_workbook(BytesIO(response.content), keep_vba=True)
+    template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
+    assert len(template_sheet._images) == 1
+    embedded_image = template_sheet._images[0]
+    assert embedded_image.anchor._from.col == 8
+    assert embedded_image.anchor._from.row == 6
+    assert template_sheet.row_dimensions[7].height >= 150
 
 
 def test_resolve_case_doc_context_accepts_target_sbc_slot(client: TestClient) -> None:
