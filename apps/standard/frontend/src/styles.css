@@ -1345,6 +1345,19 @@ th {
   gap: 10px;
 }
 
+.approval-comment-field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: #344552;
+  font-weight: 800;
+}
+
+.approval-comment-field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
 .approval-transition-card {
   min-width: 160px;
   padding: 14px 16px;

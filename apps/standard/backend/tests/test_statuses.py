@@ -27,6 +27,11 @@ def _build_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
         if status_value == "draft"
         else [
             ApprovalTransitionData(
+                to_status="draft",
+                to_status_label="作成中",
+                action_label="差戻す",
+            ),
+            ApprovalTransitionData(
                 to_status="archived",
                 to_status_label="保管済み",
                 action_label="保管する",

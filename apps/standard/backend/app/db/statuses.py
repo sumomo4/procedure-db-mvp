@@ -23,7 +23,7 @@ APPROVAL_NEXT_ACTIONS = {
 }
 APPROVAL_ALLOWED_TRANSITIONS = {
     "draft": [("published", "承認する")],
-    "published": [("archived", "保管する")],
+    "published": [("draft", "差戻す"), ("archived", "保管する")],
     "archived": [],
 }
 
@@ -357,6 +357,8 @@ def update_status(
                     raise ValueError(
                         f"status transition from {current_status} to {to_status} is not allowed."
                     )
+                if current_status == "published" and to_status == "draft" and not (note or "").strip():
+                    raise ValueError("差戻し理由を入力してください。")
                 action_label = next(
                     label for status_value, label in allowed_transitions if status_value == to_status
                 )

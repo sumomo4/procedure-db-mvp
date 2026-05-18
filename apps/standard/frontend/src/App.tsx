@@ -5429,6 +5429,7 @@ function ApprovalPage() {
     status: "idle",
     message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
   });
+  const [approvalComment, setApprovalComment] = useState("");
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
@@ -5558,6 +5559,7 @@ function ApprovalPage() {
       status: "idle",
       message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
     });
+    setApprovalComment("");
   }, [selectedTargetId]);
 
   const selectedItem = approvalDetailState.item;
@@ -5566,6 +5568,15 @@ function ApprovalPage() {
 
   async function handleApplyTransition(toStatus: ModuleApiStatus): Promise<void> {
     if (selectedItem === null) {
+      return;
+    }
+
+    const normalizedComment = approvalComment.trim();
+    if (selectedItem.status === "published" && toStatus === "draft" && normalizedComment.length === 0) {
+      setApprovalMutationState({
+        status: "error",
+        message: "差戻し理由を入力してください。",
+      });
       return;
     }
 
@@ -5580,7 +5591,11 @@ function ApprovalPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ status: toStatus, changed_by: "webui", note: "画面操作" }),
+        body: JSON.stringify({
+          status: toStatus,
+          changed_by: "webui",
+          note: normalizedComment || "画面操作",
+        }),
       });
       const responseBody = (await response.json()) as ApiResponse<ApprovalStatusDetailData>;
 
@@ -5588,7 +5603,7 @@ function ApprovalPage() {
         setApprovalMutationState({
           status: "error",
           message:
-            responseBody.message || `承認状態変更に失敗しました。 HTTP ${response.status}`,
+            responseBody.message || `承認状態変更に失敗しました。HTTP ${response.status}`,
         });
         return;
       }
@@ -5602,6 +5617,7 @@ function ApprovalPage() {
         status: "success",
         message: responseBody.message || "承認状態を更新しました。",
       });
+      setApprovalComment("");
       setReloadTick((current) => current + 1);
     } catch (error) {
       setApprovalMutationState({
@@ -5746,6 +5762,15 @@ function ApprovalPage() {
           <section className="section-band approval-detail-grid">
             <div>
               <h2>実行できる操作</h2>
+              <label className="approval-comment-field">
+                コメント
+                <textarea
+                  value={approvalComment}
+                  onChange={(event) => setApprovalComment(event.target.value)}
+                  rows={3}
+                  placeholder="差戻し時は理由を入力してください。承認・保管時は任意です。"
+                />
+              </label>
               {selectedItem.allowed_transitions.length > 0 ? (
                 <div className="approval-transition-list">
                   {selectedItem.allowed_transitions.map((transition) => (
@@ -5820,7 +5845,7 @@ function ApprovalPage() {
         <h2>版管理ルール</h2>
         <p>
           M1 では最小ルールとして、原本は <code>draft</code> から <code>published</code> へ承認し、
-          その後に <code>archived</code> へ保管します。
+          必要に応じて <code>published</code> から <code>draft</code> へ差戻し、最終的に <code>archived</code> へ保管します。
         </p>
       </section>
     </Page>
