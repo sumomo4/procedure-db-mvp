@@ -5430,6 +5430,7 @@ function ApprovalPage() {
     message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
   });
   const [approvalComment, setApprovalComment] = useState("");
+  const [approvalActor, setApprovalActor] = useState(() => window.localStorage.getItem("approvalActor") ?? "webui");
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
@@ -5562,6 +5563,10 @@ function ApprovalPage() {
     setApprovalComment("");
   }, [selectedTargetId]);
 
+  useEffect(() => {
+    window.localStorage.setItem("approvalActor", approvalActor);
+  }, [approvalActor]);
+
   const selectedItem = approvalDetailState.item;
   const selectedSummary =
     approvalListState.items.find((item) => item.target_id === selectedTargetId) ?? null;
@@ -5571,7 +5576,15 @@ function ApprovalPage() {
       return;
     }
 
+    const normalizedActor = approvalActor.trim();
     const normalizedComment = approvalComment.trim();
+    if (normalizedActor.length === 0) {
+      setApprovalMutationState({
+        status: "error",
+        message: "実行者を入力してください。",
+      });
+      return;
+    }
     if (selectedItem.status === "published" && toStatus === "draft" && normalizedComment.length === 0) {
       setApprovalMutationState({
         status: "error",
@@ -5593,7 +5606,7 @@ function ApprovalPage() {
         },
         body: JSON.stringify({
           status: toStatus,
-          changed_by: "webui",
+          changed_by: normalizedActor,
           note: normalizedComment || "画面操作",
         }),
       });
@@ -5762,6 +5775,14 @@ function ApprovalPage() {
           <section className="section-band approval-detail-grid">
             <div>
               <h2>実行できる操作</h2>
+              <label className="approval-actor-field">
+                実行者
+                <input
+                  value={approvalActor}
+                  onChange={(event) => setApprovalActor(event.target.value)}
+                  placeholder="例: yamada"
+                />
+              </label>
               <label className="approval-comment-field">
                 コメント
                 <textarea

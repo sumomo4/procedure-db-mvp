@@ -1345,12 +1345,18 @@ th {
   gap: 10px;
 }
 
+.approval-actor-field,
 .approval-comment-field {
   display: grid;
   gap: 8px;
   margin-bottom: 14px;
   color: #344552;
   font-weight: 800;
+}
+
+.approval-actor-field input,
+.approval-comment-field textarea {
+  width: 100%;
 }
 
 .approval-comment-field textarea {
