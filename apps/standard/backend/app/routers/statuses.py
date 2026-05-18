@@ -89,7 +89,13 @@ def patch_status_detail(
     """Update one approval target status."""
 
     try:
-        data = update_status(settings, target_id, payload.status)
+        data = update_status(
+            settings,
+            target_id,
+            payload.status,
+            payload.changed_by,
+            payload.note,
+        )
     except ValueError as exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

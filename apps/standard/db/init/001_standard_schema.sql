@@ -129,6 +129,25 @@ CREATE TABLE IF NOT EXISTS proc.blueprint_versions (
 CREATE INDEX IF NOT EXISTS idx_blueprint_versions_status
     ON proc.blueprint_versions (status);
 
+CREATE TABLE IF NOT EXISTS proc.approval_status_histories (
+    approval_status_history_id bigserial PRIMARY KEY,
+    target_type text NOT NULL CHECK (target_type IN ('source-doc')),
+    target_id bigint NOT NULL,
+    target_version_id bigint NOT NULL REFERENCES proc.blueprint_versions (blueprint_version_id) ON DELETE CASCADE,
+    from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
+    to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+    action_label text NOT NULL,
+    changed_by text,
+    changed_at timestamptz NOT NULL DEFAULT now(),
+    note text
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_status_histories_target
+    ON proc.approval_status_histories (target_type, target_id, changed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_approval_status_histories_version
+    ON proc.approval_status_histories (target_version_id);
+
 CREATE TABLE IF NOT EXISTS proc.blueprint_items (
     blueprint_item_id bigserial PRIMARY KEY,
     blueprint_version_id bigint NOT NULL REFERENCES proc.blueprint_versions (blueprint_version_id) ON DELETE CASCADE,

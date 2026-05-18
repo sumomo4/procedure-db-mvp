@@ -477,6 +477,18 @@ type ApprovalTransitionData = {
   action_label: string;
 };
 
+type ApprovalStatusHistoryItemData = {
+  history_id: number;
+  from_status: ModuleApiStatus | null;
+  from_status_label: string | null;
+  to_status: ModuleApiStatus;
+  to_status_label: string;
+  action_label: string;
+  changed_by: string | null;
+  changed_at: string;
+  note: string | null;
+};
+
 type ApprovalStatusDetailData = {
   target_id: number;
   target_key: string;
@@ -494,6 +506,7 @@ type ApprovalStatusDetailData = {
   created_by: string | null;
   updated_at: string;
   allowed_transitions: ApprovalTransitionData[];
+  history: ApprovalStatusHistoryItemData[];
 };
 
 type ApprovalStatusListState = {
@@ -5567,7 +5580,7 @@ function ApprovalPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ status: toStatus }),
+        body: JSON.stringify({ status: toStatus, changed_by: "webui", note: "画面操作" }),
       });
       const responseBody = (await response.json()) as ApiResponse<ApprovalStatusDetailData>;
 
@@ -5769,6 +5782,24 @@ function ApprovalPage() {
                 <p>関連モジュールはありません。</p>
               )}
             </div>
+          </section>
+
+          <section className="section-band">
+            <h2>承認履歴</h2>
+            {(selectedItem.history ?? []).length > 0 ? (
+              <DataTable
+                columns={["日時", "操作", "変更", "実行者", "メモ"]}
+                rows={(selectedItem.history ?? []).map((history) => [
+                  history.changed_at,
+                  history.action_label,
+                  `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
+                  history.changed_by ?? "-",
+                  history.note ?? "-",
+                ])}
+              />
+            ) : (
+              <p>承認履歴はまだありません。</p>
+            )}
           </section>
 
           <Toolbar>

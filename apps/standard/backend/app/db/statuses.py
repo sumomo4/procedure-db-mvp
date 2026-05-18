@@ -6,6 +6,7 @@ from typing import Any
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    ApprovalStatusHistoryItemData,
     ApprovalStatusDetailData,
     ApprovalStatusListData,
     ApprovalStatusListItemData,
@@ -35,6 +36,68 @@ def _format_updated_at(value: Any) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
+
+
+def _format_changed_at(value: Any) -> str:
+    """Format DB timestamp values for approval history responses."""
+
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def _ensure_history_table(cursor: Any) -> None:
+    """Create the approval history table when existing DB volumes predate it."""
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS proc.approval_status_histories (
+            approval_status_history_id bigserial PRIMARY KEY,
+            target_type text NOT NULL CHECK (target_type IN ('source-doc')),
+            target_id bigint NOT NULL,
+            target_version_id bigint NOT NULL REFERENCES proc.blueprint_versions (blueprint_version_id) ON DELETE CASCADE,
+            from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
+            to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+            action_label text NOT NULL,
+            changed_by text,
+            changed_at timestamptz NOT NULL DEFAULT now(),
+            note text
+        );
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_approval_status_histories_target
+            ON proc.approval_status_histories (target_type, target_id, changed_at DESC);
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_approval_status_histories_version
+            ON proc.approval_status_histories (target_version_id);
+        """
+    )
+
+
+def _build_history_items(rows: list[Any]) -> list[ApprovalStatusHistoryItemData]:
+    """Build approval history response items."""
+
+    return [
+        ApprovalStatusHistoryItemData(
+            history_id=row[0],
+            from_status=row[1],
+            from_status_label=SOURCE_DOC_STATUS_LABELS.get(row[1], row[1]) if row[1] is not None else None,
+            to_status=row[2],
+            to_status_label=SOURCE_DOC_STATUS_LABELS.get(row[2], row[2]),
+            action_label=row[3],
+            changed_by=row[4],
+            changed_at=_format_changed_at(row[5]),
+            note=row[6],
+        )
+        for row in rows
+    ]
 
 
 def _build_transition_data(status_value: str) -> list[ApprovalTransitionData]:
@@ -197,8 +260,31 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_history_table(cursor)
                 cursor.execute(query, {"target_id": str(target_id)})
                 row = cursor.fetchone()
+                cursor.execute(
+                    """
+                    SELECT
+                        approval_status_history_id,
+                        from_status,
+                        to_status,
+                        action_label,
+                        changed_by,
+                        changed_at,
+                        note
+                    FROM proc.approval_status_histories
+                    WHERE
+                        target_type = %(target_type)s
+                        AND target_id = %(target_id)s
+                    ORDER BY changed_at DESC, approval_status_history_id DESC;
+                    """,
+                    {
+                        "target_type": APPROVAL_TARGET_TYPE,
+                        "target_id": target_id,
+                    },
+                )
+                history_rows = cursor.fetchall()
     except Exception as exception:
         raise DatabaseConnectionError("Approval status detail query failed.") from exception
 
@@ -222,6 +308,7 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
         created_by=row[10],
         updated_at=_format_updated_at(row[11]),
         allowed_transitions=_build_transition_data(row[5]),
+        history=_build_history_items(history_rows),
     )
 
 
@@ -229,6 +316,8 @@ def update_status(
     settings: AppSettings,
     target_id: int,
     to_status: str,
+    changed_by: str | None = None,
+    note: str | None = None,
 ) -> ApprovalStatusDetailData | None:
     """Update the latest approval status for one target."""
 
@@ -243,6 +332,7 @@ def update_status(
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_history_table(cursor)
                 cursor.execute(
                     """
                     SELECT
@@ -261,13 +351,15 @@ def update_status(
 
                 blueprint_version_id = int(current_row[0])
                 current_status = str(current_row[1])
-                allowed_targets = {
-                    status_value for status_value, _ in APPROVAL_ALLOWED_TRANSITIONS.get(current_status, [])
-                }
+                allowed_transitions = APPROVAL_ALLOWED_TRANSITIONS.get(current_status, [])
+                allowed_targets = {status_value for status_value, _ in allowed_transitions}
                 if to_status not in allowed_targets:
                     raise ValueError(
                         f"status transition from {current_status} to {to_status} is not allowed."
                     )
+                action_label = next(
+                    label for status_value, label in allowed_transitions if status_value == to_status
+                )
 
                 cursor.execute(
                     """
@@ -280,6 +372,40 @@ def update_status(
                     {
                         "to_status": to_status,
                         "blueprint_version_id": blueprint_version_id,
+                    },
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO proc.approval_status_histories (
+                        target_type,
+                        target_id,
+                        target_version_id,
+                        from_status,
+                        to_status,
+                        action_label,
+                        changed_by,
+                        note
+                    )
+                    VALUES (
+                        %(target_type)s,
+                        %(target_id)s,
+                        %(target_version_id)s,
+                        %(from_status)s,
+                        %(to_status)s,
+                        %(action_label)s,
+                        %(changed_by)s,
+                        %(note)s
+                    );
+                    """,
+                    {
+                        "target_type": APPROVAL_TARGET_TYPE,
+                        "target_id": target_id,
+                        "target_version_id": blueprint_version_id,
+                        "from_status": current_status,
+                        "to_status": to_status,
+                        "action_label": action_label,
+                        "changed_by": changed_by,
+                        "note": note,
                     },
                 )
             connection.commit()

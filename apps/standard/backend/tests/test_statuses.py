@@ -186,6 +186,7 @@ def test_read_status_detail_returns_success_response(
                     "action_label": "承認する",
                 }
             ],
+            "history": [],
         },
         "message": "承認状態詳細を取得しました。",
     }
@@ -251,15 +252,22 @@ def test_patch_status_detail_returns_success_response(
         settings: AppSettings,
         target_id: int,
         to_status: str,
+        changed_by: str | None = None,
+        note: str | None = None,
     ) -> ApprovalStatusDetailData | None:
         assert settings.app_env == "test"
         assert target_id == 1
         assert to_status == "published"
+        assert changed_by == "webui"
+        assert note == "画面操作"
         return _build_detail("published")
 
     monkeypatch.setattr(statuses, "update_status", fake_update_status)
 
-    response = client.patch("/api/v1/statuses/1", json={"status": "published"})
+    response = client.patch(
+        "/api/v1/statuses/1",
+        json={"status": "published", "changed_by": "webui", "note": "画面操作"},
+    )
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"] == "success"
@@ -278,8 +286,10 @@ def test_patch_status_detail_returns_not_found_response(
         settings: AppSettings,
         target_id: int,
         to_status: str,
+        changed_by: str | None = None,
+        note: str | None = None,
     ) -> ApprovalStatusDetailData | None:
-        del settings, target_id, to_status
+        del settings, target_id, to_status, changed_by, note
         return None
 
     monkeypatch.setattr(statuses, "update_status", fake_update_status)
@@ -304,8 +314,10 @@ def test_patch_status_detail_returns_bad_request_response(
         settings: AppSettings,
         target_id: int,
         to_status: str,
+        changed_by: str | None = None,
+        note: str | None = None,
     ) -> ApprovalStatusDetailData | None:
-        del settings, target_id, to_status
+        del settings, target_id, to_status, changed_by, note
         raise ValueError("status transition from archived to published is not allowed.")
 
     monkeypatch.setattr(statuses, "update_status", fake_update_status)
@@ -330,8 +342,10 @@ def test_patch_status_detail_returns_error_response(
         settings: AppSettings,
         target_id: int,
         to_status: str,
+        changed_by: str | None = None,
+        note: str | None = None,
     ) -> ApprovalStatusDetailData | None:
-        del settings, target_id, to_status
+        del settings, target_id, to_status, changed_by, note
         raise DatabaseConnectionError("Approval status update failed.")
 
     monkeypatch.setattr(statuses, "update_status", fake_update_status)

@@ -478,6 +478,20 @@ class ApprovalTransitionData(BaseModel):
     action_label: str
 
 
+class ApprovalStatusHistoryItemData(BaseModel):
+    """Approval status history item response payload."""
+
+    history_id: int
+    from_status: Literal["draft", "published", "archived"] | None
+    from_status_label: str | None
+    to_status: Literal["draft", "published", "archived"]
+    to_status_label: str
+    action_label: str
+    changed_by: str | None
+    changed_at: str
+    note: str | None
+
+
 class ApprovalStatusListItemData(BaseModel):
     """Approval status list item response payload."""
 
@@ -520,12 +534,15 @@ class ApprovalStatusDetailData(BaseModel):
     created_by: str | None
     updated_at: str
     allowed_transitions: list[ApprovalTransitionData]
+    history: list[ApprovalStatusHistoryItemData] = Field(default_factory=list)
 
 
 class ApprovalStatusUpdateRequest(BaseModel):
     """Approval status update request payload."""
 
     status: Literal["draft", "published", "archived"]
+    changed_by: str | None = None
+    note: str | None = None
 
 
 class CaseDocMasterOptionData(BaseModel):
