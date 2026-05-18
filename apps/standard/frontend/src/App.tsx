@@ -63,6 +63,16 @@ function clearAuthUser(): void {
   window.localStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
+function getAuthRoleLabel(role: AuthRole): string {
+  return role === "approver" ? "承認者" : "メンバー";
+}
+
+function getAuthRoleDescription(role: AuthRole): string {
+  return role === "approver"
+    ? "承認・差戻し・保管を実行できます。"
+    : "承認状態と履歴の閲覧のみ可能です。";
+}
+
 type ModuleRow = {
   id: string;
   name: string;
@@ -695,7 +705,7 @@ function Shell() {
         <div className="user-box">
           <span>ログイン中</span>
           <strong>{currentUser.displayName}</strong>
-          <small>{currentUser.role}</small>
+          <small>{getAuthRoleLabel(currentUser.role)}</small>
         </div>
         <nav aria-label="主要メニュー">
           <NavItem to="/home" label="HOME" icon="⌂" />
@@ -5541,6 +5551,8 @@ function ApprovalPage() {
   const currentUser = getStoredAuthUser();
   const approvalActor = currentUser?.displayName ?? "";
   const canManageApproval = currentUser?.role === "approver";
+  const currentRoleLabel = currentUser ? getAuthRoleLabel(currentUser.role) : "未ログイン";
+  const currentRoleDescription = currentUser ? getAuthRoleDescription(currentUser.role) : "ログインしてください。";
   const [approvalComment, setApprovalComment] = useState("");
   const [approvalStatusFilter, setApprovalStatusFilter] = useState<"all" | ModuleApiStatus>("all");
   const [reloadTick, setReloadTick] = useState(0);
@@ -5920,6 +5932,11 @@ function ApprovalPage() {
           <section className="section-band approval-detail-grid">
             <div>
               <h2>実行できる操作</h2>
+              <div className={`approval-permission-panel ${canManageApproval ? "can-manage" : "view-only"}`}>
+                <span>現在の権限</span>
+                <strong>{currentRoleLabel}</strong>
+                <p>{currentRoleDescription}</p>
+              </div>
               <label className="approval-actor-field">
                 実行者
                 <input value={approvalActor || "未ログイン"} readOnly />
@@ -5932,20 +5949,29 @@ function ApprovalPage() {
                 <textarea
                   value={approvalComment}
                   onChange={(event) => setApprovalComment(event.target.value)}
+                  disabled={!canManageApproval}
                   rows={3}
-                  placeholder="差戻し時は理由を入力してください。承認・保管時は任意です。"
+                  placeholder={
+                    canManageApproval
+                      ? "差戻し時は理由を入力してください。承認・保管時は任意です。"
+                      : "メンバーユーザーではコメント入力と承認操作はできません。"
+                  }
                 />
               </label>
               {selectedItem.allowed_transitions.length > 0 ? (
                 <div className="approval-transition-list">
                   {selectedItem.allowed_transitions.map((transition) => (
-                    <article key={transition.to_status} className="approval-transition-card">
+                    <article
+                      key={transition.to_status}
+                      className={`approval-transition-card ${canManageApproval ? "" : "is-disabled"}`}
+                    >
                       <strong>{transition.action_label}</strong>
                       <span>{transition.to_status_label}</span>
                       <button
                         className="primary"
                         onClick={() => void handleApplyTransition(transition.to_status)}
                         disabled={approvalMutationState.status === "submitting" || !canManageApproval}
+                        title={canManageApproval ? transition.action_label : "承認者ユーザーでログインすると実行できます。"}
                       >
                         {approvalMutationState.status === "submitting"
                           ? "変更中..."

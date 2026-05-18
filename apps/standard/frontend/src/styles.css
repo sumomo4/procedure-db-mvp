@@ -41,6 +41,12 @@ button,
   white-space: nowrap;
 }
 
+button:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .primary,
 .button-link {
   color: #ffffff;
@@ -1435,6 +1441,41 @@ th {
   resize: vertical;
 }
 
+.approval-permission-panel {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid #c9d1d3;
+  border-left: 5px solid #d7a84f;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  background: #ffffff;
+}
+
+.approval-permission-panel.can-manage {
+  border-left-color: #2f9461;
+}
+
+.approval-permission-panel.view-only {
+  border-left-color: #d7a84f;
+}
+
+.approval-permission-panel span {
+  color: #56636c;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.approval-permission-panel strong {
+  color: #172026;
+}
+
+.approval-permission-panel p {
+  margin: 0;
+  color: #56636c;
+  line-height: 1.6;
+}
+
 .approval-role-note {
   margin: 0 0 14px;
   color: #7a4d00;
@@ -1459,6 +1500,10 @@ th {
   color: #56636c;
   font-size: 13px;
   font-weight: 700;
+}
+
+.approval-transition-card.is-disabled {
+  background: #f7f4ee;
 }
 
 .excel-preview {
