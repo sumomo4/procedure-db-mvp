@@ -1842,28 +1842,10 @@ function ModuleRegisterPage() {
       </section>
 
       <form className="register-form" onSubmit={handleSubmit}>
-        <FormGrid>
-          <label>
-            モジュールキー
-            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 未入力時は自動採番" />
-          </label>
-          <label>
-            モジュール名
-            <input value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} required />
-          </label>
-          <label>
-            作成者
-            <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
-          </label>
-          <label>
-            取込元
-            <input value={sourcePathInput} onChange={(event) => setSourcePathInput(event.target.value)} placeholder="imports/manual-module.xlsx" />
-          </label>
-          <label className="wide">
-            説明
-            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
-          </label>
-        </FormGrid>
+        {/*
+          MVPではモジュール登録をExcel投入のみに寄せるため、手入力用の基本情報フォームは表示しない。
+          値はExcel取込結果から内部状態へ反映し、保存リクエストでは引き続き使用する。
+        */}
 
         <section className="register-step-card">
           <div className="register-step-header">
@@ -2654,35 +2636,13 @@ function ModuleRegisterPageV2() {
       title="モジュール登録"
       description="Excelファイルを取り込み、内容を確認してから初版モジュールを保存します。"
     >
-      <section className="upload-zone" aria-label="モジュール登録ガイダンス">
-        <span className="upload-icon">+</span>
-        <h2>Excelファイルを取り込んでモジュールを登録します</h2>
-        <p>xlsx / xlsm を選択して取り込み、必要な内容を確認してから保存します。</p>
-      </section>
+      {/* MVPではExcel投入のみでモジュール登録するため、装飾用の案内画像/アップロード枠は表示しない。 */}
 
       <form className="register-form" onSubmit={handleSubmit}>
-        <FormGrid>
-          <label>
-            モジュールキー
-            <input value={moduleKeyInput} onChange={(event) => setModuleKeyInput(event.target.value)} placeholder="MOD-004 未入力時は自動採番" />
-          </label>
-          <label>
-            モジュール名
-            <input value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} required />
-          </label>
-          <label>
-            作成者
-            <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
-          </label>
-          <label>
-            取込元
-            <input value={sourcePathInput} onChange={(event) => setSourcePathInput(event.target.value)} placeholder="imports/manual-module.xlsx" />
-          </label>
-          <label className="wide">
-            説明
-            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
-          </label>
-        </FormGrid>
+        {/*
+          MVPではモジュール登録をExcel投入のみに寄せるため、手入力用の基本情報フォームは表示しない。
+          値はExcel取込結果から内部状態へ反映し、保存リクエストでは引き続き使用する。
+        */}
 
         {/* Excel取込のみで登録する方針のため、手入力用の装置ブロックと手順行はWebUIでは表示しません。 */}
         {showManualEditors ? (
