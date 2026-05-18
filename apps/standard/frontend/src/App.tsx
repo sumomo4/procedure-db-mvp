@@ -4,6 +4,65 @@ import { DevicePager, PreviewFrame, PreviewOverlay } from "./previewUi";
 
 type Status = "Draft" | "approval" | "archive";
 
+type AuthRole = "member" | "approver";
+
+type AuthUser = {
+  username: string;
+  displayName: string;
+  role: AuthRole;
+};
+
+const AUTH_STORAGE_KEY = "mvpAuthUser";
+
+const demoUsers: Record<string, AuthUser & { password: string }> = {
+  member: {
+    username: "member",
+    password: "password",
+    displayName: "メンバーユーザー",
+    role: "member",
+  },
+  approver: {
+    username: "approver",
+    password: "password",
+    displayName: "承認者ユーザー",
+    role: "approver",
+  },
+};
+
+function getStoredAuthUser(): AuthUser | null {
+  const rawUser = window.localStorage.getItem(AUTH_STORAGE_KEY);
+  if (rawUser === null) {
+    return null;
+  }
+
+  try {
+    const parsedUser = JSON.parse(rawUser) as Partial<AuthUser>;
+    if (
+      typeof parsedUser.username === "string" &&
+      typeof parsedUser.displayName === "string" &&
+      (parsedUser.role === "member" || parsedUser.role === "approver")
+    ) {
+      return {
+        username: parsedUser.username,
+        displayName: parsedUser.displayName,
+        role: parsedUser.role,
+      };
+    }
+  } catch {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  }
+
+  return null;
+}
+
+function saveAuthUser(user: AuthUser): void {
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+}
+
+function clearAuthUser(): void {
+  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
 type ModuleRow = {
   id: string;
   name: string;
@@ -610,7 +669,18 @@ function App() {
 function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
+  const currentUser = getStoredAuthUser();
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (currentUser === null) {
+      navigate("/", { replace: true });
+    }
+  }, [currentUser, navigate]);
+
+  if (currentUser === null) {
+    return null;
+  }
 
   return (
     <div className="app-shell">
@@ -621,6 +691,11 @@ function Shell() {
             <strong>手順書DB</strong>
             <small>M1 WebUI</small>
           </div>
+        </div>
+        <div className="user-box">
+          <span>ログイン中</span>
+          <strong>{currentUser.displayName}</strong>
+          <small>{currentUser.role}</small>
         </div>
         <nav aria-label="主要メニュー">
           <NavItem to="/home" label="HOME" icon="⌂" />
@@ -668,7 +743,9 @@ function Shell() {
                 type="button"
                 onClick={() => {
                   setIsLogoutDialogOpen(false);
-                  navigate("/");
+                  clearAuthUser();
+                  window.localStorage.removeItem("approvalActor");
+                  navigate("/", { replace: true });
                 }}
               >
                 <span aria-hidden="true">↩</span>
@@ -693,6 +770,31 @@ function NavItem({ to, label, icon, end = false }: { to: string; label: string; 
 
 function LoginPage() {
   const navigate = useNavigate();
+  const [username, setUsername] = useState("member");
+  const [password, setPassword] = useState("password");
+  const [loginError, setLoginError] = useState("");
+
+  function handleLogin(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const normalizedUsername = username.trim();
+    const demoUser = demoUsers[normalizedUsername];
+
+    if (demoUser === undefined || demoUser.password !== password) {
+      setLoginError("ユーザー名またはパスワードが正しくありません。");
+      return;
+    }
+
+    const authUser: AuthUser = {
+      username: demoUser.username,
+      displayName: demoUser.displayName,
+      role: demoUser.role,
+    };
+    saveAuthUser(authUser);
+    window.localStorage.setItem("approvalActor", authUser.displayName);
+    setLoginError("");
+    navigate("/home");
+  }
+
   return (
     <main className="login-screen">
       <section className="login-panel" aria-labelledby="login-title">
@@ -700,22 +802,29 @@ function LoginPage() {
           <p className="eyebrow">Sprint 1 / SB1-04</p>
           <h1 id="login-title">手順書DB WebUI</h1>
           <p>モジュール登録、検索、原本作成、承認状態確認までの主要操作をWebUIから辿れるM1向け画面です。</p>
+          <div className="demo-users">
+            <span>テストユーザー</span>
+            <strong>member / password</strong>
+            <small>参照・作成・編集用</small>
+            <strong>approver / password</strong>
+            <small>承認・差戻し・保管用</small>
+          </div>
         </div>
-        <form
-          className="login-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            navigate("/home");
-          }}
-        >
+        <form className="login-form" onSubmit={handleLogin}>
           <label>
             ユーザ名
-            <input defaultValue="m1.user" autoComplete="username" />
+            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
           </label>
           <label>
             パスワード
-            <input type="password" defaultValue="password" autoComplete="current-password" />
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+            />
           </label>
+          {loginError ? <p className="login-error">{loginError}</p> : null}
           <button className="primary" type="submit">
             <span aria-hidden="true">→</span>
             ログイン
@@ -5429,8 +5538,10 @@ function ApprovalPage() {
     status: "idle",
     message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
   });
+  const currentUser = getStoredAuthUser();
+  const approvalActor = currentUser?.displayName ?? "";
+  const canManageApproval = currentUser?.role === "approver";
   const [approvalComment, setApprovalComment] = useState("");
-  const [approvalActor, setApprovalActor] = useState(() => window.localStorage.getItem("approvalActor") ?? "webui");
   const [approvalStatusFilter, setApprovalStatusFilter] = useState<"all" | ModuleApiStatus>("all");
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -5564,10 +5675,6 @@ function ApprovalPage() {
     setApprovalComment("");
   }, [selectedTargetId]);
 
-  useEffect(() => {
-    window.localStorage.setItem("approvalActor", approvalActor);
-  }, [approvalActor]);
-
   const selectedItem = approvalDetailState.item;
   const selectedSummary =
     approvalListState.items.find((item) => item.target_id === selectedTargetId) ?? null;
@@ -5593,6 +5700,14 @@ function ApprovalPage() {
 
   async function handleApplyTransition(toStatus: ModuleApiStatus): Promise<void> {
     if (selectedItem === null) {
+      return;
+    }
+
+    if (!canManageApproval) {
+      setApprovalMutationState({
+        status: "error",
+        message: "承認操作は承認者ユーザーのみ実行できます。",
+      });
       return;
     }
 
@@ -5807,12 +5922,11 @@ function ApprovalPage() {
               <h2>実行できる操作</h2>
               <label className="approval-actor-field">
                 実行者
-                <input
-                  value={approvalActor}
-                  onChange={(event) => setApprovalActor(event.target.value)}
-                  placeholder="例: yamada"
-                />
+                <input value={approvalActor || "未ログイン"} readOnly />
               </label>
+              {!canManageApproval ? (
+                <p className="approval-role-note">承認操作は承認者ユーザーのみ実行できます。メンバーユーザーは閲覧のみ可能です。</p>
+              ) : null}
               <label className="approval-comment-field">
                 コメント
                 <textarea
@@ -5831,7 +5945,7 @@ function ApprovalPage() {
                       <button
                         className="primary"
                         onClick={() => void handleApplyTransition(transition.to_status)}
-                        disabled={approvalMutationState.status === "submitting"}
+                        disabled={approvalMutationState.status === "submitting" || !canManageApproval}
                       >
                         {approvalMutationState.status === "submitting"
                           ? "変更中..."
