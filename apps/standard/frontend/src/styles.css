@@ -525,6 +525,30 @@ nav {
   color: #1f6f78;
 }
 
+.approval-filter-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #c9d1d3;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  background: #ffffff;
+  color: #41505a;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.approval-filter-button.active {
+  border-color: #1f6f78;
+  background: #e7f0f1;
+  color: #1f6f78;
+}
+
+.approval-filter-button:hover {
+  border-color: #1f6f78;
+}
+
 .search-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(160px, 1fr)) auto;

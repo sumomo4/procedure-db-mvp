@@ -5431,6 +5431,7 @@ function ApprovalPage() {
   });
   const [approvalComment, setApprovalComment] = useState("");
   const [approvalActor, setApprovalActor] = useState(() => window.localStorage.getItem("approvalActor") ?? "webui");
+  const [approvalStatusFilter, setApprovalStatusFilter] = useState<"all" | ModuleApiStatus>("all");
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
@@ -5570,6 +5571,25 @@ function ApprovalPage() {
   const selectedItem = approvalDetailState.item;
   const selectedSummary =
     approvalListState.items.find((item) => item.target_id === selectedTargetId) ?? null;
+  const approvalStatusFilterOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
+    { value: "all", label: "0. \u5168\u4ef6\u8868\u793a" },
+    { value: "draft", label: "1. \u627f\u8a8d\u524d\uff08draft\uff09" },
+    { value: "published", label: "2. \u627f\u8a8d\u6e08\u307f\uff08published\uff09" },
+    { value: "archived", label: "3. \u4fdd\u7ba1\u6e08\u307f\uff08archived\uff09" },
+  ];
+  const filteredApprovalItems = approvalListState.items.filter((item) =>
+    approvalStatusFilter === "all" ? true : item.status === approvalStatusFilter,
+  );
+
+  function handleApprovalStatusFilterChange(nextFilter: "all" | ModuleApiStatus): void {
+    setApprovalStatusFilter(nextFilter);
+    const nextItems = approvalListState.items.filter((item) =>
+      nextFilter === "all" ? true : item.status === nextFilter,
+    );
+    if (nextItems.length > 0) {
+      setSelectedTargetId(nextItems[0].target_id);
+    }
+  }
 
   async function handleApplyTransition(toStatus: ModuleApiStatus): Promise<void> {
     if (selectedItem === null) {
@@ -5654,11 +5674,17 @@ function ApprovalPage() {
       title="承認状態確認 / 変更"
       description="会議で整理した版管理・承認ルールに沿って、原本の状態確認と変更を行います。"
     >
-      <section className="approval-flow">
-        <FlowStep label="0. 初版作成" />
-        <FlowStep label="1. 承認前（draft）" active />
-        <FlowStep label="2. 承認済み（published）" />
-        <FlowStep label="3. 保管済み（archived）" />
+      <section className="approval-flow" aria-label="\u627f\u8a8d\u72b6\u614b\u30d5\u30a3\u30eb\u30bf\u30fc">
+        {approvalStatusFilterOptions.map((option) => (
+          <button
+            key={option.value}
+            className={option.value === approvalStatusFilter ? "approval-filter-button active" : "approval-filter-button"}
+            type="button"
+            onClick={() => handleApprovalStatusFilterChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
       </section>
 
       <section className={`list-status list-status-${approvalListState.status}`} aria-live="polite">
@@ -5674,7 +5700,7 @@ function ApprovalPage() {
         </div>
         <div>
           <span>対象件数</span>
-          <strong>{approvalListState.items.length}</strong>
+          <strong>{filteredApprovalItems.length}/{approvalListState.items.length}</strong>
         </div>
         <div>
           <span>選択中</span>
@@ -5683,15 +5709,19 @@ function ApprovalPage() {
         <p>{approvalListState.message}</p>
       </section>
 
-      {approvalListState.status === "available" && approvalListState.items.length === 0 ? (
+      {approvalListState.status === "available" && filteredApprovalItems.length === 0 ? (
         <section className="empty-state">
-          <h2>承認対象はまだありません</h2>
-          <p>原本を保存すると、この画面から承認状態と次の操作を確認できます。</p>
+          <h2>{approvalListState.items.length === 0 ? "承認対象はまだありません" : "条件に一致する承認対象はありません"}</h2>
+          <p>
+            {approvalListState.items.length === 0
+              ? "原本を保存すると、この画面から承認状態と次の操作を確認できます。"
+              : "フィルターを切り替えると、別の状態の承認対象を確認できます。"}
+          </p>
         </section>
       ) : (
         <DataTable
           columns={["対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "選択"]}
-          rows={approvalListState.items.map((item) => [
+          rows={filteredApprovalItems.map((item) => [
             `${item.target_key} ${item.target_name}`,
             `v${item.version_no}`,
             <ModuleStatusPill status={item.status} label={item.status_label} />,
