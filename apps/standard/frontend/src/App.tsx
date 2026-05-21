@@ -141,7 +141,7 @@ type ModuleDetailRowData = {
 };
 
 type ModuleRowImageData = {
-  module_row_image_id: number;
+  module_row_image_id?: number;
   image_key: string;
   image_path: string;
   anchor_cell: string;
@@ -616,6 +616,10 @@ function buildApiUrl(path: string): string {
   return path;
 }
 
+function buildModuleImageUrl(moduleRowImageId: number): string {
+  return buildApiUrl(`/api/v1/modules/images/${moduleRowImageId}`);
+}
+
 async function readApiResponse<TData>(response: Response): Promise<ApiResponse<TData>> {
   const contentType = response.headers.get("content-type") ?? "";
   const responseText = await response.text();
@@ -842,6 +846,61 @@ function LoginPage() {
         </form>
       </section>
     </main>
+  );
+}
+
+type ModuleImagePlacement = "work" | "expected";
+
+function getExcelColumnIndex(cellAddress: string): number | null {
+  const columnLetters = cellAddress.match(/^[A-Za-z]+/)?.[0];
+  if (!columnLetters) {
+    return null;
+  }
+
+  return columnLetters
+    .toUpperCase()
+    .split("")
+    .reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+}
+
+function getModuleImagePlacement(image: ModuleRowImageData): ModuleImagePlacement {
+  const columnIndex = getExcelColumnIndex(image.anchor_cell);
+  return columnIndex !== null && columnIndex >= 9 ? "expected" : "work";
+}
+
+function ModuleRowImageList({
+  images,
+  placement,
+}: {
+  images: ModuleRowImageData[];
+  placement: ModuleImagePlacement;
+}) {
+  const placementImages = images.filter((image) => getModuleImagePlacement(image) === placement);
+  if (placementImages.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="excel-image-list">
+      {placementImages.map((image) => {
+        const imageId = image.module_row_image_id;
+        const key = imageId ?? image.image_key;
+        return (
+          <figure key={`${key}-${image.anchor_cell}`} className="excel-image-card">
+            {typeof imageId === "number" ? (
+              <img
+                src={buildModuleImageUrl(imageId)}
+                alt={`${image.image_key} ${image.anchor_cell}`}
+                loading="lazy"
+              />
+            ) : (
+              <div className="excel-image-placeholder">登録後に画像を表示できます</div>
+            )}
+            <figcaption>{image.anchor_cell}</figcaption>
+          </figure>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1474,8 +1533,12 @@ function ExcelModulePreview({
                 <td>{row.tech_doc_text ?? ""}</td>
                 <td className="excel-work-cell">
                   <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                  <ModuleRowImageList images={row.images ?? []} placement="work" />
                 </td>
-                <td>{row.expected_result ?? ""}</td>
+                <td>
+                  <IndentedExcelText text={row.expected_result} indentLevel={0} />
+                  <ModuleRowImageList images={row.images ?? []} placement="expected" />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1598,8 +1661,12 @@ function ExcelModuleCaseSheet({
                 <td>{row.tech_doc_text ?? ""}</td>
                 <td colSpan={4} className="excel-work-cell excel-work-cell-wide">
                   <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                  <ModuleRowImageList images={row.images ?? []} placement="work" />
                 </td>
-                <td>{row.expected_result ?? ""}</td>
+                <td>
+                  <IndentedExcelText text={row.expected_result} indentLevel={0} />
+                  <ModuleRowImageList images={row.images ?? []} placement="expected" />
+                </td>
                 {caseDeviceHeaders.map((header) => {
                   const entry = getModuleDeviceEntry(row, header.slot_no);
                   return (
@@ -4401,8 +4468,12 @@ function ExcelSourceDocPreview({
                     <td>{row.tech_doc_text ?? ""}</td>
                     <td className="excel-work-cell">
                       <IndentedExcelText text={row.work_text} indentLevel={indentLevel} />
+                      <ModuleRowImageList images={row.images ?? []} placement="work" />
                     </td>
-                    <td>{row.expected_result ?? ""}</td>
+                    <td>
+                      <IndentedExcelText text={row.expected_result} indentLevel={0} />
+                      <ModuleRowImageList images={row.images ?? []} placement="expected" />
+                    </td>
                     <td className="excel-center">{row.time_text ?? ""}</td>
                     <td>{row.window_text ?? ""}</td>
                     <td>{row.p_text ?? ""}</td>

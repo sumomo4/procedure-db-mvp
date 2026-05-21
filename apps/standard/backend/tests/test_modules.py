@@ -13,8 +13,12 @@ from app.core.responses import (
     ModuleListItemData,
     ModuleRowData,
     ModuleRowDeviceEntryData,
+    ModuleRowImageData,
 )
 from app.routers import modules
+
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-image-bytes"
 
 
 def test_read_modules_returns_success_response(
@@ -305,6 +309,112 @@ def test_read_module_detail_returns_error_response(
         "result": "error",
         "data": None,
         "message": "モジュール詳細の取得に失敗しました。",
+    }
+
+
+def test_read_module_row_image_returns_file(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module row image API should return the stored image file."""
+
+    image_root = tmp_path / "module_images"
+    image_file = image_root / "MOD-001" / "row-image.png"
+    image_file.parent.mkdir(parents=True)
+    image_file.write_bytes(PNG_BYTES)
+    test_settings.module_image_storage_dir = str(image_root)
+
+    def fake_get_module_row_image(settings: AppSettings, module_row_image_id: int) -> ModuleRowImageData | None:
+        """Return deterministic image metadata."""
+
+        assert settings.app_env == "test"
+        assert module_row_image_id == 1
+        return ModuleRowImageData(
+            module_row_image_id=1,
+            image_key="MOD-001_r1_img1",
+            image_path=str(image_file),
+            anchor_cell="E8",
+            offset_x_px=0,
+            offset_y_px=0,
+            width_px=120,
+            height_px=80,
+            image_order=1,
+        )
+
+    monkeypatch.setattr(modules, "get_module_row_image", fake_get_module_row_image)
+
+    response = client.get("/api/v1/modules/images/1")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == PNG_BYTES
+
+
+def test_read_module_row_image_rejects_outside_storage(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module row image API should not serve files outside image storage."""
+
+    image_root = tmp_path / "module_images"
+    outside_file = tmp_path / "outside.png"
+    image_root.mkdir()
+    outside_file.write_bytes(PNG_BYTES)
+    test_settings.module_image_storage_dir = str(image_root)
+
+    def fake_get_module_row_image(settings: AppSettings, module_row_image_id: int) -> ModuleRowImageData | None:
+        """Return image metadata pointing outside storage."""
+
+        del settings, module_row_image_id
+        return ModuleRowImageData(
+            module_row_image_id=1,
+            image_key="outside",
+            image_path=str(outside_file),
+            anchor_cell="E8",
+            offset_x_px=0,
+            offset_y_px=0,
+            width_px=None,
+            height_px=None,
+            image_order=1,
+        )
+
+    monkeypatch.setattr(modules, "get_module_row_image", fake_get_module_row_image)
+
+    response = client.get("/api/v1/modules/images/1")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "画像が見つかりませんでした。",
+    }
+
+
+def test_read_module_row_image_returns_not_found_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module row image API should return 404 when metadata does not exist."""
+
+    def fake_get_module_row_image(settings: AppSettings, module_row_image_id: int) -> ModuleRowImageData | None:
+        """Return no image metadata."""
+
+        del settings, module_row_image_id
+        return None
+
+    monkeypatch.setattr(modules, "get_module_row_image", fake_get_module_row_image)
+
+    response = client.get("/api/v1/modules/images/999")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "画像が見つかりませんでした。",
     }
 
 

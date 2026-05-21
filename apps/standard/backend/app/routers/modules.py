@@ -1,8 +1,11 @@
 """Module resource routes for Sprint 2 implementation."""
 
+import mimetypes
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
 from app.core.config import AppSettings
 from app.core.excel_import import (
@@ -20,11 +23,29 @@ from app.core.responses import (
     RouterFoundationData,
     success_response,
 )
-from app.db.modules import VALID_MODULE_STATUSES, create_module, get_module_detail, list_modules
+from app.db.modules import VALID_MODULE_STATUSES, create_module, get_module_detail, get_module_row_image, list_modules
 from app.routers.health import get_app_settings
 
 
 router = APIRouter(prefix="/modules", tags=["modules"])
+
+
+def _resolve_module_image_file(settings: AppSettings, image_path: str) -> Path | None:
+    """Resolve a stored image path without allowing access outside storage."""
+
+    storage_root = Path(settings.module_image_storage_dir).resolve()
+    candidate = Path(image_path)
+    if not candidate.is_absolute():
+        candidate = storage_root / candidate
+
+    resolved_candidate = candidate.resolve(strict=False)
+    if not resolved_candidate.is_relative_to(storage_root):
+        return None
+
+    if not resolved_candidate.is_file():
+        return None
+
+    return resolved_candidate
 
 
 @router.get("", response_model=ApiResponse[ModuleListData])
@@ -124,6 +145,42 @@ def read_module_detail(
         )
 
     return success_response(data, "モジュール詳細を取得しました。")
+
+
+@router.get("/images/{module_row_image_id}", response_class=FileResponse)
+def read_module_row_image(
+    module_row_image_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> FileResponse:
+    """Return an extracted module row image file."""
+
+    try:
+        image_metadata = get_module_row_image(settings, module_row_image_id)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if image_metadata is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="画像が見つかりませんでした。",
+        )
+
+    image_file = _resolve_module_image_file(settings, image_metadata.image_path)
+    if image_file is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="画像が見つかりませんでした。",
+        )
+
+    media_type, _ = mimetypes.guess_type(image_file.name)
+    return FileResponse(
+        path=image_file,
+        media_type=media_type or "application/octet-stream",
+        filename=image_file.name,
+    )
 
 
 @router.post("", response_model=ApiResponse[ModuleDetailData], status_code=status.HTTP_201_CREATED)

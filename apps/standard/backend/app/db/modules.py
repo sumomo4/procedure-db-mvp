@@ -583,6 +583,57 @@ def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData
     return _map_module_detail_rows(rows)
 
 
+def get_module_row_image(settings: AppSettings, module_row_image_id: int) -> ModuleRowImageData | None:
+    """Read metadata for one module row image."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        module_row_image_id,
+                        image_key,
+                        image_path,
+                        anchor_cell,
+                        offset_x_px,
+                        offset_y_px,
+                        width_px,
+                        height_px,
+                        image_order
+                    FROM proc.module_row_images
+                    WHERE module_row_image_id = %(module_row_image_id)s;
+                    """,
+                    {"module_row_image_id": module_row_image_id},
+                )
+                row = cursor.fetchone()
+    except Exception as exception:
+        raise DatabaseConnectionError("モジュール行画像の取得に失敗しました。") from exception
+
+    if row is None:
+        return None
+
+    return ModuleRowImageData(
+        module_row_image_id=int(row[0]),
+        image_key=str(row[1]),
+        image_path=str(row[2]),
+        anchor_cell=str(row[3]),
+        offset_x_px=int(row[4] or 0),
+        offset_y_px=int(row[5] or 0),
+        width_px=int(row[6]) if row[6] is not None else None,
+        height_px=int(row[7]) if row[7] is not None else None,
+        image_order=int(row[8] or 1),
+    )
+
+
 def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> ModuleDetailData:
     """Create a module, its initial version, and module rows."""
 

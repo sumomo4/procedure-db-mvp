@@ -1920,6 +1920,45 @@ th {
   font-weight: 700;
 }
 
+.excel-image-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.excel-image-card {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.excel-image-card img {
+  max-width: min(100%, 280px);
+  max-height: 190px;
+  border: 1px solid #9aa6ac;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.excel-sheet-case .excel-image-card img {
+  max-width: min(100%, 250px);
+  max-height: 170px;
+}
+
+.excel-image-card figcaption,
+.excel-image-placeholder {
+  color: #56636c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.excel-image-placeholder {
+  padding: 8px 10px;
+  border: 1px dashed #9aa6ac;
+  background: #f8fbfc;
+}
+
 .excel-indent {
   position: relative;
   min-height: 1.55em;
