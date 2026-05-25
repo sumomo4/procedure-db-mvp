@@ -1987,6 +1987,9 @@ function ModuleDiffPanel({
   state: ModuleDiffState;
   onFetchDiff: () => void;
 }) {
+  const changedRows = state.item?.rows.filter((row) => row.status !== "unchanged") ?? [];
+  const unchangedCount = state.item?.rows.filter((row) => row.status === "unchanged").length ?? 0;
+
   return (
     <section className="section-band module-diff-panel">
       <div className="section-heading-row">
@@ -2015,19 +2018,21 @@ function ModuleDiffPanel({
             <Fact label="変更" value={String(state.item.summary.changed_count)} />
             <Fact label="変更なし" value={String(state.item.summary.unchanged_count)} />
           </div>
-          <DataTable
-            columns={["状態", "行", "変更項目", "変更前", "変更後"]}
-            rows={state.item.rows
-              .filter((row) => row.status !== "unchanged")
-              .slice(0, 20)
-              .map((row) => [
-                getModuleDiffStatusLabel(row.status),
-                row.row_key,
-                row.changed_fields.length > 0 ? row.changed_fields.join(", ") : "-",
-                getModuleDiffRowText(row.before),
-                getModuleDiffRowText(row.after),
-              ])}
-          />
+          {changedRows.length > 0 ? (
+            <div className="module-diff-list" aria-label="変更行一覧">
+              {changedRows.map((row, index) => (
+                <ModuleDiffRowCard row={row} key={`${row.status}-${row.row_key}-${index}`} />
+              ))}
+            </div>
+          ) : (
+            <div className="module-diff-empty">
+              <strong>差分はありません</strong>
+              <span>{`v${state.item.from_version} と v${state.item.to_version} の手順行は一致しています。`}</span>
+            </div>
+          )}
+          {unchangedCount > 0 ? (
+            <p className="form-hint">{`変更なしの行 ${unchangedCount} 件は省略表示しています。`}</p>
+          ) : null}
         </>
       ) : previousVersionNo === null ? (
         <p>前版がないため、差分比較はまだできません。</p>
@@ -2046,11 +2051,143 @@ function getModuleDiffStatusLabel(statusValue: ModuleDiffRowData["status"]): str
   return labels[statusValue];
 }
 
+function getModuleDiffStatusDescription(statusValue: ModuleDiffRowData["status"]): string {
+  const descriptions: Record<ModuleDiffRowData["status"], string> = {
+    added: "新しい版で追加された行",
+    removed: "新しい版では削除された行",
+    changed: "前版から内容が変わった行",
+    unchanged: "変更なし",
+  };
+  return descriptions[statusValue];
+}
+
+function getModuleDiffChangedFieldLabel(fieldName: string): string {
+  const labels: Record<string, string> = {
+    row_type: "行種別",
+    major_no: "大番号",
+    middle_no: "中番号",
+    minor_no: "小番号",
+    tech_doc_text: "技術資料名",
+    work_text: "作業内容",
+    indent_level: "インデント",
+    expected_result: "確認事項",
+    time_text: "時刻",
+    window_text: "window",
+    p_text: "P",
+    command_text: "コマンド",
+    note: "備考",
+    device_entries: "装置別入力",
+    images: "画像",
+  };
+  return labels[fieldName] ?? fieldName;
+}
+
+function getModuleDiffRowNumber(row: ModuleDetailRowData | null): string {
+  if (row === null) {
+    return "-";
+  }
+
+  const numbers = [row.major_no, row.middle_no, row.minor_no].filter(Boolean);
+  return numbers.length > 0 ? numbers.join("-") : `行${row.row_order}`;
+}
+
 function getModuleDiffRowText(row: ModuleDetailRowData | null): string {
   if (row === null) {
     return "-";
   }
   return row.work_text || row.expected_result || row.command_text || row.tech_doc_text || "(空行)";
+}
+
+function getModuleDiffRowSecondaryText(row: ModuleDetailRowData | null): string {
+  if (row === null) {
+    return "-";
+  }
+
+  const values = [
+    row.tech_doc_text ? `技術資料: ${row.tech_doc_text}` : null,
+    row.expected_result ? `確認: ${row.expected_result}` : null,
+    row.command_text ? `コマンド: ${row.command_text}` : null,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(" / ") : "補足情報なし";
+}
+
+function getModuleDiffDeviceSummary(row: ModuleDetailRowData | null): string {
+  if (row === null || row.device_entries.length === 0) {
+    return "装置別入力なし";
+  }
+
+  return row.device_entries
+    .map((entry) => {
+      const values = [entry.window_text, entry.p_text, entry.command_text].filter(Boolean).join(" ");
+      return `装置${entry.slot_no}: ${values || "-"}`;
+    })
+    .join(" / ");
+}
+
+function getModuleDiffImageSummary(row: ModuleDetailRowData | null): string {
+  if (row === null || row.images.length === 0) {
+    return "画像なし";
+  }
+
+  return `${row.images.length}枚: ${row.images.map((image) => image.anchor_cell).join(", ")}`;
+}
+
+function ModuleDiffRowCard({ row }: { row: ModuleDiffRowData }) {
+  const beforeLabel = row.before ? getModuleDiffRowNumber(row.before) : "-";
+  const afterLabel = row.after ? getModuleDiffRowNumber(row.after) : "-";
+  const changedFieldLabels = row.changed_fields.map(getModuleDiffChangedFieldLabel);
+
+  return (
+    <article className={`module-diff-card module-diff-card-${row.status}`}>
+      <div className="module-diff-card-header">
+        <span className={`module-diff-status module-diff-status-${row.status}`}>
+          {getModuleDiffStatusLabel(row.status)}
+        </span>
+        <div>
+          <strong>{getModuleDiffStatusDescription(row.status)}</strong>
+          <small>{`前: ${beforeLabel} / 後: ${afterLabel}`}</small>
+        </div>
+        {row.similarity !== null ? (
+          <span className="module-diff-similarity">{`類似度 ${Math.round(row.similarity * 100)}%`}</span>
+        ) : null}
+      </div>
+      {changedFieldLabels.length > 0 ? (
+        <div className="module-diff-chips" aria-label="変更項目">
+          {changedFieldLabels.map((label) => (
+            <span key={label}>{label}</span>
+          ))}
+        </div>
+      ) : row.status !== "changed" ? (
+        <div className="module-diff-chips" aria-label="変更項目">
+          <span>行全体</span>
+        </div>
+      ) : null}
+      <div className="module-diff-comparison">
+        <ModuleDiffRowSnapshot label="変更前" row={row.before} tone="before" />
+        <ModuleDiffRowSnapshot label="変更後" row={row.after} tone="after" />
+      </div>
+    </article>
+  );
+}
+
+function ModuleDiffRowSnapshot({
+  label,
+  row,
+  tone,
+}: {
+  label: string;
+  row: ModuleDetailRowData | null;
+  tone: "before" | "after";
+}) {
+  return (
+    <div className={`module-diff-snapshot module-diff-snapshot-${tone}`}>
+      <span>{label}</span>
+      <strong>{getModuleDiffRowText(row)}</strong>
+      <small>{getModuleDiffRowSecondaryText(row)}</small>
+      <small>{getModuleDiffDeviceSummary(row)}</small>
+      <small>{getModuleDiffImageSummary(row)}</small>
+    </div>
+  );
 }
 
 function ExcelModulePreview({
