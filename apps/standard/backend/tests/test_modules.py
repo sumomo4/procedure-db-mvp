@@ -7,18 +7,74 @@ import pytest
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    ApprovalStatusDetailData,
+    ApprovalTransitionData,
     ModuleDetailData,
+    ModuleDiffData,
+    ModuleDiffRowData,
+    ModuleDiffSummaryData,
     ModuleDeviceHeaderData,
     ModuleListData,
     ModuleListItemData,
     ModuleRowData,
     ModuleRowDeviceEntryData,
     ModuleRowImageData,
+    ModuleVersionListData,
+    ModuleVersionListItemData,
 )
 from app.routers import modules
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+
+
+def build_module_status_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
+    """Build deterministic module version approval status detail."""
+
+    allowed_transitions = (
+        [
+            ApprovalTransitionData(
+                to_status="published",
+                to_status_label="承認済み",
+                action_label="承認する",
+            ),
+            ApprovalTransitionData(
+                to_status="draft",
+                to_status_label="作成中",
+                action_label="差戻す",
+            ),
+        ]
+        if status_value == "draft"
+        else [
+            ApprovalTransitionData(
+                to_status="archived",
+                to_status_label="保管済み",
+                action_label="保管する",
+            )
+        ]
+        if status_value == "published"
+        else []
+    )
+
+    return ApprovalStatusDetailData(
+        target_id=1,
+        target_key="MOD-001",
+        target_name="Initial check procedure",
+        target_type="module",
+        version_no=2,
+        status=status_value,
+        status_label="作成中" if status_value == "draft" else status_value,
+        next_action="承認または差戻し" if status_value == "draft" else "保管する",
+        module_count=1,
+        enabled_module_count=1,
+        module_names=["Initial check procedure"],
+        description="Description",
+        change_note="Updated from Excel",
+        created_by="codex",
+        updated_at="2026-05-21",
+        allowed_transitions=allowed_transitions,
+        history=[],
+    )
 
 
 def test_read_modules_returns_success_response(
@@ -134,7 +190,11 @@ def test_read_module_detail_returns_success_response(
 ) -> None:
     """Module detail API should return module data and rows."""
 
-    def fake_get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData | None:
+    def fake_get_module_detail(
+        settings: AppSettings,
+        module_id: int,
+        version_no: int | None = None,
+    ) -> ModuleDetailData | None:
         """Return deterministic module detail data."""
 
         assert settings.app_env == "test"
@@ -270,7 +330,11 @@ def test_read_module_detail_returns_not_found_response(
 ) -> None:
     """Module detail API should return 404 when data does not exist."""
 
-    def fake_get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData | None:
+    def fake_get_module_detail(
+        settings: AppSettings,
+        module_id: int,
+        version_no: int | None = None,
+    ) -> ModuleDetailData | None:
         """Return no module detail data."""
 
         del settings, module_id
@@ -294,10 +358,14 @@ def test_read_module_detail_returns_error_response(
 ) -> None:
     """Module detail API should return the common error envelope on DB failure."""
 
-    def fake_get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData | None:
+    def fake_get_module_detail(
+        settings: AppSettings,
+        module_id: int,
+        version_no: int | None = None,
+    ) -> ModuleDetailData | None:
         """Raise a deterministic database error."""
 
-        del settings, module_id
+        del settings, module_id, version_no
         raise DatabaseConnectionError("モジュール詳細の取得に失敗しました。")
 
     monkeypatch.setattr(modules, "get_module_detail", fake_get_module_detail)
@@ -309,6 +377,288 @@ def test_read_module_detail_returns_error_response(
         "result": "error",
         "data": None,
         "message": "モジュール詳細の取得に失敗しました。",
+    }
+
+
+def test_read_module_diff_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module diff API should return structured row diff data."""
+
+    before_row = ModuleRowData(
+        module_row_id=100,
+        row_order=1,
+        row_type="step",
+        major_no=None,
+        middle_no=None,
+        minor_no=None,
+        tech_doc_text=None,
+        work_text="Before",
+        indent_level=0,
+        expected_result=None,
+        time_text=None,
+        window_text=None,
+        p_text=None,
+        command_text=None,
+        note=None,
+        device_entries=[],
+        images=[],
+    )
+    after_row = before_row.model_copy(update={"module_row_id": 200, "work_text": "After"})
+
+    def fake_get_module_diff(
+        settings: AppSettings,
+        module_id: int,
+        from_version: int,
+        to_version: int,
+    ) -> ModuleDiffData | None:
+        """Return deterministic module diff data."""
+
+        assert settings.app_env == "test"
+        assert module_id == 1
+        assert from_version == 1
+        assert to_version == 2
+        return ModuleDiffData(
+            module_id=1,
+            module_key="MOD-001",
+            module_name="Initial check procedure",
+            from_version=1,
+            to_version=2,
+            summary=ModuleDiffSummaryData(added_count=0, removed_count=0, changed_count=1, unchanged_count=0),
+            rows=[
+                ModuleDiffRowData(
+                    status="changed",
+                    row_key="row_order:1->1",
+                    before=before_row,
+                    after=after_row,
+                    changed_fields=["work_text"],
+                    similarity=0.8,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(modules, "get_module_diff", fake_get_module_diff)
+
+    response = client.get("/api/v1/modules/1/diff?from_version=1&to_version=2")
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload["result"] == "success"
+    assert payload["message"] == "モジュール差分を取得しました。"
+    assert payload["data"]["summary"] == {
+        "added_count": 0,
+        "removed_count": 0,
+        "changed_count": 1,
+        "unchanged_count": 0,
+    }
+    assert payload["data"]["rows"][0]["status"] == "changed"
+    assert payload["data"]["rows"][0]["changed_fields"] == ["work_text"]
+
+
+def test_read_module_diff_returns_not_found_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module diff API should return 404 when one version is missing."""
+
+    def fake_get_module_diff(
+        settings: AppSettings,
+        module_id: int,
+        from_version: int,
+        to_version: int,
+    ) -> ModuleDiffData | None:
+        """Return no module diff data."""
+
+        del settings, module_id, from_version, to_version
+        return None
+
+    monkeypatch.setattr(modules, "get_module_diff", fake_get_module_diff)
+
+    response = client.get("/api/v1/modules/1/diff?from_version=1&to_version=99")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "比較対象のモジュール版が見つかりませんでした。",
+    }
+
+
+def test_read_module_versions_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module versions API should return version list."""
+
+    def fake_list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersionListData | None:
+        """Return deterministic module versions."""
+
+        assert settings.app_env == "test"
+        assert module_id == 1
+        return ModuleVersionListData(
+            module_id=1,
+            module_key="MOD-001",
+            module_name="Initial check procedure",
+            items=[
+                ModuleVersionListItemData(
+                    module_version_id=20,
+                    version_no=2,
+                    status="draft",
+                    status_label="作成中",
+                    row_count=2,
+                    source_xlsx_path="module-v2.xlsm",
+                    created_by="webui",
+                    created_at="2026-05-21",
+                    updated_at="2026-05-21",
+                ),
+                ModuleVersionListItemData(
+                    module_version_id=10,
+                    version_no=1,
+                    status="published",
+                    status_label="承認済み",
+                    row_count=1,
+                    source_xlsx_path="module-v1.xlsm",
+                    created_by="webui",
+                    created_at="2026-05-20",
+                    updated_at="2026-05-20",
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(modules, "list_module_versions", fake_list_module_versions)
+
+    response = client.get("/api/v1/modules/1/versions")
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload["result"] == "success"
+    assert payload["message"] == "モジュール版一覧を取得しました。"
+    assert payload["data"]["items"][0]["version_no"] == 2
+    assert payload["data"]["items"][1]["status"] == "published"
+
+
+def test_read_module_versions_returns_not_found_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module versions API should return 404 when module is missing."""
+
+    def fake_list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersionListData | None:
+        """Return no module versions."""
+
+        del settings, module_id
+        return None
+
+    monkeypatch.setattr(modules, "list_module_versions", fake_list_module_versions)
+
+    response = client.get("/api/v1/modules/99/versions")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "モジュールが見つかりませんでした。",
+    }
+
+
+def test_read_module_version_status_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module version status API should return approval detail."""
+
+    def fake_get_module_version_status(
+        settings: AppSettings,
+        module_id: int,
+        version_no: int,
+    ) -> ApprovalStatusDetailData | None:
+        """Return deterministic module status detail."""
+
+        assert settings.app_env == "test"
+        assert module_id == 1
+        assert version_no == 2
+        return build_module_status_detail()
+
+    monkeypatch.setattr(modules, "get_module_version_status", fake_get_module_version_status)
+
+    response = client.get("/api/v1/modules/1/versions/2/status")
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload["result"] == "success"
+    assert payload["message"] == "モジュール版の承認状態を取得しました。"
+    assert payload["data"]["target_type"] == "module"
+    assert payload["data"]["version_no"] == 2
+
+
+def test_patch_module_version_status_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module version status API should update approval status."""
+
+    def fake_update_module_version_status(
+        settings: AppSettings,
+        module_id: int,
+        version_no: int,
+        to_status: str,
+        changed_by: str | None = None,
+        note: str | None = None,
+    ) -> ApprovalStatusDetailData | None:
+        """Return deterministic updated module status detail."""
+
+        assert settings.app_env == "test"
+        assert module_id == 1
+        assert version_no == 2
+        assert to_status == "published"
+        assert changed_by == "承認者ユーザー"
+        assert note == "OK"
+        return build_module_status_detail("published")
+
+    monkeypatch.setattr(modules, "update_module_version_status", fake_update_module_version_status)
+
+    response = client.patch(
+        "/api/v1/modules/1/versions/2/status",
+        json={"status": "published", "changed_by": "承認者ユーザー", "note": "OK"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload["result"] == "success"
+    assert payload["message"] == "モジュール版の承認状態を更新しました。"
+    assert payload["data"]["target_type"] == "module"
+    assert payload["data"]["status"] == "published"
+
+
+def test_patch_module_version_status_returns_validation_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module version status API should return validation errors."""
+
+    def fake_update_module_version_status(
+        settings: AppSettings,
+        module_id: int,
+        version_no: int,
+        to_status: str,
+        changed_by: str | None = None,
+        note: str | None = None,
+    ) -> ApprovalStatusDetailData | None:
+        """Raise deterministic validation error."""
+
+        del settings, module_id, version_no, to_status, changed_by, note
+        raise ValueError("status transition from archived to draft is not allowed.")
+
+    monkeypatch.setattr(modules, "update_module_version_status", fake_update_module_version_status)
+
+    response = client.patch("/api/v1/modules/1/versions/2/status", json={"status": "draft"})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "status transition from archived to draft is not allowed.",
     }
 
 

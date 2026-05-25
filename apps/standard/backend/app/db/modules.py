@@ -2,12 +2,21 @@
 
 from collections.abc import Sequence
 from datetime import date, datetime
+from difflib import SequenceMatcher
 import json
+import re
 from typing import Any
+import unicodedata
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    ApprovalStatusDetailData,
+    ApprovalStatusHistoryItemData,
+    ApprovalTransitionData,
+    ModuleDiffData,
+    ModuleDiffRowData,
+    ModuleDiffSummaryData,
     ModuleCreateDeviceHeaderInput,
     ModuleCreateRequest,
     ModuleCreateRowDeviceEntryInput,
@@ -18,6 +27,8 @@ from app.core.responses import (
     ModuleRowData,
     ModuleRowDeviceEntryData,
     ModuleRowImageData,
+    ModuleVersionListData,
+    ModuleVersionListItemData,
 )
 
 
@@ -27,6 +38,16 @@ MODULE_STATUS_LABELS = {
     "archived": "保管済み",
 }
 VALID_MODULE_STATUSES = frozenset(MODULE_STATUS_LABELS)
+MODULE_APPROVAL_NEXT_ACTIONS = {
+    "draft": "承認または差戻し",
+    "published": "保管する",
+    "archived": "確認のみ",
+}
+MODULE_APPROVAL_ALLOWED_TRANSITIONS = {
+    "draft": [("published", "承認する"), ("draft", "差戻す")],
+    "published": [("archived", "保管する")],
+    "archived": [],
+}
 
 
 def _format_updated_at(value: Any) -> str:
@@ -37,6 +58,83 @@ def _format_updated_at(value: Any) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
+
+
+def _format_changed_at(value: Any) -> str:
+    """Format DB changed_at value for API responses."""
+
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def _ensure_module_approval_history_table(cursor: Any) -> None:
+    """Create the module approval history table when existing DB volumes predate it."""
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS proc.module_approval_status_histories (
+            module_approval_status_history_id bigserial PRIMARY KEY,
+            module_id bigint NOT NULL REFERENCES proc.modules (module_id) ON DELETE CASCADE,
+            module_version_id bigint NOT NULL REFERENCES proc.module_versions (module_version_id) ON DELETE CASCADE,
+            from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
+            to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+            action_label text NOT NULL,
+            changed_by text,
+            changed_at timestamptz NOT NULL DEFAULT now(),
+            note text
+        );
+        """,
+        {},
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_module_approval_status_histories_module
+            ON proc.module_approval_status_histories (module_id, changed_at DESC);
+        """,
+        {},
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_module_approval_status_histories_version
+            ON proc.module_approval_status_histories (module_version_id);
+        """,
+        {},
+    )
+
+
+def _build_module_transition_data(status_value: str) -> list[ApprovalTransitionData]:
+    """Build allowed transitions for a module version status."""
+
+    return [
+        ApprovalTransitionData(
+            to_status=to_status,
+            to_status_label=MODULE_STATUS_LABELS.get(to_status, to_status),
+            action_label=action_label,
+        )
+        for to_status, action_label in MODULE_APPROVAL_ALLOWED_TRANSITIONS.get(status_value, [])
+    ]
+
+
+def _build_module_history_items(rows: list[Any]) -> list[ApprovalStatusHistoryItemData]:
+    """Build module approval history response items."""
+
+    return [
+        ApprovalStatusHistoryItemData(
+            history_id=row[0],
+            from_status=row[1],
+            from_status_label=MODULE_STATUS_LABELS.get(row[1], row[1]) if row[1] is not None else None,
+            to_status=row[2],
+            to_status_label=MODULE_STATUS_LABELS.get(row[2], row[2]),
+            action_label=row[3],
+            changed_by=row[4],
+            changed_at=_format_changed_at(row[5]),
+            note=row[6],
+        )
+        for row in rows
+    ]
 
 
 def _build_module_list_query(
@@ -121,8 +219,11 @@ def _build_module_list_query(
     return query, parameters
 
 
-def _build_module_detail_query() -> str:
+def _build_module_detail_query(version_no: int | None = None) -> str:
     """Build the module detail query."""
+
+    version_condition = "AND mv.version_no = %(version_no)s" if version_no is not None else ""
+    version_order = "ORDER BY mv.version_no DESC" if version_no is None else ""
 
     return """
         WITH selected_version AS (
@@ -142,7 +243,8 @@ def _build_module_detail_query() -> str:
                 mv.updated_at
             FROM proc.module_versions mv
             WHERE mv.module_id = %(module_id)s
-            ORDER BY mv.version_no DESC
+            {version_condition}
+            {version_order}
             LIMIT 1
         )
         SELECT
@@ -203,14 +305,18 @@ def _build_module_detail_query() -> str:
         ) row_images ON true
         WHERE m.module_id = %(module_id)s
         ORDER BY r.row_order;
-    """
+    """.format(version_condition=version_condition, version_order=version_order)
 
 
-def _fetch_module_detail_rows(connection: Any, module_id: int) -> list[tuple[Any, ...]]:
+def _fetch_module_detail_rows(connection: Any, module_id: int, version_no: int | None = None) -> list[tuple[Any, ...]]:
     """Fetch raw rows used to build a module detail payload."""
 
+    parameters = {"module_id": str(module_id)}
+    if version_no is not None:
+        parameters["version_no"] = str(version_no)
+
     with connection.cursor() as cursor:
-        cursor.execute(_build_module_detail_query(), {"module_id": str(module_id)})
+        cursor.execute(_build_module_detail_query(version_no), parameters)
         return cursor.fetchall()
 
 
@@ -458,6 +564,265 @@ def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData
     )
 
 
+def _normalize_diff_text(value: str | None) -> str:
+    """Normalize text before row similarity comparison."""
+
+    if value is None:
+        return ""
+
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.replace("\u3000", " ")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip().casefold()
+
+
+def _row_device_entry_tokens(row: ModuleRowData) -> list[str]:
+    """Build deterministic tokens for device-specific row values."""
+
+    return [
+        "|".join(
+            [
+                str(entry.slot_no),
+                _normalize_diff_text(entry.time_text),
+                _normalize_diff_text(entry.window_text),
+                _normalize_diff_text(entry.p_text),
+                _normalize_diff_text(entry.command_text),
+            ]
+        )
+        for entry in sorted(row.device_entries, key=lambda item: item.slot_no)
+    ]
+
+
+def _row_image_tokens(row: ModuleRowData) -> list[str]:
+    """Build deterministic tokens for image metadata."""
+
+    return [
+        "|".join(
+            [
+                _normalize_diff_text(image.image_key),
+                _normalize_diff_text(image.anchor_cell),
+                str(image.width_px or ""),
+                str(image.height_px or ""),
+                str(image.image_order),
+            ]
+        )
+        for image in sorted(row.images, key=lambda item: (item.image_order, item.image_key))
+    ]
+
+
+def _row_fingerprint(row: ModuleRowData) -> str:
+    """Build a normalized text fingerprint for exact row matching."""
+
+    parts = [
+        _normalize_diff_text(row.row_type),
+        _normalize_diff_text(row.tech_doc_text),
+        _normalize_diff_text(row.work_text),
+        _normalize_diff_text(row.expected_result),
+        _normalize_diff_text(row.time_text),
+        _normalize_diff_text(row.window_text),
+        _normalize_diff_text(row.p_text),
+        _normalize_diff_text(row.command_text),
+        *_row_device_entry_tokens(row),
+    ]
+    return "\n".join(part for part in parts if part)
+
+
+def _row_similarity_text(row: ModuleRowData) -> str:
+    """Build text used for fuzzy row matching."""
+
+    return _row_fingerprint(row)
+
+
+def _is_blank_diff_row(row: ModuleRowData) -> bool:
+    """Return whether a row should be treated as an inserted/removed blank row."""
+
+    content_parts = [
+        row.major_no,
+        row.middle_no,
+        row.minor_no,
+        row.tech_doc_text,
+        row.work_text,
+        row.expected_result,
+        row.time_text,
+        row.window_text,
+        row.p_text,
+        row.command_text,
+        row.note,
+    ]
+    return (
+        not any(_normalize_diff_text(part) for part in content_parts)
+        and not _row_device_entry_tokens(row)
+        and not _row_image_tokens(row)
+    )
+
+
+def _row_similarity(before: ModuleRowData, after: ModuleRowData) -> float:
+    """Return similarity ratio between two rows."""
+
+    before_text = _row_similarity_text(before)
+    after_text = _row_similarity_text(after)
+    if not before_text or not after_text:
+        return 0.0
+    return SequenceMatcher(None, before_text, after_text).ratio()
+
+
+def _row_changed_fields(before: ModuleRowData, after: ModuleRowData) -> list[str]:
+    """Return changed field names between matched rows."""
+
+    changed_fields: list[str] = []
+    scalar_fields = [
+        "row_type",
+        "major_no",
+        "middle_no",
+        "minor_no",
+        "tech_doc_text",
+        "work_text",
+        "indent_level",
+        "expected_result",
+        "time_text",
+        "window_text",
+        "p_text",
+        "command_text",
+        "note",
+    ]
+    for field_name in scalar_fields:
+        if getattr(before, field_name) != getattr(after, field_name):
+            changed_fields.append(field_name)
+
+    if _row_device_entry_tokens(before) != _row_device_entry_tokens(after):
+        changed_fields.append("device_entries")
+
+    if _row_image_tokens(before) != _row_image_tokens(after):
+        changed_fields.append("images")
+
+    return changed_fields
+
+
+def _match_module_diff_rows(
+    before_rows: Sequence[ModuleRowData],
+    after_rows: Sequence[ModuleRowData],
+    similarity_threshold: float = 0.75,
+    row_order_window: int = 5,
+) -> list[tuple[ModuleRowData | None, ModuleRowData | None, float | None]]:
+    """Match rows by exact fingerprint first, then nearby similarity."""
+
+    matched_before_ids: set[int] = set()
+    matched_after_ids: set[int] = set()
+    matched_pairs: list[tuple[ModuleRowData | None, ModuleRowData | None, float | None]] = []
+
+    after_by_fingerprint: dict[str, list[ModuleRowData]] = {}
+    for after in after_rows:
+        fingerprint = _row_fingerprint(after)
+        if fingerprint and not _is_blank_diff_row(after):
+            after_by_fingerprint.setdefault(fingerprint, []).append(after)
+
+    for before in sorted(before_rows, key=lambda item: item.row_order):
+        fingerprint = _row_fingerprint(before)
+        if not fingerprint or _is_blank_diff_row(before):
+            continue
+
+        candidates = [
+            after
+            for after in after_by_fingerprint.get(fingerprint, [])
+            if after.module_row_id not in matched_after_ids
+        ]
+        if not candidates:
+            continue
+
+        best_candidate = min(candidates, key=lambda item: abs(item.row_order - before.row_order))
+        matched_before_ids.add(before.module_row_id)
+        matched_after_ids.add(best_candidate.module_row_id)
+        matched_pairs.append((before, best_candidate, 1.0))
+
+    fuzzy_candidates: list[tuple[float, int, ModuleRowData, ModuleRowData]] = []
+    for before in before_rows:
+        if before.module_row_id in matched_before_ids or _is_blank_diff_row(before):
+            continue
+        for after in after_rows:
+            if after.module_row_id in matched_after_ids or _is_blank_diff_row(after):
+                continue
+            row_distance = abs(after.row_order - before.row_order)
+            if row_distance > row_order_window:
+                continue
+            similarity = _row_similarity(before, after)
+            if similarity >= similarity_threshold:
+                fuzzy_candidates.append((similarity, row_distance, before, after))
+
+    for similarity, _row_distance, before, after in sorted(fuzzy_candidates, key=lambda item: (-item[0], item[1])):
+        if before.module_row_id in matched_before_ids or after.module_row_id in matched_after_ids:
+            continue
+        matched_before_ids.add(before.module_row_id)
+        matched_after_ids.add(after.module_row_id)
+        matched_pairs.append((before, after, round(similarity, 4)))
+
+    for before in before_rows:
+        if before.module_row_id not in matched_before_ids:
+            matched_pairs.append((before, None, None))
+
+    for after in after_rows:
+        if after.module_row_id not in matched_after_ids:
+            matched_pairs.append((None, after, None))
+
+    return sorted(
+        matched_pairs,
+        key=lambda pair: (
+            pair[1].row_order if pair[1] is not None else pair[0].row_order if pair[0] is not None else 0,
+            pair[0].row_order if pair[0] is not None else 10**9,
+            pair[1].row_order if pair[1] is not None else 10**9,
+        ),
+    )
+
+
+def build_module_diff_data(before: ModuleDetailData, after: ModuleDetailData) -> ModuleDiffData:
+    """Build structured diff data between two module versions."""
+
+    diff_rows: list[ModuleDiffRowData] = []
+    for before_row, after_row, similarity in _match_module_diff_rows(before.rows, after.rows):
+        if before_row is None and after_row is None:
+            continue
+
+        if before_row is None:
+            status = "added"
+            changed_fields: list[str] = []
+            row_key = f"added:{after_row.row_order if after_row is not None else 0}"
+        elif after_row is None:
+            status = "removed"
+            changed_fields = []
+            row_key = f"removed:{before_row.row_order}"
+        else:
+            changed_fields = _row_changed_fields(before_row, after_row)
+            status = "changed" if changed_fields else "unchanged"
+            row_key = f"row_order:{before_row.row_order}->{after_row.row_order}"
+
+        diff_rows.append(
+            ModuleDiffRowData(
+                status=status,
+                row_key=row_key,
+                before=before_row,
+                after=after_row,
+                changed_fields=changed_fields,
+                similarity=similarity,
+            )
+        )
+
+    summary = ModuleDiffSummaryData(
+        added_count=sum(1 for row in diff_rows if row.status == "added"),
+        removed_count=sum(1 for row in diff_rows if row.status == "removed"),
+        changed_count=sum(1 for row in diff_rows if row.status == "changed"),
+        unchanged_count=sum(1 for row in diff_rows if row.status == "unchanged"),
+    )
+
+    return ModuleDiffData(
+        module_id=after.module_id,
+        module_key=after.module_key,
+        module_name=after.module_name,
+        from_version=before.version_no,
+        to_version=after.version_no,
+        summary=summary,
+        rows=diff_rows,
+    )
+
+
 def _normalize_module_key(module_key: str | None) -> str | None:
     """Normalize module key text."""
 
@@ -516,6 +881,48 @@ def _generate_next_module_key(cursor: Any) -> str:
     return f"MOD-{next_no:03d}"
 
 
+def _find_module_id_by_key(cursor: Any, module_key: str) -> int | None:
+    """Return module_id for an existing module key."""
+
+    cursor.execute(
+        "SELECT module_id FROM proc.modules WHERE module_key = %(module_key)s;",
+        {"module_key": module_key},
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row is not None else None
+
+
+def _next_module_version_no(cursor: Any, module_id: int) -> int:
+    """Return the next module version number."""
+
+    cursor.execute(
+        """
+        SELECT COALESCE(MAX(version_no), 0) + 1
+        FROM proc.module_versions
+        WHERE module_id = %(module_id)s;
+        """,
+        {"module_id": module_id},
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row and row[0] is not None else 1
+
+
+def _has_draft_module_version(cursor: Any, module_id: int) -> bool:
+    """Return whether the module already has a draft version."""
+
+    cursor.execute(
+        """
+        SELECT 1
+        FROM proc.module_versions
+        WHERE module_id = %(module_id)s
+          AND status = 'draft'
+        LIMIT 1;
+        """,
+        {"module_id": module_id},
+    )
+    return cursor.fetchone() is not None
+
+
 def list_modules(
     settings: AppSettings,
     keyword: str | None = None,
@@ -563,7 +970,7 @@ def list_modules(
     return ModuleListData(items=items)
 
 
-def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData | None:
+def get_module_detail(settings: AppSettings, module_id: int, version_no: int | None = None) -> ModuleDetailData | None:
     """Read the latest module version and rows from PostgreSQL."""
 
     try:
@@ -576,11 +983,305 @@ def get_module_detail(settings: AppSettings, module_id: int) -> ModuleDetailData
             settings.database_url,
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
-            rows = _fetch_module_detail_rows(connection, module_id)
+            rows = _fetch_module_detail_rows(connection, module_id, version_no)
     except Exception as exception:
         raise DatabaseConnectionError("モジュール詳細の取得に失敗しました。") from exception
 
     return _map_module_detail_rows(rows)
+
+
+def list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersionListData | None:
+    """Read all versions for one module."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        m.module_id,
+                        m.module_key,
+                        m.name,
+                        mv.module_version_id,
+                        mv.version_no,
+                        mv.status,
+                        COUNT(r.module_row_id)::int AS row_count,
+                        mv.source_xlsx_path,
+                        mv.created_by,
+                        mv.created_at,
+                        mv.updated_at
+                    FROM proc.modules m
+                    JOIN proc.module_versions mv
+                        ON mv.module_id = m.module_id
+                    LEFT JOIN proc.module_rows r
+                        ON r.module_version_id = mv.module_version_id
+                    WHERE m.module_id = %(module_id)s
+                    GROUP BY
+                        m.module_id,
+                        m.module_key,
+                        m.name,
+                        mv.module_version_id,
+                        mv.version_no,
+                        mv.status,
+                        mv.source_xlsx_path,
+                        mv.created_by,
+                        mv.created_at,
+                        mv.updated_at
+                    ORDER BY mv.version_no DESC;
+                    """,
+                    {"module_id": module_id},
+                )
+                rows = cursor.fetchall()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module version list query failed.") from exception
+
+    if not rows:
+        return None
+
+    return ModuleVersionListData(
+        module_id=rows[0][0],
+        module_key=rows[0][1],
+        module_name=rows[0][2],
+        items=[
+            ModuleVersionListItemData(
+                module_version_id=row[3],
+                version_no=row[4],
+                status=row[5],
+                status_label=MODULE_STATUS_LABELS.get(row[5], row[5]),
+                row_count=row[6],
+                source_xlsx_path=row[7],
+                created_by=row[8],
+                created_at=_format_updated_at(row[9]),
+                updated_at=_format_updated_at(row[10]),
+            )
+            for row in rows
+        ],
+    )
+
+
+def get_module_diff(
+    settings: AppSettings,
+    module_id: int,
+    from_version: int,
+    to_version: int,
+) -> ModuleDiffData | None:
+    """Read two module versions and return a structured diff."""
+
+    before = get_module_detail(settings, module_id, from_version)
+    after = get_module_detail(settings, module_id, to_version)
+    if before is None or after is None:
+        return None
+    return build_module_diff_data(before, after)
+
+
+def get_module_version_status(
+    settings: AppSettings,
+    module_id: int,
+    version_no: int,
+) -> ApprovalStatusDetailData | None:
+    """Read one module version approval status detail."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    query = """
+        SELECT
+            m.module_id,
+            m.module_key,
+            m.name,
+            m.description,
+            mv.module_version_id,
+            mv.version_no,
+            mv.status,
+            mv.change_note,
+            mv.created_by,
+            mv.updated_at,
+            COUNT(r.module_row_id)::int AS row_count
+        FROM proc.modules m
+        JOIN proc.module_versions mv
+            ON mv.module_id = m.module_id
+        LEFT JOIN proc.module_rows r
+            ON r.module_version_id = mv.module_version_id
+        WHERE
+            m.module_id = %(module_id)s
+            AND mv.version_no = %(version_no)s
+        GROUP BY
+            m.module_id,
+            m.module_key,
+            m.name,
+            m.description,
+            mv.module_version_id,
+            mv.version_no,
+            mv.status,
+            mv.change_note,
+            mv.created_by,
+            mv.updated_at;
+    """
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_approval_history_table(cursor)
+                cursor.execute(query, {"module_id": module_id, "version_no": version_no})
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+
+                module_version_id = int(row[4])
+                cursor.execute(
+                    """
+                    SELECT
+                        module_approval_status_history_id,
+                        from_status,
+                        to_status,
+                        action_label,
+                        changed_by,
+                        changed_at,
+                        note
+                    FROM proc.module_approval_status_histories
+                    WHERE module_version_id = %(module_version_id)s
+                    ORDER BY changed_at DESC, module_approval_status_history_id DESC;
+                    """,
+                    {"module_version_id": module_version_id},
+                )
+                history_rows = cursor.fetchall()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module approval status detail query failed.") from exception
+
+    return ApprovalStatusDetailData(
+        target_id=row[0],
+        target_key=row[1],
+        target_name=row[2],
+        target_type="module",
+        version_no=row[5],
+        status=row[6],
+        status_label=MODULE_STATUS_LABELS.get(row[6], row[6]),
+        next_action=MODULE_APPROVAL_NEXT_ACTIONS.get(row[6], "確認のみ"),
+        module_count=1,
+        enabled_module_count=1,
+        module_names=[row[2]],
+        description=row[3],
+        change_note=row[7],
+        created_by=row[8],
+        updated_at=_format_updated_at(row[9]),
+        allowed_transitions=_build_module_transition_data(row[6]),
+        history=_build_module_history_items(history_rows),
+    )
+
+
+def update_module_version_status(
+    settings: AppSettings,
+    module_id: int,
+    version_no: int,
+    to_status: str,
+    changed_by: str | None = None,
+    note: str | None = None,
+) -> ApprovalStatusDetailData | None:
+    """Update one module version approval status."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_approval_history_table(cursor)
+                cursor.execute(
+                    """
+                    SELECT
+                        module_version_id,
+                        status
+                    FROM proc.module_versions
+                    WHERE
+                        module_id = %(module_id)s
+                        AND version_no = %(version_no)s;
+                    """,
+                    {"module_id": module_id, "version_no": version_no},
+                )
+                current_row = cursor.fetchone()
+                if current_row is None:
+                    return None
+
+                module_version_id = int(current_row[0])
+                current_status = str(current_row[1])
+                allowed_transitions = MODULE_APPROVAL_ALLOWED_TRANSITIONS.get(current_status, [])
+                allowed_targets = {status_value for status_value, _ in allowed_transitions}
+                if to_status not in allowed_targets:
+                    raise ValueError(
+                        f"status transition from {current_status} to {to_status} is not allowed."
+                    )
+                if current_status == "draft" and to_status == "draft" and not (note or "").strip():
+                    raise ValueError("差戻し理由を入力してください。")
+                action_label = next(
+                    label for status_value, label in allowed_transitions if status_value == to_status
+                )
+
+                cursor.execute(
+                    """
+                    UPDATE proc.module_versions
+                    SET
+                        status = %(to_status)s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE module_version_id = %(module_version_id)s;
+                    """,
+                    {"to_status": to_status, "module_version_id": module_version_id},
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO proc.module_approval_status_histories (
+                        module_id,
+                        module_version_id,
+                        from_status,
+                        to_status,
+                        action_label,
+                        changed_by,
+                        note
+                    )
+                    VALUES (
+                        %(module_id)s,
+                        %(module_version_id)s,
+                        %(from_status)s,
+                        %(to_status)s,
+                        %(action_label)s,
+                        %(changed_by)s,
+                        %(note)s
+                    );
+                    """,
+                    {
+                        "module_id": module_id,
+                        "module_version_id": module_version_id,
+                        "from_status": current_status,
+                        "to_status": to_status,
+                        "action_label": action_label,
+                        "changed_by": changed_by,
+                        "note": note,
+                    },
+                )
+            connection.commit()
+    except ValueError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("Module approval status update failed.") from exception
+
+    return get_module_version_status(settings, module_id, version_no)
 
 
 def get_module_row_image(settings: AppSettings, module_row_image_id: int) -> ModuleRowImageData | None:
@@ -650,6 +1351,7 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             module_id: int | None = None
+            module_version_no = 1
             normalized_device_headers = _normalize_device_headers(payload)
             primary_device_header = normalized_device_headers[0]
             device_slot_nos = {header.slot_no for header in normalized_device_headers}
@@ -658,31 +1360,49 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                 normalized_module_key = _normalize_module_key(payload.module_key)
                 if normalized_module_key is None:
                     normalized_module_key = _generate_next_module_key(cursor)
+                    existing_module_id = None
                 else:
+                    existing_module_id = _find_module_id_by_key(cursor, normalized_module_key)
+
+                if existing_module_id is None:
                     cursor.execute(
-                        "SELECT 1 FROM proc.modules WHERE module_key = %(module_key)s;",
-                        {"module_key": normalized_module_key},
+                        """
+                        INSERT INTO proc.modules (module_key, name, description)
+                        VALUES (%(module_key)s, %(module_name)s, %(description)s)
+                        RETURNING module_id, module_key;
+                        """,
+                        {
+                            "module_key": normalized_module_key,
+                            "module_name": payload.module_name.strip(),
+                            "description": payload.description,
+                        },
                     )
-                    if cursor.fetchone() is not None:
-                        raise ValueError("module_key already exists.")
+                    inserted_module = cursor.fetchone()
+                    if inserted_module is None:
+                        raise DatabaseConnectionError("Module create failed.")
 
-                cursor.execute(
-                    """
-                    INSERT INTO proc.modules (module_key, name, description)
-                    VALUES (%(module_key)s, %(module_name)s, %(description)s)
-                    RETURNING module_id, module_key;
-                    """,
-                    {
-                        "module_key": normalized_module_key,
-                        "module_name": payload.module_name.strip(),
-                        "description": payload.description,
-                    },
-                )
-                inserted_module = cursor.fetchone()
-                if inserted_module is None:
-                    raise DatabaseConnectionError("Module create failed.")
-
-                module_id = int(inserted_module[0])
+                    module_id = int(inserted_module[0])
+                    module_version_no = 1
+                else:
+                    module_id = existing_module_id
+                    if _has_draft_module_version(cursor, module_id):
+                        raise ValueError("draft module version already exists.")
+                    module_version_no = _next_module_version_no(cursor, module_id)
+                    cursor.execute(
+                        """
+                        UPDATE proc.modules
+                        SET
+                            name = %(module_name)s,
+                            description = %(description)s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE module_id = %(module_id)s;
+                        """,
+                        {
+                            "module_id": module_id,
+                            "module_name": payload.module_name.strip(),
+                            "description": payload.description,
+                        },
+                    )
 
                 cursor.execute(
                     """
@@ -702,7 +1422,7 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                     )
                     VALUES (
                         %(module_id)s,
-                        1,
+                        %(version_no)s,
                         'draft',
                         %(change_note)s,
                         %(source_xlsx_path)s,
@@ -718,6 +1438,7 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                     """,
                     {
                         "module_id": module_id,
+                        "version_no": module_version_no,
                         "change_note": payload.change_note,
                         "source_xlsx_path": payload.source_xlsx_path,
                         "source_sha256": payload.source_sha256,
@@ -862,7 +1583,7 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
             if module_id is None:
                 raise DatabaseConnectionError("Module create failed.")
 
-            detail_rows = _fetch_module_detail_rows(connection, module_id)
+            detail_rows = _fetch_module_detail_rows(connection, module_id, module_version_no)
             connection.commit()
     except ValueError:
         raise

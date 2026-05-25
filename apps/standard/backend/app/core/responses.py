@@ -127,6 +127,29 @@ class ModuleListData(BaseModel):
     items: list[ModuleListItemData]
 
 
+class ModuleVersionListItemData(BaseModel):
+    """Module version list item response payload."""
+
+    module_version_id: int
+    version_no: int
+    status: Literal["draft", "published", "archived"]
+    status_label: str
+    row_count: int
+    source_xlsx_path: str | None
+    created_by: str | None
+    created_at: str
+    updated_at: str
+
+
+class ModuleVersionListData(BaseModel):
+    """Module version list response payload."""
+
+    module_id: int
+    module_key: str
+    module_name: str
+    items: list[ModuleVersionListItemData]
+
+
 class ModuleRowImageData(BaseModel):
     """Image metadata attached to one module row."""
 
@@ -364,6 +387,38 @@ class ModuleDetailData(BaseModel):
     rows: list[ModuleRowData]
 
 
+class ModuleDiffSummaryData(BaseModel):
+    """Summary counts for a module version diff."""
+
+    added_count: int = 0
+    removed_count: int = 0
+    changed_count: int = 0
+    unchanged_count: int = 0
+
+
+class ModuleDiffRowData(BaseModel):
+    """One row-level diff result between module versions."""
+
+    status: Literal["added", "removed", "changed", "unchanged"]
+    row_key: str
+    before: ModuleRowData | None = None
+    after: ModuleRowData | None = None
+    changed_fields: list[str] = Field(default_factory=list)
+    similarity: float | None = None
+
+
+class ModuleDiffData(BaseModel):
+    """Module version diff response payload."""
+
+    module_id: int
+    module_key: str
+    module_name: str
+    from_version: int
+    to_version: int
+    summary: ModuleDiffSummaryData
+    rows: list[ModuleDiffRowData]
+
+
 class SourceDocListItemData(BaseModel):
     """Source document list item response payload.
 
@@ -498,7 +553,7 @@ class ApprovalStatusListItemData(BaseModel):
     target_id: int
     target_key: str
     target_name: str
-    target_type: Literal["source-doc"]
+    target_type: Literal["source-doc", "module"]
     version_no: int
     status: Literal["draft", "published", "archived"]
     status_label: str
@@ -521,7 +576,7 @@ class ApprovalStatusDetailData(BaseModel):
     target_id: int
     target_key: str
     target_name: str
-    target_type: Literal["source-doc"]
+    target_type: Literal["source-doc", "module"]
     version_no: int
     status: Literal["draft", "published", "archived"]
     status_label: str

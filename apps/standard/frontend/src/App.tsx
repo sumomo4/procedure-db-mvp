@@ -120,6 +120,25 @@ type ModuleListData = {
   items: ModuleListItemData[];
 };
 
+type ModuleVersionListItemData = {
+  module_version_id: number;
+  version_no: number;
+  status: ModuleApiStatus;
+  status_label: string;
+  row_count: number;
+  source_xlsx_path: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ModuleVersionListData = {
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  items: ModuleVersionListItemData[];
+};
+
 type ModuleDetailRowData = {
   module_row_id: number;
   row_order: number;
@@ -212,6 +231,44 @@ type ModuleListState = {
 type ModuleDetailState = {
   status: "loading" | "available" | "unavailable";
   item: ModuleDetailData | null;
+  message: string;
+};
+
+type ModuleVersionListState = {
+  status: "idle" | "loading" | "available" | "unavailable";
+  items: ModuleVersionListItemData[];
+  message: string;
+};
+
+type ModuleDiffSummaryData = {
+  added_count: number;
+  removed_count: number;
+  changed_count: number;
+  unchanged_count: number;
+};
+
+type ModuleDiffRowData = {
+  status: "added" | "removed" | "changed" | "unchanged";
+  row_key: string;
+  before: ModuleDetailRowData | null;
+  after: ModuleDetailRowData | null;
+  changed_fields: string[];
+  similarity: number | null;
+};
+
+type ModuleDiffData = {
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  from_version: number;
+  to_version: number;
+  summary: ModuleDiffSummaryData;
+  rows: ModuleDiffRowData[];
+};
+
+type ModuleDiffState = {
+  status: "idle" | "loading" | "available" | "unavailable";
+  item: ModuleDiffData | null;
   message: string;
 };
 
@@ -525,7 +582,7 @@ type ApprovalStatusListItemData = {
   target_id: number;
   target_key: string;
   target_name: string;
-  target_type: "source-doc";
+  target_type: "source-doc" | "module";
   version_no: number;
   status: ModuleApiStatus;
   status_label: string;
@@ -562,7 +619,7 @@ type ApprovalStatusDetailData = {
   target_id: number;
   target_key: string;
   target_name: string;
-  target_type: "source-doc";
+  target_type: "source-doc" | "module";
   version_no: number;
   status: ModuleApiStatus;
   status_label: string;
@@ -717,9 +774,9 @@ function Shell() {
           <NavItem to="/modules/register" label="モジュール登録" icon="⇧" />
           <NavItem to="/documents/search" label="原本参照" icon="▤" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
+          <NavItem to="/approval" label="承認状態確認" icon="✓" />
           <NavItem to="/case-docs" label={caseDocText.title} icon="CS" end />
           <NavItem to="/case-docs/placeholders" label={caseDocPlaceholderText.title} icon="{}" />
-          <NavItem to="/approval" label="承認状態確認" icon="✓" />
         </nav>
         <div className="flow-box">
           <span>現在の導線</span>
@@ -1298,7 +1355,7 @@ function ModuleListPage() {
   );
 }
 
-function useModuleDetailState(moduleId: string | undefined): ModuleDetailState {
+function useModuleDetailState(moduleId: string | undefined, versionNo: string | null = null): ModuleDetailState {
   const [moduleDetailState, setModuleDetailState] = useState<ModuleDetailState>({
     status: "loading",
     item: null,
@@ -1325,7 +1382,11 @@ function useModuleDetailState(moduleId: string | undefined): ModuleDetailState {
 
     async function fetchModuleDetail(): Promise<void> {
       try {
-        const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}`), {
+        const endpoint = new URL(buildApiUrl(`/api/v1/modules/${moduleId}`), window.location.origin);
+        if (versionNo !== null && versionNo.trim().length > 0) {
+          endpoint.searchParams.set("version_no", versionNo);
+        }
+        const response = await fetch(endpoint.toString(), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
@@ -1362,7 +1423,7 @@ function useModuleDetailState(moduleId: string | undefined): ModuleDetailState {
     return () => {
       abortController.abort();
     };
-  }, [moduleId]);
+  }, [moduleId, versionNo]);
 
   return moduleDetailState;
 }
@@ -1370,9 +1431,297 @@ function useModuleDetailState(moduleId: string | undefined): ModuleDetailState {
 function ModuleDetailPage() {
   const navigate = useNavigate();
   const { moduleId } = useParams();
-  const moduleDetailState = useModuleDetailState(moduleId);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedVersionNo = searchParams.get("version_no");
+  const moduleDetailState = useModuleDetailState(moduleId, selectedVersionNo);
   const item = moduleDetailState.item;
   const [isPreviewOverlayOpen, setIsPreviewOverlayOpen] = useState(false);
+  const [versionListState, setVersionListState] = useState<ModuleVersionListState>({
+    status: "idle",
+    items: [],
+    message: "モジュール版一覧は未取得です。",
+  });
+  const [moduleApprovalState, setModuleApprovalState] = useState<ApprovalStatusDetailState>({
+    status: "idle",
+    item: null,
+    message: "対象版を選ぶと承認状態を表示します。",
+  });
+  const [moduleApprovalMutationState, setModuleApprovalMutationState] = useState<ApprovalStatusMutationState>({
+    status: "idle",
+    message: "承認操作を選ぶと状態変更APIを呼び出します。",
+  });
+  const [moduleApprovalComment, setModuleApprovalComment] = useState("");
+  const [moduleDiffState, setModuleDiffState] = useState<ModuleDiffState>({
+    status: "idle",
+    item: null,
+    message: "前版との差分は未取得です。",
+  });
+  const currentUser = getStoredAuthUser();
+  const canManageApproval = currentUser?.role === "approver";
+  const approvalActor = currentUser?.displayName ?? "";
+  const previousVersionNo =
+    item && versionListState.items.some((version) => version.version_no === item.version_no - 1)
+      ? item.version_no - 1
+      : null;
+  const nextVersionNo =
+    versionListState.items.length > 0
+      ? Math.max(...versionListState.items.map((version) => version.version_no)) + 1
+      : item
+        ? item.version_no + 1
+        : 2;
+  const hasDraftVersion = versionListState.items.some((version) => version.status === "draft");
+
+  useEffect(() => {
+    if (!moduleId) {
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    async function fetchModuleVersions(): Promise<void> {
+      setVersionListState({
+        status: "loading",
+        items: [],
+        message: "モジュール版一覧を取得しています。",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}/versions`), {
+          signal: abortController.signal,
+        });
+        const responseBody = await readApiResponse<ModuleVersionListData>(response);
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setVersionListState({
+            status: "unavailable",
+            items: [],
+            message: responseBody.message || `モジュール版一覧の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setVersionListState({
+          status: "available",
+          items: responseBody.data.items,
+          message: responseBody.message || "モジュール版一覧を取得しました。",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setVersionListState({
+          status: "unavailable",
+          items: [],
+          message: "モジュール版一覧の取得中にAPI接続で失敗しました。",
+        });
+      }
+    }
+
+    void fetchModuleVersions();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [moduleId]);
+
+  useEffect(() => {
+    if (!item || !moduleId) {
+      setModuleApprovalState({
+        status: "idle",
+        item: null,
+        message: "対象版を選ぶと承認状態を表示します。",
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+    const targetVersionNo = item.version_no;
+
+    async function fetchModuleApprovalStatus(): Promise<void> {
+      setModuleApprovalState({
+        status: "loading",
+        item: null,
+        message: "モジュール版の承認状態を取得しています。",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}/versions/${targetVersionNo}/status`), {
+          signal: abortController.signal,
+        });
+        const responseBody = await readApiResponse<ApprovalStatusDetailData>(response);
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setModuleApprovalState({
+            status: "unavailable",
+            item: null,
+            message: responseBody.message || `モジュール版の承認状態取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setModuleApprovalState({
+          status: "available",
+          item: responseBody.data,
+          message: responseBody.message || "モジュール版の承認状態を取得しました。",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setModuleApprovalState({
+          status: "unavailable",
+          item: null,
+          message: "モジュール版の承認状態取得中にAPI接続で失敗しました。",
+        });
+      }
+    }
+
+    void fetchModuleApprovalStatus();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [item?.version_no, moduleId]);
+
+  useEffect(() => {
+    setModuleDiffState({
+      status: "idle",
+      item: null,
+      message: "前版との差分は未取得です。",
+    });
+    setModuleApprovalMutationState({
+      status: "idle",
+      message: "承認操作を選ぶと状態変更APIを呼び出します。",
+    });
+    setModuleApprovalComment("");
+  }, [item?.version_no]);
+
+  function handleVersionSelect(versionNo: number): void {
+    setSearchParams({ version_no: String(versionNo) });
+  }
+
+  async function handleModuleApprovalTransition(toStatus: ModuleApiStatus): Promise<void> {
+    if (!item || !moduleId || moduleApprovalState.item === null) {
+      return;
+    }
+    if (!canManageApproval) {
+      setModuleApprovalMutationState({
+        status: "error",
+        message: "承認操作は承認者ユーザーのみ実行できます。",
+      });
+      return;
+    }
+
+    const normalizedActor = approvalActor.trim();
+    const normalizedComment = moduleApprovalComment.trim();
+    if (normalizedActor.length === 0) {
+      setModuleApprovalMutationState({
+        status: "error",
+        message: "実行者を確認できません。再ログインしてください。",
+      });
+      return;
+    }
+    if (moduleApprovalState.item.status === "draft" && toStatus === "draft" && normalizedComment.length === 0) {
+      setModuleApprovalMutationState({
+        status: "error",
+        message: "差戻し時は理由を入力してください。",
+      });
+      return;
+    }
+
+    setModuleApprovalMutationState({
+      status: "submitting",
+      message: "モジュール版の承認状態を変更しています。",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}/versions/${item.version_no}/status`), {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status: toStatus,
+          changed_by: normalizedActor,
+          note: normalizedComment || "画面操作",
+        }),
+      });
+      const responseBody = await readApiResponse<ApprovalStatusDetailData>(response);
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setModuleApprovalMutationState({
+          status: "error",
+          message: responseBody.message || `モジュール版の承認状態変更に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setModuleApprovalState({
+        status: "available",
+        item: responseBody.data,
+        message: responseBody.message || "モジュール版の承認状態を更新しました。",
+      });
+      setModuleApprovalMutationState({
+        status: "success",
+        message: responseBody.message || "モジュール版の承認状態を更新しました。",
+      });
+      setModuleApprovalComment("");
+      setVersionListState((current) => ({
+        ...current,
+        items: current.items.map((version) =>
+          version.version_no === item.version_no
+            ? { ...version, status: responseBody.data!.status, status_label: responseBody.data!.status_label }
+            : version,
+        ),
+      }));
+    } catch (error) {
+      setModuleApprovalMutationState({
+        status: "error",
+        message: "モジュール版の承認状態変更中にAPI接続で失敗しました。",
+      });
+    }
+  }
+
+  async function handleFetchPreviousDiff(): Promise<void> {
+    if (!item || !moduleId || previousVersionNo === null) {
+      return;
+    }
+
+    setModuleDiffState({
+      status: "loading",
+      item: null,
+      message: "前版との差分を取得しています。",
+    });
+
+    try {
+      const endpoint = new URL(buildApiUrl(`/api/v1/modules/${moduleId}/diff`), window.location.origin);
+      endpoint.searchParams.set("from_version", String(previousVersionNo));
+      endpoint.searchParams.set("to_version", String(item.version_no));
+      const response = await fetch(endpoint.toString());
+      const responseBody = await readApiResponse<ModuleDiffData>(response);
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setModuleDiffState({
+          status: "unavailable",
+          item: null,
+          message: responseBody.message || `差分取得に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setModuleDiffState({
+        status: "available",
+        item: responseBody.data,
+        message: responseBody.message || "前版との差分を取得しました。",
+      });
+    } catch (error) {
+      setModuleDiffState({
+        status: "unavailable",
+        item: null,
+        message: "差分取得中にAPI接続で失敗しました。",
+      });
+    }
+  }
 
   return (
     <Page title="モジュール詳細" description="APIから取得したモジュールの基本情報と行データを確認します。">
@@ -1407,6 +1756,27 @@ function ModuleDetailPage() {
           <span aria-hidden="true">□</span>
           全画面プレビュー
         </button>
+        <button
+          className="secondary"
+          onClick={() => {
+            if (!item) {
+              return;
+            }
+            const params = new URLSearchParams({
+              mode: "new-version",
+              module_id: String(item.module_id),
+              module_key: item.module_key,
+              module_name: item.module_name,
+              next_version: String(nextVersionNo),
+            });
+            navigate(`/modules/register?${params.toString()}`);
+          }}
+          disabled={!item}
+          title={hasDraftVersion ? "既にdraft版がある場合、保存時にエラーになります。" : "Excelから新しい版を作成します。"}
+        >
+          <span aria-hidden="true">+</span>
+          新しい版をExcelから作成
+        </button>
         <button className="primary" onClick={() => navigate("/documents/create")} disabled={!item}>
           <span aria-hidden="true">＋</span>
           原本作成へ
@@ -1431,6 +1801,26 @@ function ModuleDetailPage() {
               <p>{item.source_xlsx_path ?? "未設定"}</p>
             </div>
           </section>
+          <ModuleVersionPanel
+            currentVersionNo={item.version_no}
+            state={versionListState}
+            onSelectVersion={handleVersionSelect}
+          />
+          <ModuleApprovalPanel
+            approvalState={moduleApprovalState}
+            mutationState={moduleApprovalMutationState}
+            comment={moduleApprovalComment}
+            canManageApproval={canManageApproval}
+            currentUser={currentUser}
+            onCommentChange={setModuleApprovalComment}
+            onApplyTransition={handleModuleApprovalTransition}
+          />
+          <ModuleDiffPanel
+            currentVersionNo={item.version_no}
+            previousVersionNo={previousVersionNo}
+            state={moduleDiffState}
+            onFetchDiff={handleFetchPreviousDiff}
+          />
           <ExcelModulePreview item={item} />
         </>
       ) : (
@@ -1459,6 +1849,208 @@ function ModuleDetailPage() {
       ) : null}
     </Page>
   );
+}
+
+function ModuleVersionPanel({
+  currentVersionNo,
+  state,
+  onSelectVersion,
+}: {
+  currentVersionNo: number;
+  state: ModuleVersionListState;
+  onSelectVersion: (versionNo: number) => void;
+}) {
+  return (
+    <section className="section-band module-version-panel">
+      <div className="section-heading-row">
+        <div>
+          <h2>版管理</h2>
+          <p>{state.message}</p>
+        </div>
+        <strong>{state.items.length} 件</strong>
+      </div>
+      {state.items.length > 0 ? (
+        <div className="module-version-list">
+          {state.items.map((version) => (
+            <button
+              key={version.module_version_id}
+              type="button"
+              className={version.version_no === currentVersionNo ? "module-version-card active" : "module-version-card"}
+              onClick={() => onSelectVersion(version.version_no)}
+            >
+              <span>{`v${version.version_no}`}</span>
+              <ModuleStatusPill status={version.status} label={version.status_label} />
+              <small>{`${version.row_count} 行 / ${version.updated_at}`}</small>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p>表示できる版はありません。</p>
+      )}
+    </section>
+  );
+}
+
+function ModuleApprovalPanel({
+  approvalState,
+  mutationState,
+  comment,
+  canManageApproval,
+  currentUser,
+  onCommentChange,
+  onApplyTransition,
+}: {
+  approvalState: ApprovalStatusDetailState;
+  mutationState: ApprovalStatusMutationState;
+  comment: string;
+  canManageApproval: boolean;
+  currentUser: AuthUser | null;
+  onCommentChange: (value: string) => void;
+  onApplyTransition: (statusValue: ModuleApiStatus) => void;
+}) {
+  const detail = approvalState.item;
+
+  return (
+    <section className="section-band module-approval-panel">
+      <div className="section-heading-row">
+        <div>
+          <h2>承認状態</h2>
+          <p>{approvalState.message}</p>
+        </div>
+        {detail ? <ModuleStatusPill status={detail.status} label={detail.status_label} /> : null}
+      </div>
+      {detail ? (
+        <>
+          <div className="module-approval-grid">
+            <Fact label="現在の版" value={`v${detail.version_no}`} />
+            <Fact label="次の操作" value={detail.next_action} />
+            <Fact label="実行ユーザー" value={currentUser ? `${currentUser.displayName} / ${getAuthRoleLabel(currentUser.role)}` : "未ログイン"} />
+          </div>
+          <label className="approval-comment-field">
+            コメント
+            <textarea
+              value={comment}
+              onChange={(event) => onCommentChange(event.target.value)}
+              disabled={!canManageApproval}
+              placeholder={canManageApproval ? "差戻し理由や補足を入力します。" : "承認者ユーザーでログインすると入力できます。"}
+            />
+          </label>
+          <div className="approval-transition-list">
+            {detail.allowed_transitions.length > 0 ? (
+              detail.allowed_transitions.map((transition) => (
+                <button
+                  key={transition.to_status}
+                  className="approval-transition-card"
+                  type="button"
+                  onClick={() => onApplyTransition(transition.to_status)}
+                  disabled={!canManageApproval || mutationState.status === "submitting"}
+                >
+                  <strong>{transition.action_label}</strong>
+                  <span>{transition.to_status_label}</span>
+                </button>
+              ))
+            ) : (
+              <p>この状態から実行できる承認操作はありません。</p>
+            )}
+          </div>
+          <p className={mutationState.status === "error" ? "form-error" : "form-hint"}>{mutationState.message}</p>
+          <h3>承認履歴</h3>
+          {detail.history.length > 0 ? (
+            <DataTable
+              columns={["日時", "変更", "実行者", "コメント"]}
+              rows={detail.history.map((history) => [
+                history.changed_at,
+                `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
+                history.changed_by ?? "-",
+                history.note ?? "-",
+              ])}
+            />
+          ) : (
+            <p>承認履歴はまだありません。</p>
+          )}
+        </>
+      ) : (
+        <p>承認状態を表示できません。</p>
+      )}
+    </section>
+  );
+}
+
+function ModuleDiffPanel({
+  currentVersionNo,
+  previousVersionNo,
+  state,
+  onFetchDiff,
+}: {
+  currentVersionNo: number;
+  previousVersionNo: number | null;
+  state: ModuleDiffState;
+  onFetchDiff: () => void;
+}) {
+  return (
+    <section className="section-band module-diff-panel">
+      <div className="section-heading-row">
+        <div>
+          <h2>前版との差分</h2>
+          <p>{state.message}</p>
+        </div>
+        <button
+          className="secondary"
+          type="button"
+          onClick={onFetchDiff}
+          disabled={previousVersionNo === null || state.status === "loading"}
+        >
+          差分を見る
+        </button>
+      </div>
+      <div className="module-diff-meta">
+        <Fact label="比較元" value={previousVersionNo === null ? "-" : `v${previousVersionNo}`} />
+        <Fact label="比較先" value={`v${currentVersionNo}`} />
+      </div>
+      {state.item ? (
+        <>
+          <div className="module-diff-summary">
+            <Fact label="追加" value={String(state.item.summary.added_count)} />
+            <Fact label="削除" value={String(state.item.summary.removed_count)} />
+            <Fact label="変更" value={String(state.item.summary.changed_count)} />
+            <Fact label="変更なし" value={String(state.item.summary.unchanged_count)} />
+          </div>
+          <DataTable
+            columns={["状態", "行", "変更項目", "変更前", "変更後"]}
+            rows={state.item.rows
+              .filter((row) => row.status !== "unchanged")
+              .slice(0, 20)
+              .map((row) => [
+                getModuleDiffStatusLabel(row.status),
+                row.row_key,
+                row.changed_fields.length > 0 ? row.changed_fields.join(", ") : "-",
+                getModuleDiffRowText(row.before),
+                getModuleDiffRowText(row.after),
+              ])}
+          />
+        </>
+      ) : previousVersionNo === null ? (
+        <p>前版がないため、差分比較はまだできません。</p>
+      ) : null}
+    </section>
+  );
+}
+
+function getModuleDiffStatusLabel(statusValue: ModuleDiffRowData["status"]): string {
+  const labels: Record<ModuleDiffRowData["status"], string> = {
+    added: "追加",
+    removed: "削除",
+    changed: "変更",
+    unchanged: "変更なし",
+  };
+  return labels[statusValue];
+}
+
+function getModuleDiffRowText(row: ModuleDetailRowData | null): string {
+  if (row === null) {
+    return "-";
+  }
+  return row.work_text || row.expected_result || row.command_text || row.tech_doc_text || "(空行)";
 }
 
 function ExcelModulePreview({
@@ -1698,6 +2290,12 @@ function ExcelModuleCaseSheet({
 
 function ModuleRegisterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const versionSourceModuleId = searchParams.get("module_id");
+  const versionSourceModuleKey = searchParams.get("module_key");
+  const versionSourceModuleName = searchParams.get("module_name");
+  const versionNextVersion = searchParams.get("next_version");
+  const isNewVersionMode = searchParams.get("mode") === "new-version" && versionSourceModuleKey !== null;
   const [moduleKeyInput, setModuleKeyInput] = useState("");
   const [moduleNameInput, setModuleNameInput] = useState("初期点検手順");
   const [descriptionInput, setDescriptionInput] = useState("モジュール登録画面から作成。");
@@ -2040,6 +2638,21 @@ function ModuleRegisterPage() {
         <p>装置ごとに「時刻 / target / P / 対象装置」と、各手順行に対する「時刻 / window / P / コマンド」をまとめて入力できます。</p>
       </section>
 
+      {isNewVersionMode ? (
+        <section className="register-status register-status-success">
+          <span>新しい版をExcelから作成</span>
+          <strong>{versionSourceModuleKey}</strong>
+          <p>
+            {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: v${versionNextVersion ?? "次版"} draft。`}
+          </p>
+          <div className="register-result-meta">
+            <span>{`module_id: ${versionSourceModuleId ?? "-"}`}</span>
+            <span>{`module_key: ${versionSourceModuleKey}`}</span>
+            <span>{`next: v${versionNextVersion ?? "-"}`}</span>
+          </div>
+        </section>
+      ) : null}
+
       <form className="register-form" onSubmit={handleSubmit}>
         {/*
           MVPではモジュール登録をExcel投入のみに寄せるため、手入力用の基本情報フォームは表示しない。
@@ -2337,7 +2950,7 @@ function ModuleRegisterPage() {
 
         <Toolbar>
           {createdItem ? (
-            <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}`)}>
+            <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}?version_no=${createdItem.version_no}`)}>
               <span aria-hidden="true">&lt;-</span>
               詳細を開く
             </button>
@@ -2369,6 +2982,12 @@ function ModuleRegisterPageV2() {
   };
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const versionSourceModuleId = searchParams.get("module_id");
+  const versionSourceModuleKey = searchParams.get("module_key");
+  const versionSourceModuleName = searchParams.get("module_name");
+  const versionNextVersion = searchParams.get("next_version");
+  const isNewVersionMode = searchParams.get("mode") === "new-version" && versionSourceModuleKey !== null;
   const [moduleKeyInput, setModuleKeyInput] = useState("");
   const [moduleNameInput, setModuleNameInput] = useState("初期点検手順");
   const [descriptionInput, setDescriptionInput] = useState("モジュール登録画面から作成。");
@@ -2421,6 +3040,20 @@ function ModuleRegisterPageV2() {
   const [isWorkbookImportApplied, setIsWorkbookImportApplied] = useState(false);
   const [isImportPreviewFullscreenOpen, setIsImportPreviewFullscreenOpen] = useState(false);
   const canSaveImportedModule = isWorkbookImportApplied || importPreviewState.status === "success";
+
+  useEffect(() => {
+    if (!isNewVersionMode || versionSourceModuleKey === null) {
+      return;
+    }
+    setModuleKeyInput(versionSourceModuleKey);
+    if (versionSourceModuleName !== null) {
+      setModuleNameInput(versionSourceModuleName);
+    }
+    setCreateState((current) => ({
+      ...current,
+      message: `${versionSourceModuleKey} の新しい版をExcelから作成します。`,
+    }));
+  }, [isNewVersionMode, versionSourceModuleKey, versionSourceModuleName]);
 
   useEffect(() => {
     if (!importPreviewState.item) {
@@ -2598,7 +3231,7 @@ function ModuleRegisterPageV2() {
           }))
         : [createDefaultRow(1)];
 
-    setModuleKeyInput(item.module_key ?? "");
+    setModuleKeyInput(isNewVersionMode && versionSourceModuleKey !== null ? versionSourceModuleKey : (item.module_key ?? ""));
     setModuleNameInput(item.module_name);
     setDescriptionInput(item.description ?? "");
     setSourcePathInput(item.source_xlsx_path ?? "");
@@ -2737,11 +3370,15 @@ function ModuleRegisterPageV2() {
         return;
       }
 
-      applyImportedDraft(responseBody.data);
+      const importedDraft =
+        isNewVersionMode && versionSourceModuleKey !== null
+          ? { ...responseBody.data, module_key: versionSourceModuleKey }
+          : responseBody.data;
+      applyImportedDraft(importedDraft);
       setIsWorkbookImportApplied(true);
       setImportPreviewState({
         status: "success",
-        item: responseBody.data,
+        item: importedDraft,
         message: responseBody.message || "ワークブック取込結果を画面へ反映しました。",
       });
     } catch (error) {
@@ -2844,6 +3481,21 @@ function ModuleRegisterPageV2() {
         */}
 
         {/* Excel取込のみで登録する方針のため、手入力用の装置ブロックと手順行はWebUIでは表示しません。 */}
+        {isNewVersionMode ? (
+          <section className="register-status register-status-success">
+            <span>新しい版をExcelから作成</span>
+            <strong>{versionSourceModuleKey}</strong>
+            <p>
+              {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: v${versionNextVersion ?? "次版"} draft。`}
+            </p>
+            <div className="register-result-meta">
+              <span>{`module_id: ${versionSourceModuleId ?? "-"}`}</span>
+              <span>{`module_key: ${versionSourceModuleKey}`}</span>
+              <span>{`next: v${versionNextVersion ?? "-"}`}</span>
+            </div>
+          </section>
+        ) : null}
+
         {showManualEditors ? (
           <>
         <details className="register-panel-accordion" open>
@@ -3212,7 +3864,7 @@ function ModuleRegisterPageV2() {
 
         <Toolbar>
           {createdItem ? (
-            <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}`)}>
+            <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}?version_no=${createdItem.version_no}`)}>
               <span aria-hidden="true">&lt;-</span>
               詳細を開く
             </button>
@@ -5803,7 +6455,7 @@ function ApprovalPage() {
       });
       return;
     }
-    if (selectedItem.status === "published" && toStatus === "draft" && normalizedComment.length === 0) {
+    if (selectedItem.status === "draft" && toStatus === "draft" && normalizedComment.length === 0) {
       setApprovalMutationState({
         status: "error",
         message: "差戻し理由を入力してください。",
@@ -6106,8 +6758,8 @@ function ApprovalPage() {
       <section className="section-band">
         <h2>版管理ルール</h2>
         <p>
-          M1 では最小ルールとして、原本は <code>draft</code> から <code>published</code> へ承認し、
-          必要に応じて <code>published</code> から <code>draft</code> へ差戻し、最終的に <code>archived</code> へ保管します。
+          M1 では最小ルールとして、原本は <code>draft</code> の段階で承認または差戻しを行い、
+          承認されたものを <code>published</code> へ移行し、最終的に <code>archived</code> へ保管します。
         </p>
       </section>
     </Page>

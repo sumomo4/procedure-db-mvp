@@ -22,15 +22,15 @@ def _build_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
                 to_status="published",
                 to_status_label="承認済み",
                 action_label="承認する",
-            )
-        ]
-        if status_value == "draft"
-        else [
+            ),
             ApprovalTransitionData(
                 to_status="draft",
                 to_status_label="作成中",
                 action_label="差戻す",
-            ),
+            )
+        ]
+        if status_value == "draft"
+        else [
             ApprovalTransitionData(
                 to_status="archived",
                 to_status_label="保管済み",
@@ -42,7 +42,7 @@ def _build_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
     )
 
     next_action = (
-        "承認する"
+        "承認または差戻し"
         if status_value == "draft"
         else "保管する"
         if status_value == "published"
@@ -87,7 +87,7 @@ def test_read_statuses_returns_success_response(
                     version_no=1,
                     status="draft",
                     status_label="作成中",
-                    next_action="承認する",
+                    next_action="承認または差戻し",
                     module_count=2,
                     enabled_module_count=2,
                     created_by="seed",
@@ -113,7 +113,7 @@ def test_read_statuses_returns_success_response(
                     "version_no": 1,
                     "status": "draft",
                     "status_label": "作成中",
-                    "next_action": "承認する",
+                    "next_action": "承認または差戻し",
                     "module_count": 2,
                     "enabled_module_count": 2,
                     "created_by": "seed",
@@ -176,7 +176,7 @@ def test_read_status_detail_returns_success_response(
             "version_no": 1,
             "status": "draft",
             "status_label": "作成中",
-            "next_action": "承認する",
+            "next_action": "承認または差戻し",
             "module_count": 2,
             "enabled_module_count": 2,
             "module_names": ["初期点検手順", "部品交換手順"],
@@ -189,6 +189,11 @@ def test_read_status_detail_returns_success_response(
                     "to_status": "published",
                     "to_status_label": "承認済み",
                     "action_label": "承認する",
+                },
+                {
+                    "to_status": "draft",
+                    "to_status_label": "作成中",
+                    "action_label": "差戻す",
                 }
             ],
             "history": [],

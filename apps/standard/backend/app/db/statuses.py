@@ -17,13 +17,13 @@ from app.db.source_docs import SOURCE_DOC_STATUS_LABELS
 
 APPROVAL_TARGET_TYPE = "source-doc"
 APPROVAL_NEXT_ACTIONS = {
-    "draft": "承認する",
+    "draft": "承認または差戻し",
     "published": "保管する",
     "archived": "確認のみ",
 }
 APPROVAL_ALLOWED_TRANSITIONS = {
-    "draft": [("published", "承認する")],
-    "published": [("draft", "差戻す"), ("archived", "保管する")],
+    "draft": [("published", "承認する"), ("draft", "差戻す")],
+    "published": [("archived", "保管する")],
     "archived": [],
 }
 
@@ -357,7 +357,7 @@ def update_status(
                     raise ValueError(
                         f"status transition from {current_status} to {to_status} is not allowed."
                     )
-                if current_status == "published" and to_status == "draft" and not (note or "").strip():
+                if current_status == "draft" and to_status == "draft" and not (note or "").strip():
                     raise ValueError("差戻し理由を入力してください。")
                 action_label = next(
                     label for status_value, label in allowed_transitions if status_value == to_status

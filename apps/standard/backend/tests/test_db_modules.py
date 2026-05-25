@@ -8,8 +8,8 @@ import pytest
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.core.responses import ModuleCreateRequest, ModuleCreateRowImageInput, ModuleCreateRowInput
-from app.db.modules import create_module, get_module_detail, list_modules
+from app.core.responses import ModuleCreateRequest, ModuleCreateRowImageInput, ModuleCreateRowInput, ModuleDetailData, ModuleRowData
+from app.db.modules import build_module_diff_data, create_module, get_module_detail, list_module_versions, list_modules
 
 
 class FakeCursor:
@@ -157,6 +157,99 @@ def install_fake_psycopg(
     return fake_cursor
 
 
+def build_diff_module(version_no: int, rows: list[ModuleRowData]) -> ModuleDetailData:
+    """Build deterministic module detail data for diff tests."""
+
+    return ModuleDetailData(
+        module_id=1,
+        module_key="MOD-001",
+        module_name="Initial check procedure",
+        description="Description",
+        module_version_id=version_no,
+        version_no=version_no,
+        status="draft",
+        status_label="Draft",
+        row_count=len(rows),
+        source_xlsx_path=None,
+        created_by="seed",
+        header_time_text="09:00",
+        target_text="CS",
+        common_p_text=">",
+        target_device_text="device-01",
+        device_headers=[],
+        created_at="2026-04-22",
+        updated_at="2026-04-22",
+        rows=rows,
+    )
+
+
+def build_diff_row(row_id: int, row_order: int, work_text: str | None) -> ModuleRowData:
+    """Build deterministic module row data for diff tests."""
+
+    return ModuleRowData(
+        module_row_id=row_id,
+        row_order=row_order,
+        row_type="step",
+        major_no=None,
+        middle_no=None,
+        minor_no=None,
+        tech_doc_text=None,
+        work_text=work_text,
+        indent_level=0,
+        expected_result=None,
+        time_text=None,
+        window_text=None,
+        p_text=None,
+        command_text=None,
+        note=None,
+        device_entries=[],
+        images=[],
+    )
+
+
+def test_build_module_diff_treats_inserted_blank_as_added() -> None:
+    """Diff should avoid marking all later rows as changed when a blank row is inserted."""
+
+    before = build_diff_module(
+        1,
+        [
+            build_diff_row(101, 1, "作業A"),
+            build_diff_row(102, 2, "作業B"),
+            build_diff_row(103, 3, "作業C"),
+        ],
+    )
+    after = build_diff_module(
+        2,
+        [
+            build_diff_row(201, 1, "作業A"),
+            build_diff_row(202, 2, None),
+            build_diff_row(203, 3, "作業B"),
+            build_diff_row(204, 4, "作業C"),
+        ],
+    )
+
+    result = build_module_diff_data(before, after)
+
+    assert result.summary.added_count == 1
+    assert result.summary.changed_count == 0
+    assert result.summary.unchanged_count == 3
+    assert [row.status for row in result.rows] == ["unchanged", "added", "unchanged", "unchanged"]
+
+
+def test_build_module_diff_matches_nearby_similar_rows_as_changed() -> None:
+    """Diff should match a nearby edited row using similarity."""
+
+    before = build_diff_module(1, [build_diff_row(101, 1, "TeraTermを起動する")])
+    after = build_diff_module(2, [build_diff_row(201, 2, "TeraTermを起動し、接続する")])
+
+    result = build_module_diff_data(before, after)
+
+    assert result.summary.changed_count == 1
+    assert result.rows[0].status == "changed"
+    assert result.rows[0].changed_fields == ["work_text"]
+    assert result.rows[0].similarity is not None
+
+
 def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> None:
     """Module query rows should be converted to response data."""
 
@@ -204,6 +297,63 @@ def test_list_modules_raises_for_connection_error(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(DatabaseConnectionError):
         list_modules(AppSettings())
+
+
+def test_list_module_versions_returns_version_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Module version query rows should be converted to response data."""
+
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            [
+                (
+                    1,
+                    "MOD-001",
+                    "Initial check procedure",
+                    20,
+                    2,
+                    "draft",
+                    4,
+                    "module-v2.xlsm",
+                    "webui",
+                    datetime(2026, 5, 21, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+                ),
+                (
+                    1,
+                    "MOD-001",
+                    "Initial check procedure",
+                    10,
+                    1,
+                    "published",
+                    3,
+                    "module-v1.xlsm",
+                    "webui",
+                    datetime(2026, 5, 20, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 5, 20, 10, 0, tzinfo=timezone.utc),
+                ),
+            ]
+        ),
+    )
+
+    result = list_module_versions(AppSettings(), 1)
+
+    assert fake_cursor.parameters == {"module_id": 1}
+    assert result is not None
+    assert result.module_id == 1
+    assert result.module_key == "MOD-001"
+    assert result.items[0].version_no == 2
+    assert result.items[0].status_label == "作成中"
+    assert result.items[1].status == "published"
+    assert result.items[1].updated_at == "2026-05-20"
+
+
+def test_list_module_versions_returns_none_when_module_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Module version query should return none when module does not exist."""
+
+    install_fake_psycopg(monkeypatch, FakeCursor([]))
+
+    assert list_module_versions(AppSettings(), 99) is None
 
 
 def test_get_module_detail_returns_module_rows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -471,6 +621,130 @@ def test_create_module_returns_created_detail(monkeypatch: pytest.MonkeyPatch) -
     assert "INSERT INTO proc.module_versions" in executed_queries
     assert "INSERT INTO proc.module_rows" in executed_queries
     assert "INSERT INTO proc.module_row_images" in executed_queries
+
+
+def test_create_module_creates_new_version_for_existing_module_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing module_key should create the next draft version from Excel input."""
+
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            rows=[
+                (
+                    4,
+                    "MOD-004",
+                    "Updated module",
+                    "Updated from Excel",
+                    41,
+                    2,
+                    "draft",
+                    "imports/MOD-004-v2.xlsx",
+                    "codex",
+                    "09:00",
+                    "CS",
+                    ">",
+                    "device-01",
+                    '[{"slot_no": 1, "header_time_text": "09:00", "target_text": "CS", "p_text": ">", "target_device_text": "device-01"}]',
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    402,
+                    1,
+                    "step",
+                    "1",
+                    "1",
+                    "1",
+                    "Tech doc",
+                    "Run updated command",
+                    1,
+                    "Succeeded",
+                    "5分",
+                    "console",
+                    ">",
+                    "show updated version",
+                    '[{"slot_no": 1, "time_text": "5分", "window_text": "console", "p_text": ">", "command_text": "show updated version"}]',
+                    "[]",
+                ),
+            ],
+            fetchone_results=[
+                (4,),
+                None,
+                (2,),
+                (41,),
+                (402,),
+            ],
+        ),
+    )
+
+    payload = ModuleCreateRequest(
+        module_key="MOD-004",
+        module_name="Updated module",
+        description="Updated from Excel",
+        source_xlsx_path="imports/MOD-004-v2.xlsx",
+        created_by="codex",
+        header_time_text="09:00",
+        target_text="CS",
+        common_p_text=">",
+        target_device_text="device-01",
+        rows=[
+            ModuleCreateRowInput(
+                row_order=1,
+                row_type="step",
+                major_no="1",
+                middle_no="1",
+                minor_no="1",
+                tech_doc_text="Tech doc",
+                work_text="Run updated command",
+                indent_level=1,
+                expected_result="Succeeded",
+                time_text="5分",
+                window_text="console",
+                p_text=">",
+                command_text="show updated version",
+            ),
+        ],
+    )
+
+    result = create_module(AppSettings(), payload)
+
+    assert result.module_id == 4
+    assert result.module_key == "MOD-004"
+    assert result.version_no == 2
+    assert result.rows[0].work_text == "Run updated command"
+    executed_queries = "\n".join(query for query, _ in fake_cursor.executions)
+    assert "UPDATE proc.modules" in executed_queries
+    assert "INSERT INTO proc.module_versions" in executed_queries
+    assert "INSERT INTO proc.modules (module_key" not in executed_queries
+    assert any(parameters.get("version_no") == 2 for _, parameters in fake_cursor.executions)
+
+
+def test_create_module_rejects_existing_module_key_when_draft_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing module_key should be rejected when a draft version already exists."""
+
+    install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            rows=[],
+            fetchone_results=[
+                (4,),
+                (1,),
+            ],
+        ),
+    )
+    payload = ModuleCreateRequest(
+        module_key="MOD-004",
+        module_name="Updated module",
+        rows=[
+            ModuleCreateRowInput(
+                row_order=1,
+                row_type="step",
+                work_text="Run updated command",
+                indent_level=0,
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="draft module version already exists"):
+        create_module(AppSettings(), payload)
 
 
 def test_create_module_rejects_duplicate_row_order() -> None:

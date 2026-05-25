@@ -148,6 +148,24 @@ CREATE INDEX IF NOT EXISTS idx_approval_status_histories_target
 CREATE INDEX IF NOT EXISTS idx_approval_status_histories_version
     ON proc.approval_status_histories (target_version_id);
 
+CREATE TABLE IF NOT EXISTS proc.module_approval_status_histories (
+    module_approval_status_history_id bigserial PRIMARY KEY,
+    module_id bigint NOT NULL REFERENCES proc.modules (module_id) ON DELETE CASCADE,
+    module_version_id bigint NOT NULL REFERENCES proc.module_versions (module_version_id) ON DELETE CASCADE,
+    from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
+    to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+    action_label text NOT NULL,
+    changed_by text,
+    changed_at timestamptz NOT NULL DEFAULT now(),
+    note text
+);
+
+CREATE INDEX IF NOT EXISTS idx_module_approval_status_histories_module
+    ON proc.module_approval_status_histories (module_id, changed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_module_approval_status_histories_version
+    ON proc.module_approval_status_histories (module_version_id);
+
 CREATE TABLE IF NOT EXISTS proc.blueprint_items (
     blueprint_item_id bigserial PRIMARY KEY,
     blueprint_version_id bigint NOT NULL REFERENCES proc.blueprint_versions (blueprint_version_id) ON DELETE CASCADE,

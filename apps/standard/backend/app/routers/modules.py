@@ -15,15 +15,29 @@ from app.core.excel_import import (
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ApiResponse,
+    ApprovalStatusDetailData,
+    ApprovalStatusUpdateRequest,
     ExcelImportSheetRequest,
     ModuleCreateRequest,
     ModuleDetailData,
+    ModuleDiffData,
     ModuleListData,
+    ModuleVersionListData,
     RouterEndpointData,
     RouterFoundationData,
     success_response,
 )
-from app.db.modules import VALID_MODULE_STATUSES, create_module, get_module_detail, get_module_row_image, list_modules
+from app.db.modules import (
+    VALID_MODULE_STATUSES,
+    create_module,
+    get_module_detail,
+    get_module_diff,
+    get_module_row_image,
+    get_module_version_status,
+    list_module_versions,
+    list_modules,
+    update_module_version_status,
+)
 from app.routers.health import get_app_settings
 
 
@@ -112,10 +126,124 @@ def read_module_router_foundation() -> ApiResponse[RouterFoundationData]:
     return success_response(data, "モジュール API 構成情報を取得しました。")
 
 
+@router.get("/{module_id}/diff", response_model=ApiResponse[ModuleDiffData])
+def read_module_diff(
+    module_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    from_version: Annotated[int, Query(ge=1)],
+    to_version: Annotated[int, Query(ge=1)],
+) -> ApiResponse[ModuleDiffData]:
+    """Return a structured diff between two module versions."""
+
+    try:
+        data = get_module_diff(settings, module_id, from_version, to_version)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="比較対象のモジュール版が見つかりませんでした。",
+        )
+
+    return success_response(data, "モジュール差分を取得しました。")
+
+
+@router.get("/{module_id}/versions", response_model=ApiResponse[ModuleVersionListData])
+def read_module_versions(
+    module_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleVersionListData]:
+    """Return versions for one module."""
+
+    try:
+        data = list_module_versions(settings, module_id)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="モジュールが見つかりませんでした。",
+        )
+
+    return success_response(data, "モジュール版一覧を取得しました。")
+
+
+@router.get("/{module_id}/versions/{version_no}/status", response_model=ApiResponse[ApprovalStatusDetailData])
+def read_module_version_status(
+    module_id: int,
+    version_no: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ApprovalStatusDetailData]:
+    """Return approval status detail for one module version."""
+
+    try:
+        data = get_module_version_status(settings, module_id, version_no)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="モジュール版が見つかりませんでした。",
+        )
+
+    return success_response(data, "モジュール版の承認状態を取得しました。")
+
+
+@router.patch("/{module_id}/versions/{version_no}/status", response_model=ApiResponse[ApprovalStatusDetailData])
+def patch_module_version_status(
+    module_id: int,
+    version_no: int,
+    payload: ApprovalStatusUpdateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ApprovalStatusDetailData]:
+    """Update approval status for one module version."""
+
+    try:
+        data = update_module_version_status(
+            settings,
+            module_id,
+            version_no,
+            payload.status,
+            payload.changed_by,
+            payload.note,
+        )
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="モジュール版が見つかりませんでした。",
+        )
+
+    return success_response(data, "モジュール版の承認状態を更新しました。")
+
+
 @router.get("/{module_id}", response_model=ApiResponse[ModuleDetailData])
 def read_module_detail(
     module_id: int,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
+    version_no: Annotated[int | None, Query(ge=1)] = None,
 ) -> ApiResponse[ModuleDetailData]:
     """Return module detail from PostgreSQL.
 
@@ -131,7 +259,7 @@ def read_module_detail(
     """
 
     try:
-        data = get_module_detail(settings, module_id)
+        data = get_module_detail(settings, module_id, version_no)
     except DatabaseConnectionError as exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
