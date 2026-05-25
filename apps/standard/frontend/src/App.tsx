@@ -2091,6 +2091,13 @@ function getModuleDiffRowNumber(row: ModuleDetailRowData | null): string {
   return numbers.length > 0 ? numbers.join("-") : `行${row.row_order}`;
 }
 
+function getModuleDiffExcelRowLabel(row: ModuleDetailRowData | null): string {
+  if (row === null) {
+    return "-";
+  }
+  return `${row.row_order}行目`;
+}
+
 function getModuleDiffRowText(row: ModuleDetailRowData | null): string {
   if (row === null) {
     return "-";
@@ -2135,6 +2142,10 @@ function getModuleDiffImageSummary(row: ModuleDetailRowData | null): string {
 function ModuleDiffRowCard({ row }: { row: ModuleDiffRowData }) {
   const beforeLabel = row.before ? getModuleDiffRowNumber(row.before) : "-";
   const afterLabel = row.after ? getModuleDiffRowNumber(row.after) : "-";
+  const beforeExcelRowLabel = getModuleDiffExcelRowLabel(row.before);
+  const afterExcelRowLabel = getModuleDiffExcelRowLabel(row.after);
+  const primaryExcelRowLabel =
+    row.status === "removed" ? beforeExcelRowLabel : row.status === "added" ? afterExcelRowLabel : afterExcelRowLabel;
   const changedFieldLabels = row.changed_fields.map(getModuleDiffChangedFieldLabel);
 
   return (
@@ -2143,13 +2154,12 @@ function ModuleDiffRowCard({ row }: { row: ModuleDiffRowData }) {
         <span className={`module-diff-status module-diff-status-${row.status}`}>
           {getModuleDiffStatusLabel(row.status)}
         </span>
+        <span className="module-diff-row-badge">{`Excel ${primaryExcelRowLabel}`}</span>
         <div>
           <strong>{getModuleDiffStatusDescription(row.status)}</strong>
-          <small>{`前: ${beforeLabel} / 後: ${afterLabel}`}</small>
+          <small>{`番号 前: ${beforeLabel} / 後: ${afterLabel}`}</small>
+          <small>{`Excel行 前: ${beforeExcelRowLabel} / 後: ${afterExcelRowLabel}`}</small>
         </div>
-        {row.similarity !== null ? (
-          <span className="module-diff-similarity">{`類似度 ${Math.round(row.similarity * 100)}%`}</span>
-        ) : null}
       </div>
       {changedFieldLabels.length > 0 ? (
         <div className="module-diff-chips" aria-label="変更項目">

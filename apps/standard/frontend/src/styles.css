@@ -690,7 +690,7 @@ nav {
 
 .module-diff-card-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: 12px;
   align-items: center;
 }
@@ -706,7 +706,7 @@ nav {
 }
 
 .module-diff-status,
-.module-diff-similarity {
+.module-diff-row-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -738,9 +738,13 @@ nav {
   color: #56636c;
 }
 
-.module-diff-similarity {
-  background: #eef3f4;
-  color: #344652;
+.module-diff-row-badge {
+  min-height: 40px;
+  border: 2px solid #10202a;
+  background: #ffffff;
+  color: #10202a;
+  box-shadow: 3px 3px 0 #e3b64f;
+  font-size: 1rem;
 }
 
 .module-diff-chips {
@@ -2417,7 +2421,7 @@ th {
   }
 
   .module-diff-status,
-  .module-diff-similarity {
+  .module-diff-row-badge {
     width: fit-content;
   }
 
