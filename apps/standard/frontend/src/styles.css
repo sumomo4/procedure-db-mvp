@@ -666,6 +666,35 @@ nav {
   gap: 12px;
 }
 
+.module-diff-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #d9dee0;
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.module-diff-selector-grid label {
+  display: grid;
+  gap: 8px;
+  color: #344652;
+  font-weight: 900;
+}
+
+.module-diff-selector-grid select {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid #c9d1d3;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #10202a;
+  font: inherit;
+  font-weight: 800;
+}
+
 .module-diff-card {
   border: 1px solid #c9d1d3;
   border-left-width: 6px;
@@ -2411,6 +2440,7 @@ th {
   .register-row-grid,
   .facts,
   .approval-detail-grid,
+  .module-diff-selector-grid,
   .module-diff-comparison {
     grid-template-columns: 1fr;
   }

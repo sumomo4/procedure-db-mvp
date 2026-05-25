@@ -1454,15 +1454,14 @@ function ModuleDetailPage() {
   const [moduleDiffState, setModuleDiffState] = useState<ModuleDiffState>({
     status: "idle",
     item: null,
-    message: "前版との差分は未取得です。",
+    message: "比較元と比較先を選ぶと差分を確認できます。",
   });
+  const [diffFromVersionNo, setDiffFromVersionNo] = useState<number | null>(null);
+  const [diffToVersionNo, setDiffToVersionNo] = useState<number | null>(null);
   const currentUser = getStoredAuthUser();
   const canManageApproval = currentUser?.role === "approver";
   const approvalActor = currentUser?.displayName ?? "";
-  const previousVersionNo =
-    item && versionListState.items.some((version) => version.version_no === item.version_no - 1)
-      ? item.version_no - 1
-      : null;
+  const versionOptions = [...versionListState.items].sort((a, b) => a.version_no - b.version_no);
   const nextVersionNo =
     versionListState.items.length > 0
       ? Math.max(...versionListState.items.map((version) => version.version_no)) + 1
@@ -1584,17 +1583,27 @@ function ModuleDetailPage() {
   }, [item?.version_no, moduleId]);
 
   useEffect(() => {
+    const versionNos = versionOptions.map((version) => version.version_no);
+    const previousVersionNo =
+      item && versionNos.includes(item.version_no - 1)
+        ? item.version_no - 1
+        : item
+          ? [...versionNos].reverse().find((versionNo) => versionNo < item.version_no) ?? null
+          : null;
+
+    setDiffFromVersionNo(previousVersionNo);
+    setDiffToVersionNo(item?.version_no ?? null);
     setModuleDiffState({
       status: "idle",
       item: null,
-      message: "前版との差分は未取得です。",
+      message: "比較元と比較先を選ぶと差分を確認できます。",
     });
     setModuleApprovalMutationState({
       status: "idle",
       message: "承認操作を選ぶと状態変更APIを呼び出します。",
     });
     setModuleApprovalComment("");
-  }, [item?.version_no]);
+  }, [item?.version_no, versionListState.items]);
 
   function handleVersionSelect(versionNo: number): void {
     setSearchParams({ version_no: String(versionNo) });
@@ -1682,21 +1691,29 @@ function ModuleDetailPage() {
     }
   }
 
-  async function handleFetchPreviousDiff(): Promise<void> {
-    if (!item || !moduleId || previousVersionNo === null) {
+  async function handleFetchModuleDiff(): Promise<void> {
+    if (!item || !moduleId || diffFromVersionNo === null || diffToVersionNo === null) {
+      return;
+    }
+    if (diffFromVersionNo === diffToVersionNo) {
+      setModuleDiffState({
+        status: "unavailable",
+        item: null,
+        message: "比較元と比較先には別の版を選んでください。",
+      });
       return;
     }
 
     setModuleDiffState({
       status: "loading",
       item: null,
-      message: "前版との差分を取得しています。",
+      message: `v${diffFromVersionNo} と v${diffToVersionNo} の差分を取得しています。`,
     });
 
     try {
       const endpoint = new URL(buildApiUrl(`/api/v1/modules/${moduleId}/diff`), window.location.origin);
-      endpoint.searchParams.set("from_version", String(previousVersionNo));
-      endpoint.searchParams.set("to_version", String(item.version_no));
+      endpoint.searchParams.set("from_version", String(diffFromVersionNo));
+      endpoint.searchParams.set("to_version", String(diffToVersionNo));
       const response = await fetch(endpoint.toString());
       const responseBody = await readApiResponse<ModuleDiffData>(response);
 
@@ -1712,7 +1729,7 @@ function ModuleDetailPage() {
       setModuleDiffState({
         status: "available",
         item: responseBody.data,
-        message: responseBody.message || "前版との差分を取得しました。",
+        message: responseBody.message || `v${diffFromVersionNo} と v${diffToVersionNo} の差分を取得しました。`,
       });
     } catch (error) {
       setModuleDiffState({
@@ -1817,9 +1834,13 @@ function ModuleDetailPage() {
           />
           <ModuleDiffPanel
             currentVersionNo={item.version_no}
-            previousVersionNo={previousVersionNo}
+            versionOptions={versionOptions}
+            fromVersionNo={diffFromVersionNo}
+            toVersionNo={diffToVersionNo}
             state={moduleDiffState}
-            onFetchDiff={handleFetchPreviousDiff}
+            onFromVersionChange={setDiffFromVersionNo}
+            onToVersionChange={setDiffToVersionNo}
+            onFetchDiff={handleFetchModuleDiff}
           />
           <ExcelModulePreview item={item} />
         </>
@@ -1978,37 +1999,81 @@ function ModuleApprovalPanel({
 
 function ModuleDiffPanel({
   currentVersionNo,
-  previousVersionNo,
+  versionOptions,
+  fromVersionNo,
+  toVersionNo,
   state,
+  onFromVersionChange,
+  onToVersionChange,
   onFetchDiff,
 }: {
   currentVersionNo: number;
-  previousVersionNo: number | null;
+  versionOptions: ModuleVersionListItemData[];
+  fromVersionNo: number | null;
+  toVersionNo: number | null;
   state: ModuleDiffState;
+  onFromVersionChange: (versionNo: number | null) => void;
+  onToVersionChange: (versionNo: number | null) => void;
   onFetchDiff: () => void;
 }) {
   const changedRows = state.item?.rows.filter((row) => row.status !== "unchanged") ?? [];
   const unchangedCount = state.item?.rows.filter((row) => row.status === "unchanged").length ?? 0;
+  const canFetchDiff =
+    fromVersionNo !== null
+    && toVersionNo !== null
+    && fromVersionNo !== toVersionNo
+    && state.status !== "loading";
 
   return (
     <section className="section-band module-diff-panel">
       <div className="section-heading-row">
         <div>
-          <h2>前版との差分</h2>
+          <h2>版の差分</h2>
           <p>{state.message}</p>
         </div>
         <button
           className="secondary"
           type="button"
           onClick={onFetchDiff}
-          disabled={previousVersionNo === null || state.status === "loading"}
+          disabled={!canFetchDiff}
         >
           差分を見る
         </button>
       </div>
+      <div className="module-diff-selector-grid">
+        <label>
+          比較元
+          <select
+            value={fromVersionNo ?? ""}
+            onChange={(event) => onFromVersionChange(event.target.value === "" ? null : Number(event.target.value))}
+          >
+            <option value="">未選択</option>
+            {versionOptions.map((version) => (
+              <option key={`from-${version.module_version_id}`} value={version.version_no}>
+                {`v${version.version_no} / ${version.status_label}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          比較先
+          <select
+            value={toVersionNo ?? ""}
+            onChange={(event) => onToVersionChange(event.target.value === "" ? null : Number(event.target.value))}
+          >
+            <option value="">未選択</option>
+            {versionOptions.map((version) => (
+              <option key={`to-${version.module_version_id}`} value={version.version_no}>
+                {`v${version.version_no} / ${version.status_label}`}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className="module-diff-meta">
-        <Fact label="比較元" value={previousVersionNo === null ? "-" : `v${previousVersionNo}`} />
-        <Fact label="比較先" value={`v${currentVersionNo}`} />
+        <Fact label="比較元" value={fromVersionNo === null ? "-" : `v${fromVersionNo}`} />
+        <Fact label="比較先" value={toVersionNo === null ? "-" : `v${toVersionNo}`} />
+        <Fact label="表示中の版" value={`v${currentVersionNo}`} />
       </div>
       {state.item ? (
         <>
@@ -2034,8 +2099,10 @@ function ModuleDiffPanel({
             <p className="form-hint">{`変更なしの行 ${unchangedCount} 件は省略表示しています。`}</p>
           ) : null}
         </>
-      ) : previousVersionNo === null ? (
-        <p>前版がないため、差分比較はまだできません。</p>
+      ) : versionOptions.length < 2 ? (
+        <p>比較できる版が2つ以上ありません。</p>
+      ) : fromVersionNo === toVersionNo ? (
+        <p>比較元と比較先には別の版を選んでください。</p>
       ) : null}
     </section>
   );
