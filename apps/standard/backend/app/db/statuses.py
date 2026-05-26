@@ -12,7 +12,11 @@ from app.core.responses import (
     ApprovalStatusListItemData,
     ApprovalTransitionData,
 )
-from app.db.source_docs import SOURCE_DOC_STATUS_LABELS
+from app.db.source_docs import (
+    SOURCE_DOC_STATUS_LABELS,
+    _ensure_source_doc_version_number_columns,
+    _format_source_doc_version_label,
+)
 
 
 APPROVAL_TARGET_TYPE = "source-doc"
@@ -158,6 +162,8 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
                 bv.blueprint_version_id,
                 bv.blueprint_id,
                 bv.version_no,
+                bv.version_major,
+                bv.version_minor,
                 bv.status,
                 bv.change_note,
                 bv.created_by,
@@ -171,6 +177,8 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
             b.name AS target_name,
             lv.version_no,
             lv.status,
+            lv.version_major,
+            lv.version_minor,
             COUNT(bi.blueprint_item_id)::int AS module_count,
             COUNT(*) FILTER (WHERE COALESCE(bi.enabled, false))::int AS enabled_module_count,
             lv.created_by,
@@ -185,6 +193,8 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
             b.blueprint_key,
             b.name,
             lv.version_no,
+            lv.version_major,
+            lv.version_minor,
             lv.status,
             lv.created_by,
             lv.updated_at
@@ -197,6 +207,7 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(query, {})
                 rows = cursor.fetchall()
     except Exception as exception:
@@ -209,13 +220,16 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
             target_name=row[2],
             target_type=APPROVAL_TARGET_TYPE,
             version_no=row[3],
+            version_major=row[5],
+            version_minor=row[6],
+            version_label=_format_source_doc_version_label(row[5], row[6]),
             status=row[4],
             status_label=SOURCE_DOC_STATUS_LABELS.get(row[4], row[4]),
             next_action=APPROVAL_NEXT_ACTIONS.get(row[4], "確認のみ"),
-            module_count=row[5],
-            enabled_module_count=row[6],
-            created_by=row[7],
-            updated_at=_format_updated_at(row[8]),
+            module_count=row[7],
+            enabled_module_count=row[8],
+            created_by=row[9],
+            updated_at=_format_updated_at(row[10]),
         )
         for row in rows
     ]
@@ -237,6 +251,8 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
                 bv.blueprint_version_id,
                 bv.blueprint_id,
                 bv.version_no,
+                bv.version_major,
+                bv.version_minor,
                 bv.status,
                 bv.change_note,
                 bv.created_by,
@@ -253,6 +269,8 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
             b.description,
             sv.version_no,
             sv.status,
+            sv.version_major,
+            sv.version_minor,
             sv.change_note,
             COUNT(bi.blueprint_item_id)::int AS module_count,
             COUNT(*) FILTER (WHERE COALESCE(bi.enabled, false))::int AS enabled_module_count,
@@ -280,6 +298,8 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
             b.description,
             sv.version_no,
             sv.status,
+            sv.version_major,
+            sv.version_minor,
             sv.change_note,
             sv.created_by,
             sv.updated_at;
@@ -293,6 +313,7 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
             with connection.cursor() as cursor:
                 _ensure_history_table(cursor)
                 _ensure_status_constraints(cursor)
+                _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(query, {"target_id": str(target_id)})
                 row = cursor.fetchone()
                 cursor.execute(
@@ -330,15 +351,18 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
         target_type=APPROVAL_TARGET_TYPE,
         version_no=row[4],
         status=row[5],
+        version_major=row[6],
+        version_minor=row[7],
+        version_label=_format_source_doc_version_label(row[6], row[7]),
         status_label=SOURCE_DOC_STATUS_LABELS.get(row[5], row[5]),
         next_action=APPROVAL_NEXT_ACTIONS.get(row[5], "確認のみ"),
-        module_count=row[7],
-        enabled_module_count=row[8],
-        module_names=list(row[9] or []),
+        module_count=row[9],
+        enabled_module_count=row[10],
+        module_names=list(row[11] or []),
         description=row[3],
-        change_note=row[6],
-        created_by=row[10],
-        updated_at=_format_updated_at(row[11]),
+        change_note=row[8],
+        created_by=row[12],
+        updated_at=_format_updated_at(row[13]),
         allowed_transitions=_build_transition_data(row[5]),
         history=_build_history_items(history_rows),
     )
@@ -366,11 +390,14 @@ def update_status(
             with connection.cursor() as cursor:
                 _ensure_history_table(cursor)
                 _ensure_status_constraints(cursor)
+                _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(
                     """
                     SELECT
                         bv.blueprint_version_id,
-                        bv.status
+                        bv.status,
+                        bv.version_major,
+                        bv.version_minor
                     FROM proc.blueprint_versions bv
                     WHERE bv.blueprint_id = %(target_id)s
                     ORDER BY bv.version_no DESC
@@ -384,6 +411,8 @@ def update_status(
 
                 blueprint_version_id = int(current_row[0])
                 current_status = str(current_row[1])
+                current_version_major = int(current_row[2] or 0)
+                current_version_minor = int(current_row[3] or 0)
                 allowed_transitions = APPROVAL_ALLOWED_TRANSITIONS.get(current_status, [])
                 allowed_targets = {status_value for status_value, _ in allowed_transitions}
                 if to_status not in allowed_targets:
@@ -395,17 +424,30 @@ def update_status(
                 action_label = next(
                     label for status_value, label in allowed_transitions if status_value == to_status
                 )
+                next_version_major = current_version_major
+                next_version_minor = current_version_minor
+                if current_status == "draft" and to_status == "review_requested":
+                    next_version_minor = current_version_minor + 1
+                elif current_status == "returned" and to_status == "review_requested":
+                    next_version_minor = current_version_minor + 1
+                elif current_status == "review_requested" and to_status == "published":
+                    next_version_major = current_version_major + 1
+                    next_version_minor = 0
 
                 cursor.execute(
                     """
                     UPDATE proc.blueprint_versions
                     SET
                         status = %(to_status)s,
+                        version_major = %(version_major)s,
+                        version_minor = %(version_minor)s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE blueprint_version_id = %(blueprint_version_id)s;
                     """,
                     {
                         "to_status": to_status,
+                        "version_major": next_version_major,
+                        "version_minor": next_version_minor,
                         "blueprint_version_id": blueprint_version_id,
                     },
                 )

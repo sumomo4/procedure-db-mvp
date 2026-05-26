@@ -107,6 +107,9 @@ type ModuleListItemData = {
   description: string | null;
   module_version_id: number;
   version_no: number;
+  version_major: number;
+  version_minor: number;
+  version_label: string;
   status: ModuleApiStatus;
   status_label: string;
   row_count: number;
@@ -123,6 +126,9 @@ type ModuleListData = {
 type ModuleVersionListItemData = {
   module_version_id: number;
   version_no: number;
+  version_major: number;
+  version_minor: number;
+  version_label: string;
   status: ModuleApiStatus;
   status_label: string;
   row_count: number;
@@ -194,6 +200,9 @@ type ModuleDetailData = {
   description: string | null;
   module_version_id: number;
   version_no: number;
+  version_major: number;
+  version_minor: number;
+  version_label: string;
   status: ModuleApiStatus;
   status_label: string;
   row_count: number;
@@ -376,6 +385,9 @@ type SourceDocListItemData = {
   description: string | null;
   source_doc_version_id: number;
   version_no: number;
+  version_major: number;
+  version_minor: number;
+  version_label: string;
   status: SourceDocApiStatus;
   status_label: string;
   module_count: number;
@@ -410,6 +422,9 @@ type SourceDocDetailData = {
   description: string | null;
   source_doc_version_id: number;
   version_no: number;
+  version_major: number;
+  version_minor: number;
+  version_label: string;
   status: SourceDocApiStatus;
   status_label: string;
   change_note: string | null;
@@ -584,6 +599,9 @@ type ApprovalStatusListItemData = {
   target_name: string;
   target_type: "source-doc" | "module";
   version_no: number;
+  version_major?: number;
+  version_minor?: number;
+  version_label?: string;
   status: ModuleApiStatus;
   status_label: string;
   next_action: string;
@@ -621,6 +639,9 @@ type ApprovalStatusDetailData = {
   target_name: string;
   target_type: "source-doc" | "module";
   version_no: number;
+  version_major?: number;
+  version_minor?: number;
+  version_label?: string;
   status: ModuleApiStatus;
   status_label: string;
   next_action: string;
@@ -662,6 +683,10 @@ const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] =
   { value: "published", label: "承認済み" },
   { value: "archived", label: "保管済み" },
 ];
+
+function formatVersionLabel(item: { version_no: number; version_label?: string | null }): string {
+  return item.version_label ?? `ver.${item.version_no}.0`;
+}
 
 function canRunApprovalTransition(
   role: AuthRole | undefined,
@@ -1397,7 +1422,7 @@ function ModuleListPage() {
           rows={moduleListState.items.map((item) => [
             item.module_key,
             item.module_name,
-            `v${item.version_no}`,
+            formatVersionLabel(item),
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             String(item.row_count),
             item.first_work_text ?? "-",
@@ -1710,7 +1735,7 @@ function ModuleDetailPage() {
         body: JSON.stringify({
           status: toStatus,
           changed_by: normalizedActor,
-          note: normalizedComment || "画面操作",
+          note: normalizedComment || undefined,
         }),
       });
       const responseBody = await readApiResponse<ApprovalStatusDetailData>(response);
@@ -1762,10 +1787,17 @@ function ModuleDetailPage() {
       return;
     }
 
+    const fromVersionLabel = formatVersionLabel(
+      versionOptions.find((version) => version.version_no === diffFromVersionNo) ?? { version_no: diffFromVersionNo },
+    );
+    const toVersionLabel = formatVersionLabel(
+      versionOptions.find((version) => version.version_no === diffToVersionNo) ?? { version_no: diffToVersionNo },
+    );
+
     setModuleDiffState({
       status: "loading",
       item: null,
-      message: `v${diffFromVersionNo} と v${diffToVersionNo} の差分を取得しています。`,
+      message: `${fromVersionLabel} と ${toVersionLabel} の差分を取得しています。`,
     });
 
     try {
@@ -1787,7 +1819,7 @@ function ModuleDetailPage() {
       setModuleDiffState({
         status: "available",
         item: responseBody.data,
-        message: responseBody.message || `v${diffFromVersionNo} と v${diffToVersionNo} の差分を取得しました。`,
+        message: responseBody.message || `${fromVersionLabel} と ${toVersionLabel} の差分を取得しました。`,
       });
     } catch (error) {
       setModuleDiffState({
@@ -1876,7 +1908,7 @@ function ModuleDetailPage() {
             <div className="facts">
               <Fact label="モジュールID" value={item.module_key} />
               <Fact label="モジュール名" value={item.module_name} />
-              <Fact label="版" value={`v${item.version_no}`} />
+              <Fact label="版" value={formatVersionLabel(item)} />
               <Fact label="承認状態" value={item.status_label} />
               <Fact label="作成者" value={item.created_by ?? "-"} />
               <Fact label="更新日" value={item.updated_at} />
@@ -1968,7 +2000,7 @@ function ModuleVersionPanel({
               className={version.version_no === currentVersionNo ? "module-version-card active" : "module-version-card"}
               onClick={() => onSelectVersion(version.version_no)}
             >
-              <span>{`v${version.version_no}`}</span>
+              <span>{formatVersionLabel(version)}</span>
               <ModuleStatusPill status={version.status} label={version.status_label} />
               <small>{`${version.row_count} 行 / ${version.updated_at}`}</small>
             </button>
@@ -2015,7 +2047,7 @@ function ModuleApprovalPanel({
       {detail ? (
         <>
           <div className="module-approval-grid">
-            <Fact label="現在の版" value={`v${detail.version_no}`} />
+            <Fact label="現在の版" value={formatVersionLabel(detail)} />
             <Fact label="次の操作" value={detail.next_action} />
             <Fact label="実行ユーザー" value={currentUser ? `${currentUser.displayName} / ${getAuthRoleLabel(currentUser.role)}` : "未ログイン"} />
           </div>
@@ -2068,7 +2100,7 @@ function ModuleApprovalPanel({
                 history.changed_at,
                 `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
                 history.changed_by ?? "-",
-                history.note ?? "-",
+                history.note ?? "",
               ])}
             />
           ) : (
@@ -2103,6 +2135,9 @@ function ModuleDiffPanel({
 }) {
   const changedRows = state.item?.rows.filter((row) => row.status !== "unchanged") ?? [];
   const unchangedCount = state.item?.rows.filter((row) => row.status === "unchanged").length ?? 0;
+  const fromVersion = versionOptions.find((version) => version.version_no === fromVersionNo) ?? null;
+  const toVersion = versionOptions.find((version) => version.version_no === toVersionNo) ?? null;
+  const currentVersion = versionOptions.find((version) => version.version_no === currentVersionNo) ?? null;
   const canFetchDiff =
     fromVersionNo !== null
     && toVersionNo !== null
@@ -2135,7 +2170,7 @@ function ModuleDiffPanel({
             <option value="">未選択</option>
             {versionOptions.map((version) => (
               <option key={`from-${version.module_version_id}`} value={version.version_no}>
-                {`v${version.version_no} / ${version.status_label}`}
+                {`${formatVersionLabel(version)} / ${version.status_label}`}
               </option>
             ))}
           </select>
@@ -2149,16 +2184,16 @@ function ModuleDiffPanel({
             <option value="">未選択</option>
             {versionOptions.map((version) => (
               <option key={`to-${version.module_version_id}`} value={version.version_no}>
-                {`v${version.version_no} / ${version.status_label}`}
+                {`${formatVersionLabel(version)} / ${version.status_label}`}
               </option>
             ))}
           </select>
         </label>
       </div>
       <div className="module-diff-meta">
-        <Fact label="比較元" value={fromVersionNo === null ? "-" : `v${fromVersionNo}`} />
-        <Fact label="比較先" value={toVersionNo === null ? "-" : `v${toVersionNo}`} />
-        <Fact label="表示中の版" value={`v${currentVersionNo}`} />
+        <Fact label="比較元" value={fromVersion === null ? "-" : formatVersionLabel(fromVersion)} />
+        <Fact label="比較先" value={toVersion === null ? "-" : formatVersionLabel(toVersion)} />
+        <Fact label="表示中の版" value={currentVersion === null ? `ver.${currentVersionNo}.0` : formatVersionLabel(currentVersion)} />
       </div>
       {state.item ? (
         <>
@@ -2177,7 +2212,7 @@ function ModuleDiffPanel({
           ) : (
             <div className="module-diff-empty">
               <strong>差分はありません</strong>
-              <span>{`v${state.item.from_version} と v${state.item.to_version} の手順行は一致しています。`}</span>
+              <span>{`${fromVersion === null ? `ver.${state.item.from_version}.0` : formatVersionLabel(fromVersion)} と ${toVersion === null ? `ver.${state.item.to_version}.0` : formatVersionLabel(toVersion)} の手順行は一致しています。`}</span>
             </div>
           )}
           {unchangedCount > 0 ? (
@@ -2942,12 +2977,12 @@ function ModuleRegisterPage() {
           <span>新しい版をExcelから作成</span>
           <strong>{versionSourceModuleKey}</strong>
           <p>
-            {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: v${versionNextVersion ?? "次版"} draft。`}
+            {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: 次のdraft版。`}
           </p>
           <div className="register-result-meta">
             <span>{`module_id: ${versionSourceModuleId ?? "-"}`}</span>
             <span>{`module_key: ${versionSourceModuleKey}`}</span>
-            <span>{`next: v${versionNextVersion ?? "-"}`}</span>
+            <span>{`internal version_no: ${versionNextVersion ?? "-"}`}</span>
           </div>
         </section>
       ) : null}
@@ -3240,7 +3275,7 @@ function ModuleRegisterPage() {
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.module_key}</span>
-              <span>{`版 v${createdItem.version_no}`}</span>
+              <span>{`版 ${formatVersionLabel(createdItem)}`}</span>
               <span>{createdItem.status_label}</span>
               <span>{`装置 ${createdItem.device_headers.length} 台`}</span>
             </div>
@@ -3785,12 +3820,12 @@ function ModuleRegisterPageV2() {
             <span>新しい版をExcelから作成</span>
             <strong>{versionSourceModuleKey}</strong>
             <p>
-              {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: v${versionNextVersion ?? "次版"} draft。`}
+              {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: 次のdraft版。`}
             </p>
             <div className="register-result-meta">
               <span>{`module_id: ${versionSourceModuleId ?? "-"}`}</span>
               <span>{`module_key: ${versionSourceModuleKey}`}</span>
-              <span>{`next: v${versionNextVersion ?? "-"}`}</span>
+              <span>{`internal version_no: ${versionNextVersion ?? "-"}`}</span>
             </div>
           </section>
         ) : null}
@@ -4154,7 +4189,7 @@ function ModuleRegisterPageV2() {
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.module_key}</span>
-              <span>{`版 v${createdItem.version_no}`}</span>
+              <span>{`版 ${formatVersionLabel(createdItem)}`}</span>
               <span>{createdItem.status_label}</span>
               <span>{`装置 ${createdItem.device_headers.length} 台`}</span>
             </div>
@@ -4400,7 +4435,7 @@ function DocumentSearchPage() {
           rows={sourceDocListState.items.map((item) => [
             item.source_doc_key,
             item.source_doc_name,
-            `v${item.version_no}`,
+            formatVersionLabel(item),
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             item.module_names.join(", ") || "-",
             `${item.enabled_module_count}/${item.module_count}`,
@@ -4708,7 +4743,7 @@ function LegacyDocumentEditPage() {
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.source_doc_key}</span>
-              <span>{`版 v${createdItem.version_no}`}</span>
+              <span>{`版 ${formatVersionLabel(createdItem)}`}</span>
               <span>{createdItem.status_label}</span>
             </div>
           ) : null}
@@ -4981,7 +5016,7 @@ function DocumentEditPage() {
       if (isEditMode) {
         setFormLoadState({
           status: "ready",
-          message: `${responseBody.data.source_doc_key} を更新しました。現在は版 v${responseBody.data.version_no} です。`,
+          message: `${responseBody.data.source_doc_key} を更新しました。現在は版 ${formatVersionLabel(responseBody.data)} です。`,
         });
       }
     } catch (error) {
@@ -5149,7 +5184,7 @@ function DocumentEditPage() {
           {createdItem ? (
             <div className="register-result-meta">
               <span>{createdItem.source_doc_key}</span>
-              <span>{`版 v${createdItem.version_no}`}</span>
+              <span>{`版 ${formatVersionLabel(createdItem)}`}</span>
               <span>{createdItem.status_label}</span>
             </div>
           ) : null}
@@ -5309,7 +5344,7 @@ function DocumentDetailPage() {
             <div className="facts">
               <Fact label="原本ID" value={item.source_doc_key} />
               <Fact label="原本名" value={item.source_doc_name} />
-              <Fact label="版" value={`v${item.version_no}`} />
+              <Fact label="版" value={formatVersionLabel(item)} />
               <Fact label="状態" value={item.status_label} />
               <Fact label="作成者" value={item.created_by ?? "-"} />
               <Fact label="更新日" value={item.updated_at} />
@@ -5368,7 +5403,7 @@ function ExcelSourceDocPreview({
         <div className="excel-cell excel-small-heading">状態</div>
         <div className="excel-cell excel-small-heading">有効</div>
         <div className="excel-cell excel-device-cell">関連モジュール</div>
-        <div className="excel-cell excel-sequence-cell">{`v${item.version_no}`}</div>
+        <div className="excel-cell excel-sequence-cell">{formatVersionLabel(item)}</div>
         <div className="excel-cell excel-target-value">{item.status_label}</div>
         <div className="excel-cell excel-target-value">{`${item.enabled_module_count}/${item.module_count}`}</div>
         <div className="excel-cell excel-device-value">{moduleNames.join(", ") || "-"}</div>
@@ -5457,6 +5492,9 @@ function convertImportPreviewToModuleDetail(item: ModuleImportPreviewData): Modu
     description: item.description,
     module_version_id: 0,
     version_no: 1,
+    version_major: 0,
+    version_minor: 0,
+    version_label: "ver.0.0",
     status: "draft",
     status_label: "プレビュー",
     row_count: item.rows.length,
@@ -6791,7 +6829,7 @@ function ApprovalPage() {
         body: JSON.stringify({
           status: toStatus,
           changed_by: normalizedActor,
-          note: normalizedComment || "画面操作",
+          note: normalizedComment || undefined,
         }),
       });
       const responseBody = (await response.json()) as ApiResponse<ApprovalStatusDetailData>;
@@ -6887,7 +6925,7 @@ function ApprovalPage() {
           columns={["対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "選択"]}
           rows={filteredApprovalItems.map((item) => [
             `${item.target_key} ${item.target_name}`,
-            `v${item.version_no}`,
+            formatVersionLabel(item),
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             item.next_action,
             `${item.enabled_module_count}/${item.module_count}`,
@@ -6953,7 +6991,7 @@ function ApprovalPage() {
             <div className="facts">
               <Fact label="対象ID" value={selectedItem.target_key} />
               <Fact label="対象名" value={selectedItem.target_name} />
-              <Fact label="版" value={`v${selectedItem.version_no}`} />
+              <Fact label="版" value={formatVersionLabel(selectedItem)} />
               <Fact label="現在状態" value={selectedItem.status_label} />
               <Fact label="作成者" value={selectedItem.created_by ?? "-"} />
               <Fact label="更新日" value={selectedItem.updated_at} />
@@ -7059,7 +7097,7 @@ function ApprovalPage() {
                   history.action_label,
                   `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
                   history.changed_by ?? "-",
-                  history.note ?? "-",
+                  history.note ?? "",
                 ])}
               />
             ) : (

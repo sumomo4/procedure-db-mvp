@@ -108,6 +108,9 @@ class ModuleListItemData(BaseModel):
     description: str | None
     module_version_id: int
     version_no: int
+    version_major: int = 0
+    version_minor: int = 0
+    version_label: str = "ver.0.0"
     status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     row_count: int
@@ -132,6 +135,9 @@ class ModuleVersionListItemData(BaseModel):
 
     module_version_id: int
     version_no: int
+    version_major: int = 0
+    version_minor: int = 0
+    version_label: str = "ver.0.0"
     status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     row_count: int
@@ -372,6 +378,9 @@ class ModuleDetailData(BaseModel):
     description: str | None
     module_version_id: int
     version_no: int
+    version_major: int = 0
+    version_minor: int = 0
+    version_label: str = "ver.0.0"
     status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     row_count: int
@@ -444,6 +453,9 @@ class SourceDocListItemData(BaseModel):
     description: str | None
     source_doc_version_id: int
     version_no: int
+    version_major: int = 0
+    version_minor: int = 0
+    version_label: str = "ver.0.0"
     status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     module_count: int
@@ -514,6 +526,9 @@ class SourceDocDetailData(BaseModel):
     description: str | None
     source_doc_version_id: int
     version_no: int
+    version_major: int = 0
+    version_minor: int = 0
+    version_label: str = "ver.0.0"
     status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     change_note: str | None
@@ -555,6 +570,9 @@ class ApprovalStatusListItemData(BaseModel):
     target_name: str
     target_type: Literal["source-doc", "module"]
     version_no: int
+    version_major: int = 0
+    version_minor: int = 0
+    version_label: str = "ver.0.0"
     status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     next_action: str
@@ -578,6 +596,9 @@ class ApprovalStatusDetailData(BaseModel):
     target_name: str
     target_type: Literal["source-doc", "module"]
     version_no: int
+    version_major: int = 0
+    version_minor: int = 0
+    version_label: str = "ver.0.0"
     status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     next_action: str

@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
     module_version_id bigserial PRIMARY KEY,
     module_id bigint NOT NULL REFERENCES proc.modules (module_id),
     version_no integer NOT NULL CHECK (version_no > 0),
+    version_major integer NOT NULL DEFAULT 0 CHECK (version_major >= 0),
+    version_minor integer NOT NULL DEFAULT 0 CHECK (version_minor >= 0),
     status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
     change_note text,
     source_xlsx_path text,
@@ -36,6 +38,12 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
 
 CREATE INDEX IF NOT EXISTS idx_module_versions_status
     ON proc.module_versions (status);
+
+ALTER TABLE proc.module_versions
+    ADD COLUMN IF NOT EXISTS version_major integer NOT NULL DEFAULT 0;
+
+ALTER TABLE proc.module_versions
+    ADD COLUMN IF NOT EXISTS version_minor integer NOT NULL DEFAULT 0;
 
 ALTER TABLE proc.module_versions
     ADD COLUMN IF NOT EXISTS header_time_text text;
@@ -118,6 +126,8 @@ CREATE TABLE IF NOT EXISTS proc.blueprint_versions (
     blueprint_version_id bigserial PRIMARY KEY,
     blueprint_id bigint NOT NULL REFERENCES proc.blueprints (blueprint_id),
     version_no integer NOT NULL CHECK (version_no > 0),
+    version_major integer NOT NULL DEFAULT 0 CHECK (version_major >= 0),
+    version_minor integer NOT NULL DEFAULT 0 CHECK (version_minor >= 0),
     status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
     change_note text,
     created_by text,
@@ -128,6 +138,12 @@ CREATE TABLE IF NOT EXISTS proc.blueprint_versions (
 
 CREATE INDEX IF NOT EXISTS idx_blueprint_versions_status
     ON proc.blueprint_versions (status);
+
+ALTER TABLE proc.blueprint_versions
+    ADD COLUMN IF NOT EXISTS version_major integer NOT NULL DEFAULT 0;
+
+ALTER TABLE proc.blueprint_versions
+    ADD COLUMN IF NOT EXISTS version_minor integer NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS proc.approval_status_histories (
     approval_status_history_id bigserial PRIMARY KEY,

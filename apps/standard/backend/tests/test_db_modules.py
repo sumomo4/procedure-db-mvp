@@ -9,7 +9,14 @@ import pytest
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import ModuleCreateRequest, ModuleCreateRowImageInput, ModuleCreateRowInput, ModuleDetailData, ModuleRowData
-from app.db.modules import build_module_diff_data, create_module, get_module_detail, list_module_versions, list_modules
+from app.db.modules import (
+    build_module_diff_data,
+    create_module,
+    get_module_detail,
+    list_module_versions,
+    list_modules,
+    update_module_version_status,
+)
 
 
 class FakeCursor:
@@ -668,6 +675,7 @@ def test_create_module_creates_new_version_for_existing_module_key(monkeypatch: 
             fetchone_results=[
                 (4,),
                 None,
+                (1, 0),
                 (2,),
                 (41,),
                 (402,),
@@ -745,6 +753,58 @@ def test_create_module_rejects_existing_module_key_when_draft_exists(monkeypatch
 
     with pytest.raises(ValueError, match="draft module version already exists"):
         create_module(AppSettings(), payload)
+
+
+def test_update_module_version_status_publishes_as_next_major_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Publishing a requested module version should increment major and reset minor."""
+
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            rows=[],
+            fetchone_results=[
+                (11, "review_requested", 0, 2),
+                (
+                    1,
+                    "MOD-001",
+                    "初期点検手順",
+                    "説明",
+                    11,
+                    1,
+                    1,
+                    0,
+                    "published",
+                    "change",
+                    "seed",
+                    datetime(2026, 5, 26, tzinfo=timezone.utc),
+                    3,
+                ),
+            ],
+        ),
+    )
+
+    result = update_module_version_status(
+        AppSettings(),
+        module_id=1,
+        version_no=1,
+        to_status="published",
+        changed_by="approver",
+        note=None,
+    )
+
+    assert result is not None
+    assert result.version_major == 1
+    assert result.version_minor == 0
+    assert result.version_label == "ver.1.0"
+    update_parameters = [
+        parameters
+        for query, parameters in fake_cursor.executions
+        if "UPDATE proc.module_versions" in query and "module_version_id" in parameters
+    ][-1]
+    assert update_parameters["version_major"] == 1
+    assert update_parameters["version_minor"] == 0
 
 
 def test_create_module_rejects_duplicate_row_order() -> None:

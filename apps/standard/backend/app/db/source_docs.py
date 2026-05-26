@@ -28,6 +28,87 @@ SOURCE_DOC_STATUS_LABELS = {
 VALID_SOURCE_DOC_STATUSES = frozenset(SOURCE_DOC_STATUS_LABELS)
 
 
+def _format_source_doc_version_label(version_major: int | None, version_minor: int | None) -> str:
+    """Format a user-facing source document version label."""
+
+    major = max(int(version_major or 0), 0)
+    minor = max(int(version_minor or 0), 0)
+    return f"ver.{major}.{minor}"
+
+
+def _derive_source_doc_version_tuple(
+    version_no: int | None,
+    status: str | None,
+    version_major: Any = None,
+    version_minor: Any = None,
+) -> tuple[int, int]:
+    """Derive display version values for old rows that predate version columns."""
+
+    try:
+        if version_major is not None and version_minor is not None:
+            return (max(int(version_major), 0), max(int(version_minor), 0))
+    except (TypeError, ValueError):
+        pass
+
+    sequence_no = int(version_no or 1)
+    if status in ("published", "archived"):
+        return (sequence_no, 0)
+    if status in ("review_requested", "returned"):
+        return (max(sequence_no - 1, 0), 1)
+    return (max(sequence_no - 1, 0), 0)
+
+
+def _ensure_source_doc_version_number_columns(cursor: Any) -> None:
+    """Ensure user-facing ver.X.Y columns exist on existing DB volumes."""
+
+    cursor.execute(
+        """
+        ALTER TABLE proc.blueprint_versions
+            ADD COLUMN IF NOT EXISTS version_major integer NOT NULL DEFAULT 0;
+        ALTER TABLE proc.blueprint_versions
+            ADD COLUMN IF NOT EXISTS version_minor integer NOT NULL DEFAULT 0;
+        """,
+        {},
+    )
+    cursor.execute(
+        """
+        UPDATE proc.blueprint_versions
+        SET
+            version_major = CASE
+                WHEN status IN ('published', 'archived') THEN version_no
+                ELSE GREATEST(version_no - 1, 0)
+            END,
+            version_minor = CASE
+                WHEN status IN ('review_requested', 'returned') THEN 1
+                ELSE 0
+            END
+        WHERE version_major = 0
+          AND version_minor = 0
+          AND version_no > 0;
+        """,
+        {},
+    )
+
+
+def _latest_source_doc_display_version(cursor: Any, source_doc_id: int) -> tuple[int, int]:
+    """Read the latest display version tuple for a source document."""
+
+    cursor.execute(
+        """
+        SELECT version_major, version_minor
+        FROM proc.blueprint_versions
+        WHERE blueprint_id = %(source_doc_id)s
+        ORDER BY version_no DESC
+        LIMIT 1;
+        """,
+        {"source_doc_id": source_doc_id},
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return (0, 0)
+    return (max(int(row[0] or 0), 0), max(int(row[1] or 0), 0))
+
+
 def _format_updated_at(value: Any) -> str:
     """Format DB timestamp/date values for API responses."""
 
@@ -88,6 +169,8 @@ def _build_source_doc_list_query(
             b.description,
             bv.blueprint_version_id,
             bv.version_no,
+            bv.version_major,
+            bv.version_minor,
             bv.status,
             COUNT(bi.blueprint_item_id)::int AS module_count,
             COUNT(*) FILTER (WHERE COALESCE(bi.enabled, false))::int AS enabled_module_count,
@@ -115,6 +198,8 @@ def _build_source_doc_list_query(
             b.description,
             bv.blueprint_version_id,
             bv.version_no,
+            bv.version_major,
+            bv.version_minor,
             bv.status,
             bv.created_by,
             bv.updated_at
@@ -129,10 +214,12 @@ def _build_source_doc_detail_query() -> str:
     return """
         WITH selected_version AS (
             SELECT
-                bv.blueprint_version_id,
-                bv.blueprint_id,
-                bv.version_no,
-                bv.status,
+            bv.blueprint_version_id,
+            bv.blueprint_id,
+            bv.version_no,
+            bv.version_major,
+            bv.version_minor,
+            bv.status,
                 bv.change_note,
                 bv.created_by,
                 bv.created_at,
@@ -149,6 +236,8 @@ def _build_source_doc_detail_query() -> str:
             b.description,
             sv.blueprint_version_id,
             sv.version_no,
+            sv.version_major,
+            sv.version_minor,
             sv.status,
             sv.change_note,
             sv.created_by,
@@ -240,6 +329,7 @@ def _fetch_source_doc_detail_rows(
     """Fetch raw rows used to build a source document detail payload."""
 
     with connection.cursor() as cursor:
+        _ensure_source_doc_version_number_columns(cursor)
         cursor.execute(_build_source_doc_detail_query(), {"source_doc_id": str(source_doc_id)})
         rows = cursor.fetchall()
         cursor.execute(_build_source_doc_module_rows_query(), {"source_doc_id": str(source_doc_id)})
@@ -258,6 +348,8 @@ def _map_source_doc_detail_rows(
 
     first_row = rows[0]
     rows_by_blueprint_item_id: dict[int, list[ModuleRowData]] = {}
+    has_version_columns = len(first_row) >= 22
+    item_base_index = 13 if has_version_columns else 11
 
     for row in module_row_rows:
         blueprint_item_id = row[0]
@@ -284,23 +376,35 @@ def _map_source_doc_detail_rows(
 
     items = [
         SourceDocModuleItemData(
-            blueprint_item_id=row[11],
-            item_order=row[12],
-            enabled=row[13],
-            module_id=row[14],
-            module_key=row[15],
-            module_name=row[16],
-            module_version_id=row[17],
-            module_version_no=row[18],
-            module_status=row[19],
-            module_status_label=MODULE_STATUS_LABELS.get(row[19], row[19]),
-            rows=rows_by_blueprint_item_id.get(row[11], []),
+            blueprint_item_id=row[item_base_index],
+            item_order=row[item_base_index + 1],
+            enabled=row[item_base_index + 2],
+            module_id=row[item_base_index + 3],
+            module_key=row[item_base_index + 4],
+            module_name=row[item_base_index + 5],
+            module_version_id=row[item_base_index + 6],
+            module_version_no=row[item_base_index + 7],
+            module_status=row[item_base_index + 8],
+            module_status_label=MODULE_STATUS_LABELS.get(row[item_base_index + 8], row[item_base_index + 8]),
+            rows=rows_by_blueprint_item_id.get(row[item_base_index], []),
         )
         for row in rows
-        if row[11] is not None
+        if row[item_base_index] is not None
     ]
 
     enabled_module_count = sum(1 for item in items if item.enabled)
+
+    version_major, version_minor = _derive_source_doc_version_tuple(
+        first_row[5],
+        first_row[8] if has_version_columns else first_row[6],
+        first_row[6] if has_version_columns else None,
+        first_row[7] if has_version_columns else None,
+    )
+    status_index = 8 if has_version_columns else 6
+    change_note_index = 9 if has_version_columns else 7
+    created_by_index = 10 if has_version_columns else 8
+    created_at_index = 11 if has_version_columns else 9
+    updated_at_index = 12 if has_version_columns else 10
 
     return SourceDocDetailData(
         source_doc_id=first_row[0],
@@ -309,14 +413,17 @@ def _map_source_doc_detail_rows(
         description=first_row[3],
         source_doc_version_id=first_row[4],
         version_no=first_row[5],
-        status=first_row[6],
-        status_label=SOURCE_DOC_STATUS_LABELS.get(first_row[6], first_row[6]),
-        change_note=first_row[7],
+        version_major=version_major,
+        version_minor=version_minor,
+        version_label=_format_source_doc_version_label(version_major, version_minor),
+        status=first_row[status_index],
+        status_label=SOURCE_DOC_STATUS_LABELS.get(first_row[status_index], first_row[status_index]),
+        change_note=first_row[change_note_index],
         module_count=len(items),
         enabled_module_count=enabled_module_count,
-        created_by=first_row[8],
-        created_at=_format_updated_at(first_row[9]),
-        updated_at=_format_updated_at(first_row[10]),
+        created_by=first_row[created_by_index],
+        created_at=_format_updated_at(first_row[created_at_index]),
+        updated_at=_format_updated_at(first_row[updated_at_index]),
         items=items,
     )
 
@@ -447,29 +554,47 @@ def list_source_docs(
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(query, parameters)
                 rows = cursor.fetchall()
     except Exception as exception:
         raise DatabaseConnectionError("Source document list query failed.") from exception
 
-    items = [
-        SourceDocListItemData(
-            source_doc_id=row[0],
-            source_doc_key=row[1],
-            source_doc_name=row[2],
-            description=row[3],
-            source_doc_version_id=row[4],
-            version_no=row[5],
-            status=row[6],
-            status_label=SOURCE_DOC_STATUS_LABELS.get(row[6], row[6]),
-            module_count=row[7],
-            enabled_module_count=row[8],
-            module_names=list(row[9] or []),
-            created_by=row[10],
-            updated_at=_format_updated_at(row[11]),
+    items = []
+    for row in rows:
+        has_version_columns = len(row) >= 14
+        status_index = 8 if has_version_columns else 6
+        module_count_index = 9 if has_version_columns else 7
+        enabled_count_index = 10 if has_version_columns else 8
+        module_names_index = 11 if has_version_columns else 9
+        created_by_index = 12 if has_version_columns else 10
+        updated_at_index = 13 if has_version_columns else 11
+        version_major, version_minor = _derive_source_doc_version_tuple(
+            row[5],
+            row[status_index],
+            row[6] if has_version_columns else None,
+            row[7] if has_version_columns else None,
         )
-        for row in rows
-    ]
+        items.append(
+            SourceDocListItemData(
+                source_doc_id=row[0],
+                source_doc_key=row[1],
+                source_doc_name=row[2],
+                description=row[3],
+                source_doc_version_id=row[4],
+                version_no=row[5],
+                version_major=version_major,
+                version_minor=version_minor,
+                version_label=_format_source_doc_version_label(version_major, version_minor),
+                status=row[status_index],
+                status_label=SOURCE_DOC_STATUS_LABELS.get(row[status_index], row[status_index]),
+                module_count=row[module_count_index],
+                enabled_module_count=row[enabled_count_index],
+                module_names=list(row[module_names_index] or []),
+                created_by=row[created_by_index],
+                updated_at=_format_updated_at(row[updated_at_index]),
+            )
+        )
 
     return SourceDocListData(items=items)
 
@@ -518,6 +643,7 @@ def create_source_doc(
             source_doc_id: int | None = None
 
             with connection.cursor() as cursor:
+                _ensure_source_doc_version_number_columns(cursor)
                 normalized_source_doc_key = _normalize_source_doc_key(payload.source_doc_key)
                 if normalized_source_doc_key is None:
                     normalized_source_doc_key = _generate_next_source_doc_key(cursor)
@@ -551,6 +677,8 @@ def create_source_doc(
                     INSERT INTO proc.blueprint_versions (
                         blueprint_id,
                         version_no,
+                        version_major,
+                        version_minor,
                         status,
                         change_note,
                         created_by
@@ -558,6 +686,8 @@ def create_source_doc(
                     VALUES (
                         %(source_doc_id)s,
                         1,
+                        0,
+                        0,
                         'draft',
                         %(change_note)s,
                         %(created_by)s
@@ -615,6 +745,7 @@ def update_source_doc(
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(
                     """
                     SELECT blueprint_key
@@ -673,12 +804,15 @@ def update_source_doc(
                 )
                 next_version_row = cursor.fetchone()
                 next_version_no = int(next_version_row[0]) if next_version_row and next_version_row[0] is not None else 1
+                next_version_major, next_version_minor = _latest_source_doc_display_version(cursor, source_doc_id)
 
                 cursor.execute(
                     """
                     INSERT INTO proc.blueprint_versions (
                         blueprint_id,
                         version_no,
+                        version_major,
+                        version_minor,
                         status,
                         change_note,
                         created_by
@@ -686,6 +820,8 @@ def update_source_doc(
                     VALUES (
                         %(source_doc_id)s,
                         %(version_no)s,
+                        %(version_major)s,
+                        %(version_minor)s,
                         'draft',
                         %(change_note)s,
                         %(created_by)s
@@ -695,6 +831,8 @@ def update_source_doc(
                     {
                         "source_doc_id": source_doc_id,
                         "version_no": next_version_no,
+                        "version_major": next_version_major,
+                        "version_minor": next_version_minor,
                         "change_note": payload.change_note,
                         "created_by": payload.created_by,
                     },

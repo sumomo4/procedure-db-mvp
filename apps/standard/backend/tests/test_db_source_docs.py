@@ -186,7 +186,7 @@ def test_get_source_doc_detail_returns_detail(monkeypatch: pytest.MonkeyPatch) -
 
     result = get_source_doc_detail(AppSettings(), source_doc_id=1)
 
-    assert fake_cursor.executions[0][1] == {"source_doc_id": "1"}
+    assert any(parameters == {"source_doc_id": "1"} for _, parameters in fake_cursor.executions)
     assert result is not None
     assert result.source_doc_id == 1
     assert result.source_doc_key == "BP-STD-001"
@@ -442,6 +442,7 @@ def test_update_source_doc_returns_updated_detail(monkeypatch: pytest.MonkeyPatc
             fetchone_results=[
                 ("BP-STD-001",),
                 (2,),
+                (0, 0),
                 (31,),
                 (11,),
                 (310,),

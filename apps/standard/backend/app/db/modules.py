@@ -1,4 +1,4 @@
-"""Database access helpers for module resources."""
+﻿"""Database access helpers for module resources."""
 
 from collections.abc import Sequence
 from datetime import date, datetime
@@ -55,6 +55,34 @@ MODULE_APPROVAL_ALLOWED_TRANSITIONS = {
     "archived": [],
 }
 MODULE_STATUS_CHECK_VALUES = "'draft', 'review_requested', 'returned', 'published', 'archived'"
+
+
+def _format_module_version_label(version_major: int | None, version_minor: int | None) -> str:
+    """Return the user-facing module version label."""
+
+    major = max(int(version_major or 0), 0)
+    minor = max(int(version_minor or 0), 0)
+    return f"ver.{major}.{minor}"
+
+
+def _derive_module_version_tuple(
+    version_no: int | None,
+    status: str | None,
+    version_major: Any = None,
+    version_minor: Any = None,
+) -> tuple[int, int]:
+    """Return a safe ver.X.Y tuple from DB rows or legacy test rows."""
+
+    try:
+        if version_major is not None and version_minor is not None:
+            return (max(int(version_major), 0), max(int(version_minor), 0))
+    except (TypeError, ValueError):
+        pass
+
+    sequence_no = int(version_no or 1)
+    if status in ("published", "archived"):
+        return (sequence_no, 0)
+    return (max(sequence_no - 1, 0), 0)
 
 
 def _format_updated_at(value: Any) -> str:
@@ -139,6 +167,35 @@ def _ensure_module_status_constraints(cursor: Any) -> None:
     )
 
 
+def _ensure_module_version_number_columns(cursor: Any) -> None:
+    """Ensure user-facing ver.X.Y columns exist on existing DB volumes."""
+
+    cursor.execute(
+        """
+        ALTER TABLE proc.module_versions
+            ADD COLUMN IF NOT EXISTS version_major integer NOT NULL DEFAULT 0;
+        ALTER TABLE proc.module_versions
+            ADD COLUMN IF NOT EXISTS version_minor integer NOT NULL DEFAULT 0;
+        """,
+        {},
+    )
+    cursor.execute(
+        """
+        UPDATE proc.module_versions
+        SET
+            version_major = CASE
+                WHEN status IN ('published', 'archived') THEN version_no
+                ELSE GREATEST(version_no - 1, 0)
+            END,
+            version_minor = 0
+        WHERE version_major = 0
+          AND version_minor = 0
+          AND version_no > 0;
+        """,
+        {},
+    )
+
+
 def _build_module_transition_data(status_value: str) -> list[ApprovalTransitionData]:
     """Build allowed transitions for a module version status."""
 
@@ -214,6 +271,8 @@ def _build_module_list_query(
             m.description,
             mv.module_version_id,
             mv.version_no,
+            mv.version_major,
+            mv.version_minor,
             mv.status,
             COUNT(r.module_row_id)::int AS row_count,
             COALESCE(
@@ -244,6 +303,8 @@ def _build_module_list_query(
             m.description,
             mv.module_version_id,
             mv.version_no,
+            mv.version_major,
+            mv.version_minor,
             mv.status,
             mv.source_xlsx_path,
             mv.created_by,
@@ -265,6 +326,8 @@ def _build_module_detail_query(version_no: int | None = None) -> str:
                 mv.module_version_id,
                 mv.module_id,
                 mv.version_no,
+                mv.version_major,
+                mv.version_minor,
                 mv.status,
                 mv.source_xlsx_path,
                 mv.created_by,
@@ -288,6 +351,8 @@ def _build_module_detail_query(version_no: int | None = None) -> str:
             m.description,
             sv.module_version_id,
             sv.version_no,
+            sv.version_major,
+            sv.version_minor,
             sv.status,
             sv.source_xlsx_path,
             sv.created_by,
@@ -350,6 +415,7 @@ def _fetch_module_detail_rows(connection: Any, module_id: int, version_no: int |
         parameters["version_no"] = str(version_no)
 
     with connection.cursor() as cursor:
+        _ensure_module_version_number_columns(cursor)
         cursor.execute(_build_module_detail_query(version_no), parameters)
         return cursor.fetchall()
 
@@ -533,17 +599,25 @@ def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData
         return row[index]
 
     first_row = rows[0]
+    has_version_columns = len(first_row) >= 34
     uses_json_columns = len(first_row) >= 31
-    device_headers_index = 13 if uses_json_columns else -1
-    created_at_index = 14 if uses_json_columns else 13
-    updated_at_index = 15 if uses_json_columns else 14
-    row_base_index = 16 if uses_json_columns else 15
+    status_index = 8 if has_version_columns else 6
+    source_xlsx_index = 9 if has_version_columns else 7
+    created_by_index = 10 if has_version_columns else 8
+    header_time_index = 11 if has_version_columns else 9
+    target_index = 12 if has_version_columns else 10
+    common_p_index = 13 if has_version_columns else 11
+    target_device_index = 14 if has_version_columns else 12
+    device_headers_index = 15 if has_version_columns else 13 if uses_json_columns else -1
+    created_at_index = 16 if has_version_columns else 14 if uses_json_columns else 13
+    updated_at_index = 17 if has_version_columns else 15 if uses_json_columns else 14
+    row_base_index = 18 if has_version_columns else 16 if uses_json_columns else 15
     device_headers = _map_device_headers(
         field(first_row, device_headers_index),
-        field(first_row, 9),
-        field(first_row, 10),
-        field(first_row, 11),
-        field(first_row, 12),
+        field(first_row, header_time_index),
+        field(first_row, target_index),
+        field(first_row, common_p_index),
+        field(first_row, target_device_index),
     )
     module_rows = [
         ModuleRowData(
@@ -582,15 +656,21 @@ def _map_module_detail_rows(rows: Sequence[tuple[Any, ...]]) -> ModuleDetailData
         description=field(first_row, 3),
         module_version_id=field(first_row, 4),
         version_no=field(first_row, 5),
-        status=field(first_row, 6),
-        status_label=MODULE_STATUS_LABELS.get(field(first_row, 6), field(first_row, 6)),
+        version_major=field(first_row, 6, 0) if has_version_columns else 0,
+        version_minor=field(first_row, 7, 0) if has_version_columns else 0,
+        version_label=_format_module_version_label(
+            field(first_row, 6, 0) if has_version_columns else 0,
+            field(first_row, 7, 0) if has_version_columns else 0,
+        ),
+        status=field(first_row, status_index),
+        status_label=MODULE_STATUS_LABELS.get(field(first_row, status_index), field(first_row, status_index)),
         row_count=len(module_rows),
-        source_xlsx_path=field(first_row, 7),
-        created_by=field(first_row, 8),
-        header_time_text=field(first_row, 9),
-        target_text=field(first_row, 10),
-        common_p_text=field(first_row, 11),
-        target_device_text=field(first_row, 12),
+        source_xlsx_path=field(first_row, source_xlsx_index),
+        created_by=field(first_row, created_by_index),
+        header_time_text=field(first_row, header_time_index),
+        target_text=field(first_row, target_index),
+        common_p_text=field(first_row, common_p_index),
+        target_device_text=field(first_row, target_device_index),
         device_headers=device_headers,
         created_at=_format_updated_at(field(first_row, created_at_index)),
         updated_at=_format_updated_at(field(first_row, updated_at_index)),
@@ -941,6 +1021,27 @@ def _next_module_version_no(cursor: Any, module_id: int) -> int:
     return int(row[0]) if row and row[0] is not None else 1
 
 
+def _latest_module_display_version(cursor: Any, module_id: int) -> tuple[int, int]:
+    """Return the latest user-facing module version tuple."""
+
+    cursor.execute(
+        """
+        SELECT version_major, version_minor
+        FROM proc.module_versions
+        WHERE module_id = %(module_id)s
+        ORDER BY version_no DESC
+        LIMIT 1;
+        """,
+        {"module_id": module_id},
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return (0, 0)
+    if len(row) < 2:
+        return (int(row[0] or 0), 0)
+    return (int(row[0] or 0), int(row[1] or 0))
+
+
 def _has_draft_module_version(cursor: Any, module_id: int) -> bool:
     """Return whether the module already has an editable/requested in-flight version."""
 
@@ -977,29 +1078,42 @@ def list_modules(
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_module_version_number_columns(cursor)
                 cursor.execute(query, parameters)
                 rows = cursor.fetchall()
     except Exception as exception:
         raise DatabaseConnectionError("Module list query failed.") from exception
 
-    items = [
-        ModuleListItemData(
-            module_id=row[0],
-            module_key=row[1],
-            module_name=row[2],
-            description=row[3],
-            module_version_id=row[4],
-            version_no=row[5],
-            status=row[6],
-            status_label=MODULE_STATUS_LABELS.get(row[6], row[6]),
-            row_count=row[7],
-            first_work_text=row[8] or None,
-            source_xlsx_path=row[9],
-            created_by=row[10],
-            updated_at=_format_updated_at(row[11]),
+    items: list[ModuleListItemData] = []
+    for row in rows:
+        has_version_columns = len(row) >= 14
+        status_index = 8 if has_version_columns else 6
+        version_major, version_minor = _derive_module_version_tuple(
+            row[5],
+            row[status_index],
+            row[6] if has_version_columns else None,
+            row[7] if has_version_columns else None,
         )
-        for row in rows
-    ]
+        items.append(
+            ModuleListItemData(
+                module_id=row[0],
+                module_key=row[1],
+                module_name=row[2],
+                description=row[3],
+                module_version_id=row[4],
+                version_no=row[5],
+                version_major=version_major,
+                version_minor=version_minor,
+                version_label=_format_module_version_label(version_major, version_minor),
+                status=row[status_index],
+                status_label=MODULE_STATUS_LABELS.get(row[status_index], row[status_index]),
+                row_count=row[9] if has_version_columns else row[7],
+                first_work_text=(row[10] if has_version_columns else row[8]) or None,
+                source_xlsx_path=row[11] if has_version_columns else row[9],
+                created_by=row[12] if has_version_columns else row[10],
+                updated_at=_format_updated_at(row[13] if has_version_columns else row[11]),
+            )
+        )
 
     return ModuleListData(items=items)
 
@@ -1019,7 +1133,7 @@ def get_module_detail(settings: AppSettings, module_id: int, version_no: int | N
         ) as connection:
             rows = _fetch_module_detail_rows(connection, module_id, version_no)
     except Exception as exception:
-        raise DatabaseConnectionError("モジュール詳細の取得に失敗しました。") from exception
+        raise DatabaseConnectionError("Module detail query failed.") from exception
 
     return _map_module_detail_rows(rows)
 
@@ -1038,6 +1152,7 @@ def list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersion
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_module_version_number_columns(cursor)
                 cursor.execute(
                     """
                     SELECT
@@ -1046,6 +1161,8 @@ def list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersion
                         m.name,
                         mv.module_version_id,
                         mv.version_no,
+                        mv.version_major,
+                        mv.version_minor,
                         mv.status,
                         COUNT(r.module_row_id)::int AS row_count,
                         mv.source_xlsx_path,
@@ -1064,6 +1181,8 @@ def list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersion
                         m.name,
                         mv.module_version_id,
                         mv.version_no,
+                        mv.version_major,
+                        mv.version_minor,
                         mv.status,
                         mv.source_xlsx_path,
                         mv.created_by,
@@ -1080,24 +1199,38 @@ def list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersion
     if not rows:
         return None
 
+    version_items: list[ModuleVersionListItemData] = []
+    for row in rows:
+        has_version_columns = len(row) >= 13
+        status_index = 7 if has_version_columns else 5
+        version_major, version_minor = _derive_module_version_tuple(
+            row[4],
+            row[status_index],
+            row[5] if has_version_columns else None,
+            row[6] if has_version_columns else None,
+        )
+        version_items.append(
+            ModuleVersionListItemData(
+                module_version_id=row[3],
+                version_no=row[4],
+                version_major=version_major,
+                version_minor=version_minor,
+                version_label=_format_module_version_label(version_major, version_minor),
+                status=row[status_index],
+                status_label=MODULE_STATUS_LABELS.get(row[status_index], row[status_index]),
+                row_count=row[8] if has_version_columns else row[6],
+                source_xlsx_path=row[9] if has_version_columns else row[7],
+                created_by=row[10] if has_version_columns else row[8],
+                created_at=_format_updated_at(row[11] if has_version_columns else row[9]),
+                updated_at=_format_updated_at(row[12] if has_version_columns else row[10]),
+            )
+        )
+
     return ModuleVersionListData(
         module_id=rows[0][0],
         module_key=rows[0][1],
         module_name=rows[0][2],
-        items=[
-            ModuleVersionListItemData(
-                module_version_id=row[3],
-                version_no=row[4],
-                status=row[5],
-                status_label=MODULE_STATUS_LABELS.get(row[5], row[5]),
-                row_count=row[6],
-                source_xlsx_path=row[7],
-                created_by=row[8],
-                created_at=_format_updated_at(row[9]),
-                updated_at=_format_updated_at(row[10]),
-            )
-            for row in rows
-        ],
+        items=version_items,
     )
 
 
@@ -1136,6 +1269,8 @@ def get_module_version_status(
             m.description,
             mv.module_version_id,
             mv.version_no,
+            mv.version_major,
+            mv.version_minor,
             mv.status,
             mv.change_note,
             mv.created_by,
@@ -1156,6 +1291,8 @@ def get_module_version_status(
             m.description,
             mv.module_version_id,
             mv.version_no,
+            mv.version_major,
+            mv.version_minor,
             mv.status,
             mv.change_note,
             mv.created_by,
@@ -1170,6 +1307,7 @@ def get_module_version_status(
             with connection.cursor() as cursor:
                 _ensure_module_approval_history_table(cursor)
                 _ensure_module_status_constraints(cursor)
+                _ensure_module_version_number_columns(cursor)
                 cursor.execute(query, {"module_id": module_id, "version_no": version_no})
                 row = cursor.fetchone()
                 if row is None:
@@ -1202,17 +1340,20 @@ def get_module_version_status(
         target_name=row[2],
         target_type="module",
         version_no=row[5],
-        status=row[6],
-        status_label=MODULE_STATUS_LABELS.get(row[6], row[6]),
-        next_action=MODULE_APPROVAL_NEXT_ACTIONS.get(row[6], "確認のみ"),
+        version_major=row[6],
+        version_minor=row[7],
+        version_label=_format_module_version_label(row[6], row[7]),
+        status=row[8],
+        status_label=MODULE_STATUS_LABELS.get(row[8], row[8]),
+        next_action=MODULE_APPROVAL_NEXT_ACTIONS.get(row[8], "確認のみ"),
         module_count=1,
         enabled_module_count=1,
         module_names=[row[2]],
         description=row[3],
-        change_note=row[7],
-        created_by=row[8],
-        updated_at=_format_updated_at(row[9]),
-        allowed_transitions=_build_module_transition_data(row[6]),
+        change_note=row[9],
+        created_by=row[10],
+        updated_at=_format_updated_at(row[11]),
+        allowed_transitions=_build_module_transition_data(row[8]),
         history=_build_module_history_items(history_rows),
     )
 
@@ -1240,11 +1381,14 @@ def update_module_version_status(
             with connection.cursor() as cursor:
                 _ensure_module_approval_history_table(cursor)
                 _ensure_module_status_constraints(cursor)
+                _ensure_module_version_number_columns(cursor)
                 cursor.execute(
                     """
                     SELECT
                         module_version_id,
-                        status
+                        status,
+                        version_major,
+                        version_minor
                     FROM proc.module_versions
                     WHERE
                         module_id = %(module_id)s
@@ -1258,6 +1402,8 @@ def update_module_version_status(
 
                 module_version_id = int(current_row[0])
                 current_status = str(current_row[1])
+                current_version_major = int(current_row[2] or 0)
+                current_version_minor = int(current_row[3] or 0)
                 allowed_transitions = MODULE_APPROVAL_ALLOWED_TRANSITIONS.get(current_status, [])
                 allowed_targets = {status_value for status_value, _ in allowed_transitions}
                 if to_status not in allowed_targets:
@@ -1265,20 +1411,36 @@ def update_module_version_status(
                         f"status transition from {current_status} to {to_status} is not allowed."
                     )
                 if current_status == "review_requested" and to_status == "returned" and not (note or "").strip():
-                    raise ValueError("差戻し理由を入力してください。")
+                    raise ValueError("return note is required.")
                 action_label = next(
                     label for status_value, label in allowed_transitions if status_value == to_status
                 )
+                next_version_major = current_version_major
+                next_version_minor = current_version_minor
+                if current_status == "draft" and to_status == "review_requested":
+                    next_version_minor = current_version_minor + 1
+                elif current_status == "returned" and to_status == "review_requested":
+                    next_version_minor = current_version_minor + 1
+                elif current_status == "review_requested" and to_status == "published":
+                    next_version_major = current_version_major + 1
+                    next_version_minor = 0
 
                 cursor.execute(
                     """
                     UPDATE proc.module_versions
                     SET
                         status = %(to_status)s,
+                        version_major = %(version_major)s,
+                        version_minor = %(version_minor)s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE module_version_id = %(module_version_id)s;
                     """,
-                    {"to_status": to_status, "module_version_id": module_version_id},
+                    {
+                        "to_status": to_status,
+                        "version_major": next_version_major,
+                        "version_minor": next_version_minor,
+                        "module_version_id": module_version_id,
+                    },
                 )
                 cursor.execute(
                     """
@@ -1353,7 +1515,7 @@ def get_module_row_image(settings: AppSettings, module_row_image_id: int) -> Mod
                 )
                 row = cursor.fetchone()
     except Exception as exception:
-        raise DatabaseConnectionError("モジュール行画像の取得に失敗しました。") from exception
+        raise DatabaseConnectionError("Module row image query failed.") from exception
 
     if row is None:
         return None
@@ -1393,6 +1555,7 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
             device_slot_nos = {header.slot_no for header in normalized_device_headers}
 
             with connection.cursor() as cursor:
+                _ensure_module_version_number_columns(cursor)
                 normalized_module_key = _normalize_module_key(payload.module_key)
                 if normalized_module_key is None:
                     normalized_module_key = _generate_next_module_key(cursor)
@@ -1419,10 +1582,13 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
 
                     module_id = int(inserted_module[0])
                     module_version_no = 1
+                    module_version_major = 0
+                    module_version_minor = 0
                 else:
                     module_id = existing_module_id
                     if _has_draft_module_version(cursor, module_id):
                         raise ValueError("draft module version already exists.")
+                    module_version_major, module_version_minor = _latest_module_display_version(cursor, module_id)
                     module_version_no = _next_module_version_no(cursor, module_id)
                     cursor.execute(
                         """
@@ -1445,6 +1611,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                     INSERT INTO proc.module_versions (
                         module_id,
                         version_no,
+                        version_major,
+                        version_minor,
                         status,
                         change_note,
                         source_xlsx_path,
@@ -1459,6 +1627,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                     VALUES (
                         %(module_id)s,
                         %(version_no)s,
+                        %(version_major)s,
+                        %(version_minor)s,
                         'draft',
                         %(change_note)s,
                         %(source_xlsx_path)s,
@@ -1475,6 +1645,8 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                     {
                         "module_id": module_id,
                         "version_no": module_version_no,
+                        "version_major": module_version_major,
+                        "version_minor": module_version_minor,
                         "change_note": payload.change_note,
                         "source_xlsx_path": payload.source_xlsx_path,
                         "source_sha256": payload.source_sha256,
@@ -1632,3 +1804,4 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
     if detail is None:
         raise DatabaseConnectionError("Module create failed.")
     return detail
+
