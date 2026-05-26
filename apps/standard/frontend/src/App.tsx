@@ -1326,6 +1326,21 @@ function ModuleListPage() {
   const statusFilterLabel =
     moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
 
+  function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
+    const params = new URLSearchParams();
+
+    if (keyword) {
+      params.set("keyword", keyword);
+    }
+
+    if (nextStatus !== "all") {
+      params.set("status", nextStatus);
+    }
+
+    const query = params.toString();
+    navigate(query ? `/modules/list?${query}` : "/modules/list");
+  }
+
   return (
     <Page title="モジュール一覧" description="APIから取得したモジュール一覧と検索結果を確認します。">
       <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
@@ -1348,6 +1363,18 @@ function ModuleListPage() {
           <strong>{statusFilterLabel}</strong>
         </div>
         <p>{moduleListState.message}</p>
+      </section>
+      <section className="approval-flow" aria-label="モジュール承認状態フィルター">
+        {moduleStatusOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"}
+            onClick={() => handleStatusFilterChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
       </section>
       <Toolbar>
         <button className="secondary" onClick={() => navigate("/modules/search")}>
