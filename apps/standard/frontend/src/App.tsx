@@ -69,8 +69,8 @@ function getAuthRoleLabel(role: AuthRole): string {
 
 function getAuthRoleDescription(role: AuthRole): string {
   return role === "approver"
-    ? "承認・差戻し・保管を実行できます。"
-    : "承認状態と履歴の閲覧のみ可能です。";
+    ? "承認依頼中の確認、差戻し、承認、保管を実行できます。"
+    : "作成中または差戻し済みの原本・モジュールに対して承認依頼を実行できます。";
 }
 
 type ModuleRow = {
@@ -98,7 +98,7 @@ type DatabaseHealthData = {
   status: "ok";
 };
 
-type ModuleApiStatus = "draft" | "published" | "archived";
+type ModuleApiStatus = "draft" | "review_requested" | "returned" | "published" | "archived";
 
 type ModuleListItemData = {
   module_id: number;
@@ -657,9 +657,38 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
   { value: "all", label: "すべて" },
   { value: "draft", label: "作成中" },
+  { value: "review_requested", label: "承認依頼中" },
+  { value: "returned", label: "差戻し" },
   { value: "published", label: "承認済み" },
   { value: "archived", label: "保管済み" },
 ];
+
+function canRunApprovalTransition(
+  role: AuthRole | undefined,
+  currentStatus: ModuleApiStatus,
+  toStatus: ModuleApiStatus,
+): boolean {
+  if (role === "member") {
+    return (currentStatus === "draft" || currentStatus === "returned") && toStatus === "review_requested";
+  }
+
+  if (role === "approver") {
+    return (
+      (currentStatus === "review_requested" && (toStatus === "published" || toStatus === "returned"))
+      || (currentStatus === "published" && toStatus === "archived")
+    );
+  }
+
+  return false;
+}
+
+function isReturnTransition(currentStatus: ModuleApiStatus, toStatus: ModuleApiStatus): boolean {
+  return currentStatus === "review_requested" && toStatus === "returned";
+}
+
+function getLatestReturnHistory(history: ApprovalStatusHistoryItemData[] | undefined): ApprovalStatusHistoryItemData | null {
+  return history?.find((item) => item.to_status === "returned") ?? null;
+}
 
 function buildApiUrl(path: string): string {
   if (API_BASE_URL) {
@@ -1459,7 +1488,6 @@ function ModuleDetailPage() {
   const [diffFromVersionNo, setDiffFromVersionNo] = useState<number | null>(null);
   const [diffToVersionNo, setDiffToVersionNo] = useState<number | null>(null);
   const currentUser = getStoredAuthUser();
-  const canManageApproval = currentUser?.role === "approver";
   const approvalActor = currentUser?.displayName ?? "";
   const versionOptions = [...versionListState.items].sort((a, b) => a.version_no - b.version_no);
   const nextVersionNo =
@@ -1468,7 +1496,10 @@ function ModuleDetailPage() {
       : item
         ? item.version_no + 1
         : 2;
-  const hasDraftVersion = versionListState.items.some((version) => version.status === "draft");
+  const hasInFlightVersion = versionListState.items.some((version) =>
+    version.status === "draft" || version.status === "review_requested"
+  );
+  const isModuleLocked = item?.status === "review_requested";
 
   useEffect(() => {
     if (!moduleId) {
@@ -1613,10 +1644,10 @@ function ModuleDetailPage() {
     if (!item || !moduleId || moduleApprovalState.item === null) {
       return;
     }
-    if (!canManageApproval) {
+    if (!canRunApprovalTransition(currentUser?.role, moduleApprovalState.item.status, toStatus)) {
       setModuleApprovalMutationState({
         status: "error",
-        message: "承認操作は承認者ユーザーのみ実行できます。",
+        message: "現在のユーザー権限では、この承認操作は実行できません。",
       });
       return;
     }
@@ -1630,7 +1661,7 @@ function ModuleDetailPage() {
       });
       return;
     }
-    if (moduleApprovalState.item.status === "draft" && toStatus === "draft" && normalizedComment.length === 0) {
+    if (isReturnTransition(moduleApprovalState.item.status, toStatus) && normalizedComment.length === 0) {
       setModuleApprovalMutationState({
         status: "error",
         message: "差戻し時は理由を入力してください。",
@@ -1788,8 +1819,14 @@ function ModuleDetailPage() {
             });
             navigate(`/modules/register?${params.toString()}`);
           }}
-          disabled={!item}
-          title={hasDraftVersion ? "既にdraft版がある場合、保存時にエラーになります。" : "Excelから新しい版を作成します。"}
+          disabled={!item || isModuleLocked}
+          title={
+            isModuleLocked
+              ? "承認依頼中のため新しい版を作成できません。"
+              : hasInFlightVersion
+                ? "既に作成中または承認依頼中の版がある場合、保存時にエラーになります。"
+                : "Excelから新しい版を作成します。"
+          }
         >
           <span aria-hidden="true">+</span>
           新しい版をExcelから作成
@@ -1802,6 +1839,12 @@ function ModuleDetailPage() {
 
       {item ? (
         <>
+          {isModuleLocked ? (
+            <div className="approval-lock-note">
+              <strong>承認依頼中です</strong>
+              <span>承認者の確認待ちのため、このモジュール版は新しい版の作成対象にしません。</span>
+            </div>
+          ) : null}
           <section className="detail-layout">
             <div className="facts">
               <Fact label="モジュールID" value={item.module_key} />
@@ -1827,7 +1870,6 @@ function ModuleDetailPage() {
             approvalState={moduleApprovalState}
             mutationState={moduleApprovalMutationState}
             comment={moduleApprovalComment}
-            canManageApproval={canManageApproval}
             currentUser={currentUser}
             onCommentChange={setModuleApprovalComment}
             onApplyTransition={handleModuleApprovalTransition}
@@ -1916,7 +1958,6 @@ function ModuleApprovalPanel({
   approvalState,
   mutationState,
   comment,
-  canManageApproval,
   currentUser,
   onCommentChange,
   onApplyTransition,
@@ -1924,12 +1965,16 @@ function ModuleApprovalPanel({
   approvalState: ApprovalStatusDetailState;
   mutationState: ApprovalStatusMutationState;
   comment: string;
-  canManageApproval: boolean;
   currentUser: AuthUser | null;
   onCommentChange: (value: string) => void;
   onApplyTransition: (statusValue: ModuleApiStatus) => void;
 }) {
   const detail = approvalState.item;
+  const executableTransitions = detail?.allowed_transitions.filter((transition) =>
+    canRunApprovalTransition(currentUser?.role, detail.status, transition.to_status)
+  ) ?? [];
+  const canComment = executableTransitions.length > 0;
+  const latestReturnHistory = getLatestReturnHistory(detail?.history);
 
   return (
     <section className="section-band module-approval-panel">
@@ -1947,29 +1992,42 @@ function ModuleApprovalPanel({
             <Fact label="次の操作" value={detail.next_action} />
             <Fact label="実行ユーザー" value={currentUser ? `${currentUser.displayName} / ${getAuthRoleLabel(currentUser.role)}` : "未ログイン"} />
           </div>
+          {detail.status === "review_requested" ? (
+            <div className="approval-lock-note">
+              <strong>承認依頼中です</strong>
+              <span>メンバー側では編集・再依頼操作を行わず、承認者の確認を待つ状態です。</span>
+            </div>
+          ) : null}
+          {detail.status === "returned" && latestReturnHistory ? (
+            <div className="approval-return-note">
+              <strong>差戻しコメント</strong>
+              <span>{latestReturnHistory.note ?? "コメントはありません。"}</span>
+            </div>
+          ) : null}
           <label className="approval-comment-field">
             コメント
             <textarea
               value={comment}
               onChange={(event) => onCommentChange(event.target.value)}
-              disabled={!canManageApproval}
-              placeholder={canManageApproval ? "差戻し理由や補足を入力します。" : "承認者ユーザーでログインすると入力できます。"}
+              disabled={!canComment}
+              placeholder={canComment ? "承認依頼の補足や差戻し理由を入力します。" : "現在のユーザーで実行できる操作はありません。"}
             />
           </label>
           <div className="approval-transition-list">
-            {detail.allowed_transitions.length > 0 ? (
-              detail.allowed_transitions.map((transition) => (
+            {executableTransitions.length > 0 ? (
+              executableTransitions.map((transition) => (
                 <button
                   key={transition.to_status}
                   className="approval-transition-card"
                   type="button"
                   onClick={() => onApplyTransition(transition.to_status)}
-                  disabled={!canManageApproval || mutationState.status === "submitting"}
+                  disabled={mutationState.status === "submitting"}
                 >
                   <strong>{transition.action_label}</strong>
-                  <span>{transition.to_status_label}</span>
                 </button>
               ))
+            ) : detail.allowed_transitions.length > 0 ? (
+              <p>現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
             ) : (
               <p>この状態から実行できる承認操作はありません。</p>
             )}
@@ -5164,6 +5222,7 @@ function DocumentDetailPage() {
   const sourceDocDetailState = useSourceDocDetailState(id);
   const item = sourceDocDetailState.item;
   const [isPreviewOverlayOpen, setIsPreviewOverlayOpen] = useState(false);
+  const isSourceDocLocked = item?.status === "review_requested";
 
   return (
     <Page title="原本詳細" description="原本の版、状態、関連モジュール構成を API から確認します。">
@@ -5199,6 +5258,8 @@ function DocumentDetailPage() {
         </button>
         <button
           className="primary"
+          disabled={!item || isSourceDocLocked}
+          title={isSourceDocLocked ? "承認依頼中のため更新できません。" : "原本を更新します。"}
           onClick={() => {
             if (item) {
               navigate(`/documents/create?id=${item.source_doc_id}`);
@@ -5211,6 +5272,12 @@ function DocumentDetailPage() {
       </Toolbar>
       {item ? (
         <>
+          {isSourceDocLocked ? (
+            <div className="approval-lock-note">
+              <strong>承認依頼中です</strong>
+              <span>承認者の確認待ちのため、この原本は更新できません。</span>
+            </div>
+          ) : null}
           <section className="detail-layout">
             <div className="facts">
               <Fact label="原本ID" value={item.source_doc_key} />
@@ -6487,7 +6554,6 @@ function ApprovalPage() {
   });
   const currentUser = getStoredAuthUser();
   const approvalActor = currentUser?.displayName ?? "";
-  const canManageApproval = currentUser?.role === "approver";
   const currentRoleLabel = currentUser ? getAuthRoleLabel(currentUser.role) : "未ログイン";
   const currentRoleDescription = currentUser ? getAuthRoleDescription(currentUser.role) : "ログインしてください。";
   const [approvalComment, setApprovalComment] = useState("");
@@ -6627,11 +6693,18 @@ function ApprovalPage() {
   const selectedItem = approvalDetailState.item;
   const selectedSummary =
     approvalListState.items.find((item) => item.target_id === selectedTargetId) ?? null;
+  const selectedExecutableTransitions = selectedItem?.allowed_transitions.filter((transition) =>
+    canRunApprovalTransition(currentUser?.role, selectedItem.status, transition.to_status)
+  ) ?? [];
+  const canCommentOnSelectedApproval = selectedExecutableTransitions.length > 0;
+  const selectedLatestReturnHistory = getLatestReturnHistory(selectedItem?.history);
   const approvalStatusFilterOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
     { value: "all", label: "0. \u5168\u4ef6\u8868\u793a" },
-    { value: "draft", label: "1. \u627f\u8a8d\u524d\uff08draft\uff09" },
-    { value: "published", label: "2. \u627f\u8a8d\u6e08\u307f\uff08published\uff09" },
-    { value: "archived", label: "3. \u4fdd\u7ba1\u6e08\u307f\uff08archived\uff09" },
+    { value: "draft", label: "1. 作成中" },
+    { value: "review_requested", label: "2. 承認依頼中" },
+    { value: "returned", label: "3. 差戻し" },
+    { value: "published", label: "4. 承認済み" },
+    { value: "archived", label: "5. 保管済み" },
   ];
   const filteredApprovalItems = approvalListState.items.filter((item) =>
     approvalStatusFilter === "all" ? true : item.status === approvalStatusFilter,
@@ -6652,10 +6725,10 @@ function ApprovalPage() {
       return;
     }
 
-    if (!canManageApproval) {
+    if (!canRunApprovalTransition(currentUser?.role, selectedItem.status, toStatus)) {
       setApprovalMutationState({
         status: "error",
-        message: "承認操作は承認者ユーザーのみ実行できます。",
+        message: "現在のユーザー権限では、この承認操作は実行できません。",
       });
       return;
     }
@@ -6669,7 +6742,7 @@ function ApprovalPage() {
       });
       return;
     }
-    if (selectedItem.status === "draft" && toStatus === "draft" && normalizedComment.length === 0) {
+    if (isReturnTransition(selectedItem.status, toStatus) && normalizedComment.length === 0) {
       setApprovalMutationState({
         status: "error",
         message: "差戻し理由を入力してください。",
@@ -6869,7 +6942,7 @@ function ApprovalPage() {
           <section className="section-band approval-detail-grid">
             <div>
               <h2>実行できる操作</h2>
-              <div className={`approval-permission-panel ${canManageApproval ? "can-manage" : "view-only"}`}>
+              <div className={`approval-permission-panel ${canCommentOnSelectedApproval ? "can-manage" : "view-only"}`}>
                 <span>現在の権限</span>
                 <strong>{currentRoleLabel}</strong>
                 <p>{currentRoleDescription}</p>
@@ -6878,44 +6951,56 @@ function ApprovalPage() {
                 実行者
                 <input value={approvalActor || "未ログイン"} readOnly />
               </label>
-              {!canManageApproval ? (
-                <p className="approval-role-note">承認操作は承認者ユーザーのみ実行できます。メンバーユーザーは閲覧のみ可能です。</p>
+              {selectedItem.status === "review_requested" ? (
+                <div className="approval-lock-note">
+                  <strong>承認依頼中です</strong>
+                  <span>メンバー側では編集・再依頼操作を行わず、承認者の確認を待つ状態です。</span>
+                </div>
+              ) : null}
+              {selectedItem.status === "returned" && selectedLatestReturnHistory ? (
+                <div className="approval-return-note">
+                  <strong>差戻しコメント</strong>
+                  <span>{selectedLatestReturnHistory.note ?? "コメントはありません。"}</span>
+                </div>
+              ) : null}
+              {!canCommentOnSelectedApproval ? (
+                <p className="approval-role-note">現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
               ) : null}
               <label className="approval-comment-field">
                 コメント
                 <textarea
                   value={approvalComment}
                   onChange={(event) => setApprovalComment(event.target.value)}
-                  disabled={!canManageApproval}
+                  disabled={!canCommentOnSelectedApproval}
                   rows={3}
                   placeholder={
-                    canManageApproval
-                      ? "差戻し時は理由を入力してください。承認・保管時は任意です。"
-                      : "メンバーユーザーではコメント入力と承認操作はできません。"
+                    canCommentOnSelectedApproval
+                      ? "承認依頼の補足や差戻し理由を入力します。"
+                      : "現在のユーザーで実行できる操作はありません。"
                   }
                 />
               </label>
               {selectedItem.allowed_transitions.length > 0 ? (
                 <div className="approval-transition-list">
-                  {selectedItem.allowed_transitions.map((transition) => (
-                    <article
-                      key={transition.to_status}
-                      className={`approval-transition-card ${canManageApproval ? "" : "is-disabled"}`}
-                    >
-                      <strong>{transition.action_label}</strong>
-                      <span>{transition.to_status_label}</span>
-                      <button
-                        className="primary"
-                        onClick={() => void handleApplyTransition(transition.to_status)}
-                        disabled={approvalMutationState.status === "submitting" || !canManageApproval}
-                        title={canManageApproval ? transition.action_label : "承認者ユーザーでログインすると実行できます。"}
-                      >
-                        {approvalMutationState.status === "submitting"
-                          ? "変更中..."
-                          : transition.action_label}
-                      </button>
-                    </article>
-                  ))}
+                  {selectedExecutableTransitions.length > 0 ? (
+                    selectedExecutableTransitions.map((transition) => (
+                      <article key={transition.to_status} className="approval-transition-card">
+                        <strong>{transition.action_label}</strong>
+                        <button
+                          className="primary"
+                          onClick={() => void handleApplyTransition(transition.to_status)}
+                          disabled={approvalMutationState.status === "submitting"}
+                          title={transition.action_label}
+                        >
+                          {approvalMutationState.status === "submitting"
+                            ? "変更中..."
+                            : transition.action_label}
+                        </button>
+                      </article>
+                    ))
+                  ) : (
+                    <p>現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
+                  )}
                 </div>
               ) : (
                 <p>この状態から実行できる承認操作はありません。</p>
@@ -6972,8 +7057,9 @@ function ApprovalPage() {
       <section className="section-band">
         <h2>版管理ルール</h2>
         <p>
-          M1 では最小ルールとして、原本は <code>draft</code> の段階で承認または差戻しを行い、
-          承認されたものを <code>published</code> へ移行し、最終的に <code>archived</code> へ保管します。
+          M1 では最小ルールとして、メンバーが <code>draft</code> または <code>returned</code> から承認依頼を行い、
+          承認者が <code>review_requested</code> を確認して承認または差戻しします。
+          承認されたものは <code>published</code> へ移行し、最終的に <code>archived</code> へ保管します。
         </p>
       </section>
     </Page>

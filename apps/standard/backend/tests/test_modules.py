@@ -34,17 +34,25 @@ def build_module_status_detail(status_value: str = "draft") -> ApprovalStatusDet
     allowed_transitions = (
         [
             ApprovalTransitionData(
+                to_status="review_requested",
+                to_status_label="承認依頼中",
+                action_label="承認依頼",
+            ),
+        ]
+        if status_value == "draft"
+        else [
+            ApprovalTransitionData(
                 to_status="published",
                 to_status_label="承認済み",
                 action_label="承認する",
             ),
             ApprovalTransitionData(
-                to_status="draft",
-                to_status_label="作成中",
+                to_status="returned",
+                to_status_label="差戻し",
                 action_label="差戻す",
             ),
         ]
-        if status_value == "draft"
+        if status_value == "review_requested"
         else [
             ApprovalTransitionData(
                 to_status="archived",
@@ -63,8 +71,8 @@ def build_module_status_detail(status_value: str = "draft") -> ApprovalStatusDet
         target_type="module",
         version_no=2,
         status=status_value,
-        status_label="作成中" if status_value == "draft" else status_value,
-        next_action="承認または差戻し" if status_value == "draft" else "保管する",
+        status_label="作成中" if status_value == "draft" else "承認依頼中" if status_value == "review_requested" else "差戻し" if status_value == "returned" else status_value,
+        next_action="承認依頼" if status_value == "draft" else "承認または差戻し" if status_value == "review_requested" else "再承認依頼" if status_value == "returned" else "保管する",
         module_count=1,
         enabled_module_count=1,
         module_names=["Initial check procedure"],
@@ -152,7 +160,7 @@ def test_read_modules_rejects_invalid_status(client: TestClient) -> None:
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "status must be one of all, draft, published, archived.",
+        "message": "status must be one of all, draft, review_requested, returned, published, archived.",
     }
 
 

@@ -20,6 +20,8 @@ from app.db.modules import MODULE_STATUS_LABELS, _map_row_images
 
 SOURCE_DOC_STATUS_LABELS = {
     "draft": "作成中",
+    "review_requested": "承認依頼中",
+    "returned": "差戻し",
     "published": "承認済み",
     "archived": "保管済み",
 }

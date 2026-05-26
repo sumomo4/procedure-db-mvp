@@ -1,4 +1,4 @@
-CREATE SCHEMA IF NOT EXISTS proc;
+﻿CREATE SCHEMA IF NOT EXISTS proc;
 
 CREATE TABLE IF NOT EXISTS app_metadata (
     key text PRIMARY KEY,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
     module_version_id bigserial PRIMARY KEY,
     module_id bigint NOT NULL REFERENCES proc.modules (module_id),
     version_no integer NOT NULL CHECK (version_no > 0),
-    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
+    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
     change_note text,
     source_xlsx_path text,
     source_sha256 text,
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS proc.blueprint_versions (
     blueprint_version_id bigserial PRIMARY KEY,
     blueprint_id bigint NOT NULL REFERENCES proc.blueprints (blueprint_id),
     version_no integer NOT NULL CHECK (version_no > 0),
-    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
+    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
     change_note text,
     created_by text,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -134,8 +134,8 @@ CREATE TABLE IF NOT EXISTS proc.approval_status_histories (
     target_type text NOT NULL CHECK (target_type IN ('source-doc')),
     target_id bigint NOT NULL,
     target_version_id bigint NOT NULL REFERENCES proc.blueprint_versions (blueprint_version_id) ON DELETE CASCADE,
-    from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
-    to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+    from_status text CHECK (from_status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
+    to_status text NOT NULL CHECK (to_status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
     action_label text NOT NULL,
     changed_by text,
     changed_at timestamptz NOT NULL DEFAULT now(),
@@ -152,8 +152,8 @@ CREATE TABLE IF NOT EXISTS proc.module_approval_status_histories (
     module_approval_status_history_id bigserial PRIMARY KEY,
     module_id bigint NOT NULL REFERENCES proc.modules (module_id) ON DELETE CASCADE,
     module_version_id bigint NOT NULL REFERENCES proc.module_versions (module_version_id) ON DELETE CASCADE,
-    from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
-    to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+    from_status text CHECK (from_status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
+    to_status text NOT NULL CHECK (to_status IN ('draft', 'review_requested', 'returned', 'published', 'archived')),
     action_label text NOT NULL,
     changed_by text,
     changed_at timestamptz NOT NULL DEFAULT now(),
@@ -605,3 +605,4 @@ ON CONFLICT (key)
 DO UPDATE SET
     value = EXCLUDED.value,
     updated_at = now();
+

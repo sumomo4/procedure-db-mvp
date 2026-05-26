@@ -1191,6 +1191,16 @@ th {
   color: #79570e;
 }
 
+.status-module-review_requested {
+  background: #e7f0f1;
+  color: #1f6f78;
+}
+
+.status-module-returned {
+  background: #f9e6e1;
+  color: #9a3326;
+}
+
 .status-module-published {
   background: #e4f2ea;
   color: #1f6840;
@@ -1738,6 +1748,37 @@ th {
   margin: 0 0 14px;
   color: #7a4d00;
   font-weight: 800;
+}
+
+.approval-lock-note,
+.approval-return-note {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.approval-lock-note {
+  border: 1px solid #9dc3c8;
+  background: #f1f8f9;
+  color: #1f5660;
+}
+
+.approval-return-note {
+  border: 1px solid #e3aaa0;
+  background: #fff5f2;
+  color: #87372b;
+}
+
+.approval-lock-note strong,
+.approval-return-note strong {
+  color: inherit;
+}
+
+.approval-lock-note span,
+.approval-return-note span {
+  line-height: 1.6;
 }
 
 .approval-transition-card {

@@ -17,15 +17,20 @@ from app.db.source_docs import SOURCE_DOC_STATUS_LABELS
 
 APPROVAL_TARGET_TYPE = "source-doc"
 APPROVAL_NEXT_ACTIONS = {
-    "draft": "承認または差戻し",
+    "draft": "承認依頼",
+    "review_requested": "承認または差戻し",
+    "returned": "再承認依頼",
     "published": "保管する",
     "archived": "確認のみ",
 }
 APPROVAL_ALLOWED_TRANSITIONS = {
-    "draft": [("published", "承認する"), ("draft", "差戻す")],
+    "draft": [("review_requested", "承認依頼")],
+    "review_requested": [("published", "承認する"), ("returned", "差戻す")],
+    "returned": [("review_requested", "再承認依頼")],
     "published": [("archived", "保管する")],
     "archived": [],
 }
+APPROVAL_STATUS_CHECK_VALUES = "'draft', 'review_requested', 'returned', 'published', 'archived'"
 
 
 def _format_updated_at(value: Any) -> str:
@@ -52,19 +57,45 @@ def _ensure_history_table(cursor: Any) -> None:
     """Create the approval history table when existing DB volumes predate it."""
 
     cursor.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS proc.approval_status_histories (
             approval_status_history_id bigserial PRIMARY KEY,
             target_type text NOT NULL CHECK (target_type IN ('source-doc')),
             target_id bigint NOT NULL,
             target_version_id bigint NOT NULL REFERENCES proc.blueprint_versions (blueprint_version_id) ON DELETE CASCADE,
-            from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
-            to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+            from_status text CHECK (from_status IN ({APPROVAL_STATUS_CHECK_VALUES})),
+            to_status text NOT NULL CHECK (to_status IN ({APPROVAL_STATUS_CHECK_VALUES})),
             action_label text NOT NULL,
             changed_by text,
             changed_at timestamptz NOT NULL DEFAULT now(),
             note text
         );
+        """
+    )
+
+
+def _ensure_status_constraints(cursor: Any) -> None:
+    """Allow the extended approval workflow statuses on existing DB volumes."""
+
+    cursor.execute(
+        f"""
+        ALTER TABLE proc.blueprint_versions
+            DROP CONSTRAINT IF EXISTS blueprint_versions_status_check;
+        ALTER TABLE proc.blueprint_versions
+            ADD CONSTRAINT blueprint_versions_status_check
+            CHECK (status IN ({APPROVAL_STATUS_CHECK_VALUES}));
+
+        ALTER TABLE proc.approval_status_histories
+            DROP CONSTRAINT IF EXISTS approval_status_histories_from_status_check;
+        ALTER TABLE proc.approval_status_histories
+            ADD CONSTRAINT approval_status_histories_from_status_check
+            CHECK (from_status IN ({APPROVAL_STATUS_CHECK_VALUES}));
+
+        ALTER TABLE proc.approval_status_histories
+            DROP CONSTRAINT IF EXISTS approval_status_histories_to_status_check;
+        ALTER TABLE proc.approval_status_histories
+            ADD CONSTRAINT approval_status_histories_to_status_check
+            CHECK (to_status IN ({APPROVAL_STATUS_CHECK_VALUES}));
         """
     )
     cursor.execute(
@@ -261,6 +292,7 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_history_table(cursor)
+                _ensure_status_constraints(cursor)
                 cursor.execute(query, {"target_id": str(target_id)})
                 row = cursor.fetchone()
                 cursor.execute(
@@ -333,6 +365,7 @@ def update_status(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_history_table(cursor)
+                _ensure_status_constraints(cursor)
                 cursor.execute(
                     """
                     SELECT
@@ -357,7 +390,7 @@ def update_status(
                     raise ValueError(
                         f"status transition from {current_status} to {to_status} is not allowed."
                     )
-                if current_status == "draft" and to_status == "draft" and not (note or "").strip():
+                if current_status == "review_requested" and to_status == "returned" and not (note or "").strip():
                     raise ValueError("差戻し理由を入力してください。")
                 action_label = next(
                     label for status_value, label in allowed_transitions if status_value == to_status

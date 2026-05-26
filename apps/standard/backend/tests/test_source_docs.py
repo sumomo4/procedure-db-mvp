@@ -93,7 +93,7 @@ def test_read_source_docs_rejects_invalid_status(client: TestClient) -> None:
     assert response.json() == {
         "result": "error",
         "data": None,
-        "message": "status must be one of all, draft, published, archived.",
+        "message": "status must be one of all, draft, review_requested, returned, published, archived.",
     }
 
 

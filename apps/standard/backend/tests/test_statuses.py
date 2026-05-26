@@ -19,17 +19,25 @@ def _build_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
     allowed_transitions = (
         [
             ApprovalTransitionData(
+                to_status="review_requested",
+                to_status_label="承認依頼中",
+                action_label="承認依頼",
+            )
+        ]
+        if status_value == "draft"
+        else [
+            ApprovalTransitionData(
                 to_status="published",
                 to_status_label="承認済み",
                 action_label="承認する",
             ),
             ApprovalTransitionData(
-                to_status="draft",
-                to_status_label="作成中",
+                to_status="returned",
+                to_status_label="差戻し",
                 action_label="差戻す",
-            )
+            ),
         ]
-        if status_value == "draft"
+        if status_value == "review_requested"
         else [
             ApprovalTransitionData(
                 to_status="archived",
@@ -42,8 +50,10 @@ def _build_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
     )
 
     next_action = (
-        "承認または差戻し"
+        "承認依頼"
         if status_value == "draft"
+        else "承認または差戻し"
+        if status_value == "review_requested"
         else "保管する"
         if status_value == "published"
         else "確認のみ"
@@ -56,7 +66,7 @@ def _build_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
         target_type="source-doc",
         version_no=1,
         status=status_value,  # type: ignore[arg-type]
-        status_label="作成中" if status_value == "draft" else "承認済み" if status_value == "published" else "保管済み",
+        status_label="作成中" if status_value == "draft" else "承認依頼中" if status_value == "review_requested" else "差戻し" if status_value == "returned" else "承認済み" if status_value == "published" else "保管済み",
         next_action=next_action,
         module_count=2,
         enabled_module_count=2,
@@ -87,7 +97,7 @@ def test_read_statuses_returns_success_response(
                     version_no=1,
                     status="draft",
                     status_label="作成中",
-                    next_action="承認または差戻し",
+                    next_action="承認依頼",
                     module_count=2,
                     enabled_module_count=2,
                     created_by="seed",
@@ -113,7 +123,7 @@ def test_read_statuses_returns_success_response(
                     "version_no": 1,
                     "status": "draft",
                     "status_label": "作成中",
-                    "next_action": "承認または差戻し",
+                    "next_action": "承認依頼",
                     "module_count": 2,
                     "enabled_module_count": 2,
                     "created_by": "seed",
@@ -176,7 +186,7 @@ def test_read_status_detail_returns_success_response(
             "version_no": 1,
             "status": "draft",
             "status_label": "作成中",
-            "next_action": "承認または差戻し",
+            "next_action": "承認依頼",
             "module_count": 2,
             "enabled_module_count": 2,
             "module_names": ["初期点検手順", "部品交換手順"],
@@ -186,14 +196,9 @@ def test_read_status_detail_returns_success_response(
             "updated_at": "2026-04-23",
             "allowed_transitions": [
                 {
-                    "to_status": "published",
-                    "to_status_label": "承認済み",
-                    "action_label": "承認する",
-                },
-                {
-                    "to_status": "draft",
-                    "to_status_label": "作成中",
-                    "action_label": "差戻す",
+                    "to_status": "review_requested",
+                    "to_status_label": "承認依頼中",
+                    "action_label": "承認依頼",
                 }
             ],
             "history": [],

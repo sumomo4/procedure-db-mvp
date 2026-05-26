@@ -34,20 +34,27 @@ from app.core.responses import (
 
 MODULE_STATUS_LABELS = {
     "draft": "作成中",
+    "review_requested": "承認依頼中",
+    "returned": "差戻し",
     "published": "承認済み",
     "archived": "保管済み",
 }
 VALID_MODULE_STATUSES = frozenset(MODULE_STATUS_LABELS)
 MODULE_APPROVAL_NEXT_ACTIONS = {
-    "draft": "承認または差戻し",
+    "draft": "承認依頼",
+    "review_requested": "承認または差戻し",
+    "returned": "再承認依頼",
     "published": "保管する",
     "archived": "確認のみ",
 }
 MODULE_APPROVAL_ALLOWED_TRANSITIONS = {
-    "draft": [("published", "承認する"), ("draft", "差戻す")],
+    "draft": [("review_requested", "承認依頼")],
+    "review_requested": [("published", "承認する"), ("returned", "差戻す")],
+    "returned": [("review_requested", "再承認依頼")],
     "published": [("archived", "保管する")],
     "archived": [],
 }
+MODULE_STATUS_CHECK_VALUES = "'draft', 'review_requested', 'returned', 'published', 'archived'"
 
 
 def _format_updated_at(value: Any) -> str:
@@ -74,18 +81,45 @@ def _ensure_module_approval_history_table(cursor: Any) -> None:
     """Create the module approval history table when existing DB volumes predate it."""
 
     cursor.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS proc.module_approval_status_histories (
             module_approval_status_history_id bigserial PRIMARY KEY,
             module_id bigint NOT NULL REFERENCES proc.modules (module_id) ON DELETE CASCADE,
             module_version_id bigint NOT NULL REFERENCES proc.module_versions (module_version_id) ON DELETE CASCADE,
-            from_status text CHECK (from_status IN ('draft', 'published', 'archived')),
-            to_status text NOT NULL CHECK (to_status IN ('draft', 'published', 'archived')),
+            from_status text CHECK (from_status IN ({MODULE_STATUS_CHECK_VALUES})),
+            to_status text NOT NULL CHECK (to_status IN ({MODULE_STATUS_CHECK_VALUES})),
             action_label text NOT NULL,
             changed_by text,
             changed_at timestamptz NOT NULL DEFAULT now(),
             note text
         );
+        """,
+        {},
+    )
+
+
+def _ensure_module_status_constraints(cursor: Any) -> None:
+    """Allow the extended module approval statuses on existing DB volumes."""
+
+    cursor.execute(
+        f"""
+        ALTER TABLE proc.module_versions
+            DROP CONSTRAINT IF EXISTS module_versions_status_check;
+        ALTER TABLE proc.module_versions
+            ADD CONSTRAINT module_versions_status_check
+            CHECK (status IN ({MODULE_STATUS_CHECK_VALUES}));
+
+        ALTER TABLE proc.module_approval_status_histories
+            DROP CONSTRAINT IF EXISTS module_approval_status_histories_from_status_check;
+        ALTER TABLE proc.module_approval_status_histories
+            ADD CONSTRAINT module_approval_status_histories_from_status_check
+            CHECK (from_status IN ({MODULE_STATUS_CHECK_VALUES}));
+
+        ALTER TABLE proc.module_approval_status_histories
+            DROP CONSTRAINT IF EXISTS module_approval_status_histories_to_status_check;
+        ALTER TABLE proc.module_approval_status_histories
+            ADD CONSTRAINT module_approval_status_histories_to_status_check
+            CHECK (to_status IN ({MODULE_STATUS_CHECK_VALUES}));
         """,
         {},
     )
@@ -908,14 +942,14 @@ def _next_module_version_no(cursor: Any, module_id: int) -> int:
 
 
 def _has_draft_module_version(cursor: Any, module_id: int) -> bool:
-    """Return whether the module already has a draft version."""
+    """Return whether the module already has an editable/requested in-flight version."""
 
     cursor.execute(
         """
         SELECT 1
         FROM proc.module_versions
         WHERE module_id = %(module_id)s
-          AND status = 'draft'
+          AND status IN ('draft', 'review_requested')
         LIMIT 1;
         """,
         {"module_id": module_id},
@@ -1135,6 +1169,7 @@ def get_module_version_status(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_module_approval_history_table(cursor)
+                _ensure_module_status_constraints(cursor)
                 cursor.execute(query, {"module_id": module_id, "version_no": version_no})
                 row = cursor.fetchone()
                 if row is None:
@@ -1204,6 +1239,7 @@ def update_module_version_status(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_module_approval_history_table(cursor)
+                _ensure_module_status_constraints(cursor)
                 cursor.execute(
                     """
                     SELECT
@@ -1228,7 +1264,7 @@ def update_module_version_status(
                     raise ValueError(
                         f"status transition from {current_status} to {to_status} is not allowed."
                     )
-                if current_status == "draft" and to_status == "draft" and not (note or "").strip():
+                if current_status == "review_requested" and to_status == "returned" and not (note or "").strip():
                     raise ValueError("差戻し理由を入力してください。")
                 action_label = next(
                     label for status_value, label in allowed_transitions if status_value == to_status

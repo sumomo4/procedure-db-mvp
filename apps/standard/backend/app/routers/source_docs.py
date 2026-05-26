@@ -41,7 +41,7 @@ def read_source_docs(
     if normalized_status and normalized_status != "all" and normalized_status not in VALID_SOURCE_DOC_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="status must be one of all, draft, published, archived.",
+            detail="status must be one of all, draft, review_requested, returned, published, archived.",
         )
 
     try:

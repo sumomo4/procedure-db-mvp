@@ -1,4 +1,4 @@
-"""Common API response models and helpers."""
+﻿"""Common API response models and helpers."""
 
 from typing import Generic, Literal, TypeVar
 
@@ -108,7 +108,7 @@ class ModuleListItemData(BaseModel):
     description: str | None
     module_version_id: int
     version_no: int
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     row_count: int
     first_work_text: str | None
@@ -132,7 +132,7 @@ class ModuleVersionListItemData(BaseModel):
 
     module_version_id: int
     version_no: int
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     row_count: int
     source_xlsx_path: str | None
@@ -372,7 +372,7 @@ class ModuleDetailData(BaseModel):
     description: str | None
     module_version_id: int
     version_no: int
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     row_count: int
     source_xlsx_path: str | None
@@ -444,7 +444,7 @@ class SourceDocListItemData(BaseModel):
     description: str | None
     source_doc_version_id: int
     version_no: int
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     module_count: int
     enabled_module_count: int
@@ -500,7 +500,7 @@ class SourceDocModuleItemData(BaseModel):
     module_name: str
     module_version_id: int
     module_version_no: int
-    module_status: Literal["draft", "published", "archived"]
+    module_status: Literal["draft", "review_requested", "returned", "published", "archived"]
     module_status_label: str
     rows: list[ModuleRowData]
 
@@ -514,7 +514,7 @@ class SourceDocDetailData(BaseModel):
     description: str | None
     source_doc_version_id: int
     version_no: int
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     change_note: str | None
     module_count: int
@@ -528,7 +528,7 @@ class SourceDocDetailData(BaseModel):
 class ApprovalTransitionData(BaseModel):
     """Allowed approval transition for a target."""
 
-    to_status: Literal["draft", "published", "archived"]
+    to_status: Literal["draft", "review_requested", "returned", "published", "archived"]
     to_status_label: str
     action_label: str
 
@@ -537,9 +537,9 @@ class ApprovalStatusHistoryItemData(BaseModel):
     """Approval status history item response payload."""
 
     history_id: int
-    from_status: Literal["draft", "published", "archived"] | None
+    from_status: Literal["draft", "review_requested", "returned", "published", "archived"] | None
     from_status_label: str | None
-    to_status: Literal["draft", "published", "archived"]
+    to_status: Literal["draft", "review_requested", "returned", "published", "archived"]
     to_status_label: str
     action_label: str
     changed_by: str | None
@@ -555,7 +555,7 @@ class ApprovalStatusListItemData(BaseModel):
     target_name: str
     target_type: Literal["source-doc", "module"]
     version_no: int
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     next_action: str
     module_count: int
@@ -578,7 +578,7 @@ class ApprovalStatusDetailData(BaseModel):
     target_name: str
     target_type: Literal["source-doc", "module"]
     version_no: int
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     status_label: str
     next_action: str
     module_count: int
@@ -595,7 +595,7 @@ class ApprovalStatusDetailData(BaseModel):
 class ApprovalStatusUpdateRequest(BaseModel):
     """Approval status update request payload."""
 
-    status: Literal["draft", "published", "archived"]
+    status: Literal["draft", "review_requested", "returned", "published", "archived"]
     changed_by: str | None = None
     note: str | None = None
 
@@ -754,3 +754,4 @@ def error_response(message: str) -> ApiResponse[None]:
     """
 
     return ApiResponse(result="error", data=None, message=message)
+
