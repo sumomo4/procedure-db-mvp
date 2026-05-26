@@ -644,6 +644,8 @@ def test_create_module_creates_new_version_for_existing_module_key(monkeypatch: 
                     "Updated from Excel",
                     41,
                     2,
+                    1,
+                    0,
                     "draft",
                     "imports/MOD-004-v2.xlsx",
                     "codex",
@@ -674,6 +676,7 @@ def test_create_module_creates_new_version_for_existing_module_key(monkeypatch: 
             ],
             fetchone_results=[
                 (4,),
+                None,
                 None,
                 (1, 0),
                 (2,),
@@ -725,34 +728,88 @@ def test_create_module_creates_new_version_for_existing_module_key(monkeypatch: 
     assert any(parameters.get("version_no") == 2 for _, parameters in fake_cursor.executions)
 
 
-def test_create_module_rejects_existing_module_key_when_draft_exists(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Existing module_key should be rejected when a draft version already exists."""
+def test_create_module_updates_existing_draft_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing module_key with draft version should replace that draft from Excel input."""
 
-    install_fake_psycopg(
+    fake_cursor = install_fake_psycopg(
         monkeypatch,
         FakeCursor(
-            rows=[],
+            rows=[
+                (
+                    4,
+                    "MOD-004",
+                    "Updated module",
+                    "Updated draft from Excel",
+                    41,
+                    2,
+                    0,
+                    1,
+                    "draft",
+                    "imports/MOD-004-draft.xlsx",
+                    "codex",
+                    "09:00",
+                    "CS",
+                    ">",
+                    "device-01",
+                    '[{"slot_no": 1, "header_time_text": "09:00", "target_text": "CS", "p_text": ">", "target_device_text": "device-01"}]',
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    datetime(2026, 4, 22, 9, 0, tzinfo=timezone.utc),
+                    402,
+                    1,
+                    "step",
+                    "1",
+                    "1",
+                    "1",
+                    "Tech doc",
+                    "Run updated draft command",
+                    0,
+                    "Succeeded",
+                    None,
+                    None,
+                    None,
+                    None,
+                    '[{"slot_no": 1, "time_text": null, "window_text": null, "p_text": null, "command_text": null}]',
+                    "[]",
+                ),
+            ],
             fetchone_results=[
                 (4,),
-                (1,),
+                (41, 2, 0, 1),
+                (402,),
             ],
         ),
     )
     payload = ModuleCreateRequest(
         module_key="MOD-004",
         module_name="Updated module",
+        description="Updated draft from Excel",
+        source_xlsx_path="imports/MOD-004-draft.xlsx",
+        created_by="codex",
         rows=[
             ModuleCreateRowInput(
                 row_order=1,
                 row_type="step",
-                work_text="Run updated command",
+                major_no="1",
+                middle_no="1",
+                minor_no="1",
+                tech_doc_text="Tech doc",
+                work_text="Run updated draft command",
                 indent_level=0,
+                expected_result="Succeeded",
             ),
         ],
     )
 
-    with pytest.raises(ValueError, match="draft module version already exists"):
-        create_module(AppSettings(), payload)
+    result = create_module(AppSettings(), payload)
+
+    assert result.module_id == 4
+    assert result.version_no == 2
+    assert result.version_label == "ver.0.1"
+    assert result.rows[0].work_text == "Run updated draft command"
+    executed_queries = "\n".join(query for query, _ in fake_cursor.executions)
+    assert "UPDATE proc.module_versions" in executed_queries
+    assert "DELETE FROM proc.module_rows" in executed_queries
+    assert "INSERT INTO proc.module_versions" not in executed_queries
 
 
 def test_update_module_version_status_publishes_as_next_major_version(

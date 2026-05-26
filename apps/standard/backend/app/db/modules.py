@@ -1042,15 +1042,39 @@ def _latest_module_display_version(cursor: Any, module_id: int) -> tuple[int, in
     return (int(row[0] or 0), int(row[1] or 0))
 
 
-def _has_draft_module_version(cursor: Any, module_id: int) -> bool:
-    """Return whether the module already has an editable/requested in-flight version."""
+def _find_draft_module_version(cursor: Any, module_id: int) -> tuple[int, int, int, int] | None:
+    """Return an editable draft module version for a module."""
+
+    cursor.execute(
+        """
+        SELECT
+            module_version_id,
+            version_no,
+            version_major,
+            version_minor
+        FROM proc.module_versions
+        WHERE module_id = %(module_id)s
+          AND status = 'draft'
+        ORDER BY version_no DESC
+        LIMIT 1;
+        """,
+        {"module_id": module_id},
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return (int(row[0]), int(row[1]), int(row[2] or 0), int(row[3] or 0))
+
+
+def _has_review_requested_module_version(cursor: Any, module_id: int) -> bool:
+    """Return whether the module has a locked review-requested version."""
 
     cursor.execute(
         """
         SELECT 1
         FROM proc.module_versions
         WHERE module_id = %(module_id)s
-          AND status IN ('draft', 'review_requested')
+          AND status = 'review_requested'
         LIMIT 1;
         """,
         {"module_id": module_id},
@@ -1557,6 +1581,7 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
             with connection.cursor() as cursor:
                 _ensure_module_version_number_columns(cursor)
                 normalized_module_key = _normalize_module_key(payload.module_key)
+                module_version_id: int | None = None
                 if normalized_module_key is None:
                     normalized_module_key = _generate_next_module_key(cursor)
                     existing_module_id = None
@@ -1586,10 +1611,14 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                     module_version_minor = 0
                 else:
                     module_id = existing_module_id
-                    if _has_draft_module_version(cursor, module_id):
-                        raise ValueError("draft module version already exists.")
-                    module_version_major, module_version_minor = _latest_module_display_version(cursor, module_id)
-                    module_version_no = _next_module_version_no(cursor, module_id)
+                    draft_version = _find_draft_module_version(cursor, module_id)
+                    if draft_version is not None:
+                        module_version_id, module_version_no, module_version_major, module_version_minor = draft_version
+                    elif _has_review_requested_module_version(cursor, module_id):
+                        raise ValueError("review requested module version already exists.")
+                    else:
+                        module_version_major, module_version_minor = _latest_module_display_version(cursor, module_id)
+                        module_version_no = _next_module_version_no(cursor, module_id)
                     cursor.execute(
                         """
                         UPDATE proc.modules
@@ -1606,73 +1635,101 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
                         },
                     )
 
-                cursor.execute(
-                    """
-                    INSERT INTO proc.module_versions (
-                        module_id,
-                        version_no,
-                        version_major,
-                        version_minor,
-                        status,
-                        change_note,
-                        source_xlsx_path,
-                        source_sha256,
-                        created_by,
-                        header_time_text,
-                        target_text,
-                        common_p_text,
-                        target_device_text,
-                        device_headers_json
+                version_parameters = {
+                    "module_id": module_id,
+                    "version_no": module_version_no,
+                    "version_major": module_version_major,
+                    "version_minor": module_version_minor,
+                    "change_note": payload.change_note,
+                    "source_xlsx_path": payload.source_xlsx_path,
+                    "source_sha256": payload.source_sha256,
+                    "created_by": payload.created_by,
+                    "header_time_text": primary_device_header.header_time_text,
+                    "target_text": primary_device_header.target_text,
+                    "common_p_text": primary_device_header.p_text,
+                    "target_device_text": primary_device_header.target_device_text,
+                    "device_headers_json": json.dumps(
+                        [
+                            {
+                                "slot_no": header.slot_no,
+                                "header_time_text": header.header_time_text,
+                                "target_text": header.target_text,
+                                "p_text": header.p_text,
+                                "target_device_text": header.target_device_text,
+                            }
+                            for header in normalized_device_headers
+                        ]
+                    ),
+                }
+                if module_version_id is None:
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.module_versions (
+                            module_id,
+                            version_no,
+                            version_major,
+                            version_minor,
+                            status,
+                            change_note,
+                            source_xlsx_path,
+                            source_sha256,
+                            created_by,
+                            header_time_text,
+                            target_text,
+                            common_p_text,
+                            target_device_text,
+                            device_headers_json
+                        )
+                        VALUES (
+                            %(module_id)s,
+                            %(version_no)s,
+                            %(version_major)s,
+                            %(version_minor)s,
+                            'draft',
+                            %(change_note)s,
+                            %(source_xlsx_path)s,
+                            %(source_sha256)s,
+                            %(created_by)s,
+                            %(header_time_text)s,
+                            %(target_text)s,
+                            %(common_p_text)s,
+                            %(target_device_text)s,
+                            %(device_headers_json)s
+                        )
+                        RETURNING module_version_id;
+                        """,
+                        version_parameters,
                     )
-                    VALUES (
-                        %(module_id)s,
-                        %(version_no)s,
-                        %(version_major)s,
-                        %(version_minor)s,
-                        'draft',
-                        %(change_note)s,
-                        %(source_xlsx_path)s,
-                        %(source_sha256)s,
-                        %(created_by)s,
-                        %(header_time_text)s,
-                        %(target_text)s,
-                        %(common_p_text)s,
-                        %(target_device_text)s,
-                        %(device_headers_json)s
+                    inserted_version = cursor.fetchone()
+                    if inserted_version is None:
+                        raise DatabaseConnectionError("Module create failed.")
+                    module_version_id = int(inserted_version[0])
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE proc.module_versions
+                        SET
+                            change_note = %(change_note)s,
+                            source_xlsx_path = %(source_xlsx_path)s,
+                            source_sha256 = %(source_sha256)s,
+                            created_by = %(created_by)s,
+                            header_time_text = %(header_time_text)s,
+                            target_text = %(target_text)s,
+                            common_p_text = %(common_p_text)s,
+                            target_device_text = %(target_device_text)s,
+                            device_headers_json = %(device_headers_json)s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE module_version_id = %(module_version_id)s;
+                        """,
+                        {**version_parameters, "module_version_id": module_version_id},
                     )
-                    RETURNING module_version_id;
-                    """,
-                    {
-                        "module_id": module_id,
-                        "version_no": module_version_no,
-                        "version_major": module_version_major,
-                        "version_minor": module_version_minor,
-                        "change_note": payload.change_note,
-                        "source_xlsx_path": payload.source_xlsx_path,
-                        "source_sha256": payload.source_sha256,
-                        "created_by": payload.created_by,
-                        "header_time_text": primary_device_header.header_time_text,
-                        "target_text": primary_device_header.target_text,
-                        "common_p_text": primary_device_header.p_text,
-                        "target_device_text": primary_device_header.target_device_text,
-                        "device_headers_json": json.dumps(
-                            [
-                                {
-                                    "slot_no": header.slot_no,
-                                    "header_time_text": header.header_time_text,
-                                    "target_text": header.target_text,
-                                    "p_text": header.p_text,
-                                    "target_device_text": header.target_device_text,
-                                }
-                                for header in normalized_device_headers
-                            ]
-                        ),
-                    },
-                )
-                inserted_version = cursor.fetchone()
-                if inserted_version is None:
-                    raise DatabaseConnectionError("Module create failed.")
-                module_version_id = int(inserted_version[0])
+                    cursor.execute(
+                        """
+                        DELETE FROM proc.module_rows
+                        WHERE module_version_id = %(module_version_id)s;
+                        """,
+                        {"module_version_id": module_version_id},
+                    )
 
                 for row in sorted(payload.rows, key=lambda item: item.row_order):
                     normalized_row_device_entries = _normalize_row_device_entries(row, device_slot_nos)
