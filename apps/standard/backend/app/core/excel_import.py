@@ -174,9 +174,20 @@ def _read_xlsx_shared_strings(archive: ZipFile) -> list[str]:
     root = ElementTree.fromstring(archive.read(shared_strings_path))
     values: list[str] = []
     for item in root.findall("main:si", OFFICE_DOCUMENT_NS):
-        text_parts = [text_node.text or "" for text_node in item.findall(".//main:t", OFFICE_DOCUMENT_NS)]
-        values.append("".join(text_parts))
+        values.append(_read_xlsx_text_without_phonetics(item))
     return values
+
+
+def _read_xlsx_text_without_phonetics(node: ElementTree.Element) -> str:
+    """Read OOXML text nodes while excluding Excel phonetic guide text."""
+
+    text_parts = [text_node.text or "" for text_node in node.findall("main:t", OFFICE_DOCUMENT_NS)]
+    text_parts.extend(
+        text_node.text or ""
+        for run_node in node.findall("main:r", OFFICE_DOCUMENT_NS)
+        for text_node in run_node.findall("main:t", OFFICE_DOCUMENT_NS)
+    )
+    return "".join(text_parts)
 
 
 def _extract_sheet_rows(archive: ZipFile, sheet_path: str) -> tuple[str | None, list[tuple[int, dict[str, str | None]]]]:
@@ -199,8 +210,8 @@ def _extract_sheet_rows(archive: ZipFile, sheet_path: str) -> tuple[str | None, 
             value: str | None
 
             if cell_type == "inlineStr":
-                inline_texts = [text_node.text or "" for text_node in cell_node.findall(".//main:t", OFFICE_DOCUMENT_NS)]
-                value = "".join(inline_texts)
+                inline_string_node = cell_node.find("main:is", OFFICE_DOCUMENT_NS)
+                value = _read_xlsx_text_without_phonetics(inline_string_node) if inline_string_node is not None else None
             elif cell_type == "e" and "vm" in cell_node.attrib:
                 value = None
             else:

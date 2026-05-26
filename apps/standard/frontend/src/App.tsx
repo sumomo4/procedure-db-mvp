@@ -688,6 +688,15 @@ function formatVersionLabel(item: { version_no: number; version_label?: string |
   return item.version_label ?? `ver.${item.version_no}.0`;
 }
 
+function formatDiffVersionLabel(item: {
+  version_no: number;
+  version_label?: string | null;
+  status_label?: string | null;
+}): string {
+  const statusLabel = item.status_label ? ` / ${item.status_label}` : "";
+  return `${formatVersionLabel(item)} / 内部版 v${item.version_no}${statusLabel}`;
+}
+
 function canRunApprovalTransition(
   role: AuthRole | undefined,
   currentStatus: ModuleApiStatus,
@@ -2170,7 +2179,7 @@ function ModuleDiffPanel({
             <option value="">未選択</option>
             {versionOptions.map((version) => (
               <option key={`from-${version.module_version_id}`} value={version.version_no}>
-                {`${formatVersionLabel(version)} / ${version.status_label}`}
+                {formatDiffVersionLabel(version)}
               </option>
             ))}
           </select>
@@ -2184,16 +2193,16 @@ function ModuleDiffPanel({
             <option value="">未選択</option>
             {versionOptions.map((version) => (
               <option key={`to-${version.module_version_id}`} value={version.version_no}>
-                {`${formatVersionLabel(version)} / ${version.status_label}`}
+                {formatDiffVersionLabel(version)}
               </option>
             ))}
           </select>
         </label>
       </div>
       <div className="module-diff-meta">
-        <Fact label="比較元" value={fromVersion === null ? "-" : formatVersionLabel(fromVersion)} />
-        <Fact label="比較先" value={toVersion === null ? "-" : formatVersionLabel(toVersion)} />
-        <Fact label="表示中の版" value={currentVersion === null ? `ver.${currentVersionNo}.0` : formatVersionLabel(currentVersion)} />
+        <Fact label="比較元" value={fromVersion === null ? "-" : formatDiffVersionLabel(fromVersion)} />
+        <Fact label="比較先" value={toVersion === null ? "-" : formatDiffVersionLabel(toVersion)} />
+        <Fact label="表示中の版" value={currentVersion === null ? `内部版 v${currentVersionNo}` : formatDiffVersionLabel(currentVersion)} />
       </div>
       {state.item ? (
         <>
@@ -2212,7 +2221,7 @@ function ModuleDiffPanel({
           ) : (
             <div className="module-diff-empty">
               <strong>差分はありません</strong>
-              <span>{`${fromVersion === null ? `ver.${state.item.from_version}.0` : formatVersionLabel(fromVersion)} と ${toVersion === null ? `ver.${state.item.to_version}.0` : formatVersionLabel(toVersion)} の手順行は一致しています。`}</span>
+              <span>{`${fromVersion === null ? `内部版 v${state.item.from_version}` : formatDiffVersionLabel(fromVersion)} と ${toVersion === null ? `内部版 v${state.item.to_version}` : formatDiffVersionLabel(toVersion)} の手順行は一致しています。`}</span>
             </div>
           )}
           {unchangedCount > 0 ? (

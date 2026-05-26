@@ -116,12 +116,124 @@ def _create_test_workbook_bytes(
     return buffer.getvalue()
 
 
+def _create_workbook_bytes_from_worksheet_xml(
+    sheet_name: str,
+    worksheet_xml: str,
+    *,
+    shared_strings_xml: str | None = None,
+) -> bytes:
+    """Build a minimal XLSX archive from raw worksheet XML."""
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="'
+        f"{sheet_name}"
+        '" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    workbook_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/>'
+        "</Relationships>"
+    )
+
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
+        if shared_strings_xml is not None:
+            archive.writestr("xl/sharedStrings.xml", shared_strings_xml)
+
+    return buffer.getvalue()
+
+
 def test_normalize_excel_cell_text_trims_string_values() -> None:
     """Whitespace-only values should be treated as empty."""
 
     assert normalize_excel_cell_text("  sample  ") == "sample"
     assert normalize_excel_cell_text("   ") is None
     assert normalize_excel_cell_text(None) is None
+
+
+def test_build_module_create_request_from_workbook_bytes_ignores_inline_phonetic_text() -> None:
+    """Excel phonetic guide text should not be mixed into imported cell text."""
+
+    workbook_bytes = _create_workbook_bytes_from_worksheet_xml(
+        "SheetImport",
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData>"
+        '<row r="1">'
+        '<c r="A1" t="inlineStr"><is><t>major</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>middle</t></is></c>'
+        '<c r="C1" t="inlineStr"><is><t>minor</t></is></c>'
+        '<c r="E1" t="inlineStr"><is><t>work</t></is></c>'
+        "</row>"
+        '<row r="2">'
+        '<c r="A2" t="inlineStr"><is><t>1</t></is></c>'
+        '<c r="B2" t="inlineStr"><is><t>1</t></is></c>'
+        '<c r="C2" t="inlineStr"><is><t>1</t></is></c>'
+        '<c r="E2" t="inlineStr"><is>'
+        '<r><t>画像入りモジュール</t></r>'
+        '<rPh sb="0" eb="2"><t>ガゾウイ</t></rPh>'
+        "</is></c>"
+        "</row>"
+        "</sheetData>"
+        "</worksheet>",
+    )
+
+    payload = build_module_create_request_from_workbook_bytes(
+        workbook_bytes=workbook_bytes,
+        filename="sample.xlsx",
+    )
+
+    assert payload.rows[0].work_text == "画像入りモジュール"
+
+
+def test_build_module_create_request_from_workbook_bytes_ignores_shared_string_phonetic_text() -> None:
+    """Shared string phonetic guide text should not be imported as visible text."""
+
+    workbook_bytes = _create_workbook_bytes_from_worksheet_xml(
+        "SheetImport",
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData>"
+        '<row r="1">'
+        '<c r="A1" t="inlineStr"><is><t>major</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>middle</t></is></c>'
+        '<c r="C1" t="inlineStr"><is><t>minor</t></is></c>'
+        '<c r="E1" t="inlineStr"><is><t>work</t></is></c>'
+        "</row>"
+        '<row r="2">'
+        '<c r="A2" t="inlineStr"><is><t>1</t></is></c>'
+        '<c r="B2" t="inlineStr"><is><t>1</t></is></c>'
+        '<c r="C2" t="inlineStr"><is><t>1</t></is></c>'
+        '<c r="E2" t="s"><v>0</v></c>'
+        "</row>"
+        "</sheetData>"
+        "</worksheet>",
+        shared_strings_xml=(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="1" uniqueCount="1">'
+            "<si>"
+            "<r><t>連絡事項</t></r>"
+            '<rPh sb="0" eb="4"><t>レンラクジコウ</t></rPh>'
+            "</si>"
+            "</sst>"
+        ),
+    )
+
+    payload = build_module_create_request_from_workbook_bytes(
+        workbook_bytes=workbook_bytes,
+        filename="sample.xlsx",
+    )
+
+    assert payload.rows[0].work_text == "連絡事項"
 
 
 def test_extract_work_text_and_indent_level_prefers_leftmost_work_column() -> None:
