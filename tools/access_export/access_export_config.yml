@@ -1,0 +1,15 @@
+exports:
+  - name: unit_config
+    access_table: ユニット構成
+    output_file: ユニット構成.xlsx
+    sheet_name: ユニット構成
+
+  - name: sbc
+    access_table: SBC
+    output_file: SBC.xlsx
+    sheet_name: SBC
+
+  - name: common_values
+    access_table: case_common_values
+    output_file: case_common_values.xlsx
+    sheet_name: case_common_values
