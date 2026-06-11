@@ -4,7 +4,7 @@ import { DevicePager, PreviewFrame, PreviewOverlay } from "./previewUi";
 
 type Status = "Draft" | "approval" | "archive";
 
-type AuthRole = "member" | "approver";
+type AuthRole = "member" | "approver" | "admin";
 
 type AuthUser = {
   username: string;
@@ -27,6 +27,12 @@ const demoUsers: Record<string, AuthUser & { password: string }> = {
     displayName: "承認者ユーザー",
     role: "approver",
   },
+  admin: {
+    username: "admin",
+    password: "admin",
+    displayName: "管理者ユーザー",
+    role: "admin",
+  },
 };
 
 function getStoredAuthUser(): AuthUser | null {
@@ -40,7 +46,7 @@ function getStoredAuthUser(): AuthUser | null {
     if (
       typeof parsedUser.username === "string" &&
       typeof parsedUser.displayName === "string" &&
-      (parsedUser.role === "member" || parsedUser.role === "approver")
+      (parsedUser.role === "member" || parsedUser.role === "approver" || parsedUser.role === "admin")
     ) {
       return {
         username: parsedUser.username,
@@ -64,10 +70,18 @@ function clearAuthUser(): void {
 }
 
 function getAuthRoleLabel(role: AuthRole): string {
+  if (role === "admin") {
+    return "管理者";
+  }
+
   return role === "approver" ? "承認者" : "メンバー";
 }
 
 function getAuthRoleDescription(role: AuthRole): string {
+  if (role === "admin") {
+    return "プレースホルダ設定など、管理者向けの設定を確認・変更できます。";
+  }
+
   return role === "approver"
     ? "承認依頼中の確認、差戻し、承認、保管を実行できます。"
     : "作成中または差戻し済みの原本・モジュールに対して承認依頼を実行できます。";
@@ -702,15 +716,17 @@ function canRunApprovalTransition(
   currentStatus: ModuleApiStatus,
   toStatus: ModuleApiStatus,
 ): boolean {
+  const canRequestReview = (currentStatus === "draft" || currentStatus === "returned") && toStatus === "review_requested";
+  const canReview =
+    (currentStatus === "review_requested" && (toStatus === "published" || toStatus === "returned"))
+    || (currentStatus === "published" && toStatus === "archived");
+
   if (role === "member") {
-    return (currentStatus === "draft" || currentStatus === "returned") && toStatus === "review_requested";
+    return canRequestReview;
   }
 
-  if (role === "approver") {
-    return (
-      (currentStatus === "review_requested" && (toStatus === "published" || toStatus === "returned"))
-      || (currentStatus === "published" && toStatus === "archived")
-    );
+  if (role === "approver" || role === "admin") {
+    return canRequestReview || canReview;
   }
 
   return false;
@@ -833,13 +849,15 @@ function Shell() {
         </div>
         <nav aria-label="主要メニュー">
           <NavItem to="/home" label="HOME" icon="⌂" />
-          <NavItem to="/modules/search" label="モジュール検索" icon="⌕" />
           <NavItem to="/modules/register" label="モジュール登録" icon="⇧" />
-          <NavItem to="/documents/search" label="原本参照" icon="▤" />
+          <NavItem to="/modules/search" label="モジュール検索" icon="⌕" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
+          <NavItem to="/documents/search" label="原本参照" icon="▤" />
           <NavItem to="/approval" label="承認状態確認" icon="✓" />
           <NavItem to="/case-docs" label={caseDocText.title} icon="CS" end />
-          <NavItem to="/case-docs/placeholders" label={caseDocPlaceholderText.title} icon="{}" />
+          {currentUser.role === "admin" ? (
+            <NavItem to="/case-docs/placeholders" label={caseDocPlaceholderText.title} icon="{}" />
+          ) : null}
         </nav>
         <div className="flow-box">
           <span>現在の導線</span>
@@ -4491,7 +4509,9 @@ function LegacyDocumentEditPage() {
       });
 
       try {
-        const response = await fetch(buildApiUrl("/api/v1/modules"), {
+        const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
+        endpoint.searchParams.set("status", "published");
+        const response = await fetch(endpoint.toString(), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
@@ -4508,7 +4528,7 @@ function LegacyDocumentEditPage() {
         setModuleListState({
           status: "available",
           items: responseBody.data.items,
-          message: responseBody.message || "利用可能なモジュールを取得しました。",
+          message: responseBody.message || "承認済みモジュールを取得しました。",
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -4816,7 +4836,9 @@ function DocumentEditPage() {
       });
 
       try {
-        const response = await fetch(buildApiUrl("/api/v1/modules"), {
+        const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
+        endpoint.searchParams.set("status", "published");
+        const response = await fetch(endpoint.toString(), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
@@ -4833,7 +4855,7 @@ function DocumentEditPage() {
         setModuleListState({
           status: "available",
           items: responseBody.data.items,
-          message: responseBody.message || "モジュール一覧を取得しました。",
+          message: responseBody.message || "承認済みモジュールを取得しました。",
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -6240,6 +6262,7 @@ function CaseDocsPage() {
 }
 
 function CaseDocPlaceholdersPage() {
+  const currentUser = getStoredAuthUser();
   const [placeholderState, setPlaceholderState] = useState<CaseDocPlaceholderMappingListState>({
     status: "loading",
     items: [],
@@ -6258,6 +6281,10 @@ function CaseDocPlaceholdersPage() {
   });
 
   useEffect(() => {
+    if (currentUser?.role !== "admin") {
+      return;
+    }
+
     const abortController = new AbortController();
 
     async function fetchPlaceholders(): Promise<void> {
@@ -6296,7 +6323,18 @@ function CaseDocPlaceholdersPage() {
     return () => {
       abortController.abort();
     };
-  }, [reloadTick]);
+  }, [currentUser?.role, reloadTick]);
+
+  if (currentUser?.role !== "admin") {
+    return (
+      <Page title={caseDocPlaceholderText.title} description="この画面は管理者ユーザーのみ利用できます。">
+        <section className="empty-state">
+          <h2>表示権限がありません</h2>
+          <p>プレースホルダ一覧は管理者ユーザーでログインした場合のみ表示できます。</p>
+        </section>
+      </Page>
+    );
+  }
 
   const enabledCount = placeholderState.items.filter((item) => item.enabled).length;
   const disabledCount = placeholderState.items.length - enabledCount;
