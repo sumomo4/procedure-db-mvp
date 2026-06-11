@@ -1750,7 +1750,7 @@ th {
   font-weight: 800;
 }
 
-.approval-inline-error {
+.section-band .approval-inline-error {
   margin: -6px 0 14px;
   color: #b64a3a;
   font-weight: 800;
