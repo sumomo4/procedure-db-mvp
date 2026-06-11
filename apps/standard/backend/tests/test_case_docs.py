@@ -2,12 +2,15 @@
 
 from io import BytesIO
 from pathlib import Path
+from hashlib import sha256
+from zipfile import ZipFile
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
+from app.core.case_doc_generation import TEMPLATE_PATH
 from app.core.config import AppSettings
 from app.core.responses import ModuleRowData, ModuleRowImageData, SourceDocDetailData, SourceDocModuleItemData
 
@@ -527,6 +530,28 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS" in workbook.sheetnames
     assert "\u89e3\u6c7a\u5024" in workbook.sheetnames
     assert "\u539f\u672c\u5c55\u958b" in workbook.sheetnames
+    assert "\u30d7\u30ed\u30f3\u30d7\u30c8" in workbook.sheetnames
+    assert "Log" in workbook.sheetnames
+    assert "command_template" in workbook.sheetnames
+    assert "application" in workbook.sheetnames
+    assert workbook.vba_archive is not None
+    with ZipFile(BytesIO(response.content)) as generated_archive:
+        archive_names = generated_archive.namelist()
+        assert "xl/vbaProject.bin" in archive_names
+        assert not any(name.startswith("xl/externalLinks/") for name in archive_names)
+        prompt_sheet_xml = generated_archive.read("xl/worksheets/sheet2.xml").decode("utf-8")
+        prompt_button_xml = generated_archive.read("xl/drawings/vmlDrawing1.vml").decode("utf-8")
+        workbook_xml = generated_archive.read("xl/workbook.xml").decode("utf-8")
+        workbook_rels = generated_archive.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+        assert "<x:FmlaMacro>runCdCreator</x:FmlaMacro>" in prompt_button_xml
+        assert "[0]!runCdCreator" not in prompt_sheet_xml
+        assert "[0]!runCdCreator" not in prompt_button_xml
+        assert "externalReferences" not in workbook_xml
+        assert "externalLink" not in workbook_rels
+        generated_vba_hash = sha256(generated_archive.read("xl/vbaProject.bin")).hexdigest()
+    with ZipFile(TEMPLATE_PATH) as template_archive:
+        template_vba_hash = sha256(template_archive.read("xl/vbaProject.bin")).hexdigest()
+    assert generated_vba_hash == template_vba_hash
     assert workbook["\u539f\u672c\u5c55\u958b"].sheet_state == "hidden"
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
     assert template_sheet["A1"].value == "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63"

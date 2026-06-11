@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import copy
 from io import BytesIO
 from pathlib import Path
+import re
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
@@ -30,6 +32,14 @@ WORK_CONTENT_TRAILING_COLUMN_MIN_WIDTH = 56
 IMAGE_ROW_HEIGHT_POINTS = 150
 IMAGE_MAX_WIDTH_PX = 520
 IMAGE_MAX_HEIGHT_PX = 190
+EXTERNAL_LINK_CONTENT_TYPE_RE = re.compile(
+    r'<Override PartName="/xl/externalLinks/[^"]+" '
+    r'ContentType="application/vnd\.openxmlformats-officedocument\.spreadsheetml\.externalLink\+xml"/>'
+)
+EXTERNAL_REFERENCES_RE = re.compile(r"<externalReferences>.*?</externalReferences>", re.DOTALL)
+EXTERNAL_LINK_RELATIONSHIP_RE = re.compile(
+    r'<Relationship [^>]*Type="http://schemas\.openxmlformats\.org/officeDocument/2006/relationships/externalLink"[^>]*/>'
+)
 BODY_HEADER_TO_FIELD = {
     "\u5927": "major_no",
     "\u4e2d": "middle_no",
@@ -738,6 +748,35 @@ def _write_source_doc_expansion_sheet(sheet: Worksheet, source_doc: SourceDocDet
     sheet.freeze_panes = "A11"
 
 
+def _sanitize_cd_creator_package(workbook_bytes: bytes) -> bytes:
+    """Remove recovered external links and keep the CD Creator button local."""
+
+    source = BytesIO(workbook_bytes)
+    output = BytesIO()
+    with ZipFile(source, "r") as input_archive, ZipFile(output, "w", ZIP_DEFLATED) as output_archive:
+        for item in input_archive.infolist():
+            name = item.filename
+            if name.startswith("xl/externalLinks/"):
+                continue
+
+            data = input_archive.read(name)
+            if name.endswith((".xml", ".vml", ".rels")):
+                text = data.decode("utf-8", errors="strict")
+                text = text.replace('macro="[0]!runCdCreator"', 'macro="runCdCreator"')
+                text = text.replace("<x:FmlaMacro>[0]!runCdCreator</x:FmlaMacro>", "<x:FmlaMacro>runCdCreator</x:FmlaMacro>")
+                if name == "[Content_Types].xml":
+                    text = EXTERNAL_LINK_CONTENT_TYPE_RE.sub("", text)
+                elif name == "xl/workbook.xml":
+                    text = EXTERNAL_REFERENCES_RE.sub("", text)
+                elif name == "xl/_rels/workbook.xml.rels":
+                    text = EXTERNAL_LINK_RELATIONSHIP_RE.sub("", text)
+                data = text.encode("utf-8")
+
+            output_archive.writestr(item, data)
+
+    return output.getvalue()
+
+
 def build_case_doc_workbook_bytes(
     context: CaseDocResolveContextData,
     source_doc: SourceDocDetailData | None = None,
@@ -776,4 +815,4 @@ def build_case_doc_workbook_bytes(
 
     output = BytesIO()
     workbook.save(output)
-    return output.getvalue()
+    return _sanitize_cd_creator_package(output.getvalue())
