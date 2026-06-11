@@ -373,10 +373,24 @@ def _write_target_device_headers(sheet: Worksheet, target_assignments: list[Case
     if target_header_row is None:
         return
 
+    excel_no_row = target_header_row + 1
     host_name_row = target_header_row + 3
     for block_index, assignment in enumerate(target_assignments[: max(1, len(target_assignments))]):
+        target_no_column = _target_block_start_column(block_index) + 1
         target_column = _target_block_start_column(block_index) + TARGET_BLOCK_WIDTH - 1
+        sheet.cell(row=excel_no_row, column=target_no_column, value=block_index + 1)
         sheet.cell(row=host_name_row, column=target_column, value=assignment.host_name)
+
+
+def _device_entry_value(module_row: ModuleRowData, slot_no: int, field_name: str) -> str | None:
+    """Return device-specific row text, falling back only for legacy rows."""
+
+    for entry in module_row.device_entries:
+        if entry.slot_no == slot_no:
+            return getattr(entry, field_name)
+    if module_row.device_entries:
+        return None
+    return getattr(module_row, field_name)
 
 
 def _write_case_doc_title(sheet: Worksheet) -> None:
@@ -457,16 +471,17 @@ def _write_source_doc_body_sheet(
 
         target_count = max(1, len(target_assignments))
         for block_index in range(target_count):
+            slot_no = block_index + 1
             destination_start_column = _target_block_start_column(block_index)
-            for offset, field_name in enumerate(("time_text", "window_text", "p_text", "command_text")):
+            for field_offset, field_name in enumerate(("time_text", "window_text", "p_text", "command_text")):
                 source_column = body_columns[field_name]
-                destination_column = destination_start_column + offset
+                destination_column = destination_start_column + field_offset
                 if destination_column != source_column:
                     _copy_cell_format(
                         body_sheet.cell(row=row_index, column=source_column),
                         body_sheet.cell(row=row_index, column=destination_column),
                     )
-                body_sheet.cell(row=row_index, column=destination_column, value=getattr(source_row, field_name))
+                body_sheet.cell(row=row_index, column=destination_column, value=_device_entry_value(source_row, slot_no, field_name))
 
         _add_source_row_images(body_sheet, source_row, row_index, body_columns)
 
@@ -580,9 +595,11 @@ def _write_resolved_values_sheet(sheet: Worksheet, context: CaseDocResolveContex
     """Write resolved values to an auditable worksheet in the template copy."""
 
     host_assignment_title = _u("\\u30db\\u30b9\\u30c8\\u5272\\u5f53")
+    target_device_slot_title = _u("\\u5bfe\\u8c61\\u88c5\\u7f6e\\u756a\\u53f7\\u5bfe\\u5fdc\\u8868")
     common_value_title = _u("\\u5171\\u901a\\u5024")
     resolved_value_title = _u("\\u89e3\\u6c7a\\u6e08\\u307f\\u5024")
     host_header = [_u("\\u30b9\\u30ed\\u30c3\\u30c8"), _u("\\u88c5\\u7f6e\\u7a2e\\u5225"), _u("\\u7cfb"), _u("\\u30db\\u30b9\\u30c8\\u540d")]
+    target_device_slot_header = [_u("Excel\\u756a\\u53f7"), _u("\\u30b9\\u30ed\\u30c3\\u30c8"), _u("\\u88c5\\u7f6e\\u7a2e\\u5225"), _u("\\u7cfb"), _u("\\u30db\\u30b9\\u30c8\\u540d")]
     common_header = [_u("\\u30ad\\u30fc"), _u("\\u5024"), _u("\\u51fa\\u5178")]
     resolved_header = [_u("\\u5024\\u540d"), _u("\\u5024"), _u("\\u51fa\\u5178\\u30c6\\u30fc\\u30d6\\u30eb"), _u("\\u51fa\\u5178\\u30ab\\u30e9\\u30e0"), _u("\\u30db\\u30b9\\u30c8\\u540d")]
 
@@ -602,6 +619,17 @@ def _write_resolved_values_sheet(sheet: Worksheet, context: CaseDocResolveContex
     rows.extend(
         [assignment.slot_key, assignment.device_type, assignment.system or "-", assignment.host_name]
         for assignment in context.host_assignments
+    )
+    rows.extend(
+        [
+            [],
+            [target_device_slot_title],
+            target_device_slot_header,
+        ]
+    )
+    rows.extend(
+        [slot.excel_no, slot.slot_key, slot.device_type, slot.system or "-", slot.host_name]
+        for slot in context.target_device_slots
     )
     rows.extend(
         [
@@ -627,7 +655,7 @@ def _write_resolved_values_sheet(sheet: Worksheet, context: CaseDocResolveContex
         _write_row(sheet, row_index, values)
         if values and len(values) == 1:
             sheet.cell(row=row_index, column=1).font = Font(bold=True, size=14)
-        if values in (host_header, common_header, resolved_header):
+        if values in (host_header, target_device_slot_header, common_header, resolved_header):
             _style_heading(sheet, row_index)
 
     for column_letter, width in {"A": 24, "B": 28, "C": 22, "D": 24, "E": 24}.items():

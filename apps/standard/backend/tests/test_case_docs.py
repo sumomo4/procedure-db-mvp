@@ -12,7 +12,13 @@ from openpyxl import load_workbook
 
 from app.core.case_doc_generation import TEMPLATE_PATH
 from app.core.config import AppSettings
-from app.core.responses import ModuleRowData, ModuleRowImageData, SourceDocDetailData, SourceDocModuleItemData
+from app.core.responses import (
+    ModuleRowData,
+    ModuleRowDeviceEntryData,
+    ModuleRowImageData,
+    SourceDocDetailData,
+    SourceDocModuleItemData,
+)
 
 
 PNG_BYTES = bytes.fromhex(
@@ -399,6 +405,15 @@ def test_resolve_case_doc_context_returns_no_manual_values(client: TestClient) -
     assert data["target_assignment"]["slot_key"] == "SBC_CL1_0"
     assert data["target_assignment"]["host_name"] == "sbc-tyo-cl1-0"
     assert [item["slot_key"] for item in data["target_assignments"]] == ["SBC_CL1_0"]
+    assert data["target_device_slots"] == [
+        {
+            "excel_no": 1,
+            "slot_key": "SBC_CL1_0",
+            "device_type": "SBC",
+            "system": "0",
+            "host_name": "sbc-tyo-cl1-0",
+        }
+    ]
     assert data["host_assignments"]
     common_values = {item["key"]: item for item in data["common_values"]}
     assert common_values["LOGIN_USER"] == {
@@ -447,6 +462,22 @@ def test_resolve_case_doc_context_accepts_multiple_target_sbc_slots(client: Test
     assert data["target_assignment"]["slot_key"] == "SBC_CL1_1"
     assert [item["slot_key"] for item in data["target_assignments"]] == ["SBC_CL1_1", "SBC_CL1_0"]
     assert [item["host_name"] for item in data["target_assignments"]] == ["sbc-tyo-cl1-1", "sbc-tyo-cl1-0"]
+    assert data["target_device_slots"] == [
+        {
+            "excel_no": 1,
+            "slot_key": "SBC_CL1_1",
+            "device_type": "SBC",
+            "system": "1",
+            "host_name": "sbc-tyo-cl1-1",
+        },
+        {
+            "excel_no": 2,
+            "slot_key": "SBC_CL1_0",
+            "device_type": "SBC",
+            "system": "0",
+            "host_name": "sbc-tyo-cl1-0",
+        },
+    ]
 
 
 def test_resolve_case_doc_context_target_slot_keys_takes_precedence_over_legacy_key(client: TestClient) -> None:
@@ -559,6 +590,7 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
     assert template_sheet["A1"].value == "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63"
     assert template_sheet["K1"].value == "target"
+    assert template_sheet["K2"].value == 1
     assert template_sheet["M4"].value == "sbc-tyo-cl1-0"
     assert template_sheet.column_dimensions["H"].width >= 56
     assert template_sheet["A6"].value == "0"
@@ -765,6 +797,8 @@ def test_generate_case_doc_expands_multiple_target_sbc_blocks(client: TestClient
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
     assert template_sheet["A1"].value == "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63"
     assert template_sheet["K1"].value == "target"
+    assert template_sheet["K2"].value == 1
+    assert template_sheet["O2"].value == 2
     assert template_sheet["M4"].value == "sbc-tyo-cl1-0"
     assert template_sheet["Q4"].value == "sbc-tyo-cl1-1"
     assert template_sheet["J5"].value == "\u6642\u523b"
@@ -773,3 +807,38 @@ def test_generate_case_doc_expands_multiple_target_sbc_blocks(client: TestClient
     assert template_sheet["Q5"].value == "\u30b3\u30de\u30f3\u30c9"
     assert template_sheet["M6"].value == "10.10.1.10"
     assert template_sheet["Q6"].value == "10.10.1.11"
+
+
+def test_generate_case_doc_preserves_device_specific_commands(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Generate API should keep command differences from each source device block."""
+
+    source_doc = _fake_source_doc_detail(1)
+    source_doc.items[0].rows[0].device_entries = [
+        ModuleRowDeviceEntryData(slot_no=1, p_text="TT", command_text="slot-1-only-command"),
+    ]
+    source_doc.items[0].rows[1].device_entries = [
+        ModuleRowDeviceEntryData(slot_no=1, p_text="TT", command_text="slot-1-command"),
+        ModuleRowDeviceEntryData(slot_no=2, p_text="WIN", command_text="slot-2-command"),
+    ]
+    monkeypatch.setattr("app.routers.case_docs.get_source_doc_detail", lambda settings, source_doc_id: source_doc)
+
+    response = client.post(
+        "/api/v1/case-docs/generate",
+        json={
+            "source_doc_id": 1,
+            "prefecture": _tokyo_prefecture(client),
+            "building": _tokyo_building(client),
+            "unit_config_id": "unit-tokyo-001",
+            "target_slot_keys": ["SBC_CL1_0", "SBC_CL1_1"],
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    workbook = load_workbook(BytesIO(response.content), keep_vba=True)
+    template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
+    assert template_sheet["M6"].value == "slot-1-only-command"
+    assert template_sheet["Q6"].value is None
+    assert template_sheet["L7"].value == "TT"
+    assert template_sheet["M7"].value == "slot-1-command"
+    assert template_sheet["P7"].value == "WIN"
+    assert template_sheet["Q7"].value == "slot-2-command"

@@ -510,6 +510,14 @@ type CaseDocHostAssignmentData = {
   host_name: string;
 };
 
+type CaseDocTargetDeviceSlotData = {
+  excel_no: number;
+  slot_key: string;
+  device_type: string;
+  system: string | null;
+  host_name: string;
+};
+
 type CaseDocCommonValueData = {
   key: string;
   value: string;
@@ -531,6 +539,7 @@ type CaseDocResolveContextData = {
   unit_config: CaseDocUnitConfigItemData;
   target_assignment: CaseDocHostAssignmentData;
   target_assignments: CaseDocHostAssignmentData[];
+  target_device_slots: CaseDocTargetDeviceSlotData[];
   host_assignments: CaseDocHostAssignmentData[];
   common_values: CaseDocCommonValueData[];
   resolved_placeholders: CaseDocResolvedPlaceholderData[];
@@ -5428,6 +5437,8 @@ const caseDocText = {
   unit: "\u30e6\u30cb\u30c3\u30c8",
   targetDevice: "\u5bfe\u8c61\u88c5\u7f6e",
   none: "\u672a\u9078\u629e",
+  targetDeviceSlots: "\u5bfe\u8c61\u88c5\u7f6e\u756a\u53f7\u5bfe\u5fdc\u8868",
+  excelNo: "Excel\u756a\u53f7",
   hostAssignments: "\u30db\u30b9\u30c8\u5272\u5f53",
   commonValues: "\u5171\u901a\u5024",
   resolvedValues: "\u89e3\u6c7a\u6e08\u307f\u5024",
@@ -5757,6 +5768,13 @@ function CaseDocsPage() {
     selectedTargetAssignments.length > 0
       ? selectedTargetAssignments.map((item) => item.host_name).join(" / ")
       : caseDocText.none;
+  const selectedTargetDeviceSlots: CaseDocTargetDeviceSlotData[] = selectedTargetAssignments.map((item, index) => ({
+    excel_no: index + 1,
+    slot_key: item.slot_key,
+    device_type: item.device_type,
+    system: item.system,
+    host_name: item.host_name,
+  }));
 
   function toggleTargetSlotKey(slotKey: string): void {
     setSelectedTargetSlotKeys((current) =>
@@ -5969,6 +5987,19 @@ function CaseDocsPage() {
 
       {resolveState.item ? (
         <div className="case-doc-result-grid">
+          <section className="section-band">
+            <h2>{caseDocText.targetDeviceSlots}</h2>
+            <DataTable
+              columns={[caseDocText.excelNo, caseDocText.slot, caseDocText.deviceType, caseDocText.system, caseDocText.hostName]}
+              rows={selectedTargetDeviceSlots.map((item) => [
+                String(item.excel_no),
+                item.slot_key,
+                item.device_type,
+                item.system ?? "-",
+                item.host_name,
+              ])}
+            />
+          </section>
           <section className="section-band">
             <h2>{caseDocText.hostAssignments}</h2>
             <DataTable

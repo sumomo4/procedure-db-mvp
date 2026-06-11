@@ -15,7 +15,7 @@ from app.core.responses import (
     SourceDocListItemData,
     SourceDocModuleItemData,
 )
-from app.db.modules import MODULE_STATUS_LABELS, _map_row_images
+from app.db.modules import MODULE_STATUS_LABELS, _map_device_entries, _map_row_images
 
 
 SOURCE_DOC_STATUS_LABELS = {
@@ -294,6 +294,7 @@ def _build_source_doc_module_rows_query() -> str:
             r.window_template_default,
             r.p_template_default,
             r.command_template_default,
+            r.device_entries_json,
             COALESCE(row_images.images_json, '[]'::jsonb) AS images_json
         FROM selected_version sv
         JOIN proc.blueprint_items bi
@@ -370,7 +371,14 @@ def _map_source_doc_detail_rows(
                 p_text=row[13],
                 command_text=row[14],
                 note=row[7],
-                images=_map_row_images(row[15] if len(row) > 15 else None),
+                device_entries=_map_device_entries(
+                    row[15] if len(row) > 15 else None,
+                    row[11],
+                    row[12],
+                    row[13],
+                    row[14],
+                ),
+                images=_map_row_images(row[16] if len(row) > 16 else None),
             )
         )
 

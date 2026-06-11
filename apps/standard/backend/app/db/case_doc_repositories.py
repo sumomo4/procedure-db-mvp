@@ -25,6 +25,7 @@ from app.core.responses import (
     CaseDocResolvedPlaceholderData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
+    CaseDocTargetDeviceSlotData,
     CaseDocUnitConfigItemData,
     CaseDocUnitConfigListData,
 )
@@ -564,6 +565,19 @@ def _select_target_host_assignments(
     return [sbc_assignments[0]]
 
 
+def _to_target_device_slots(target_assignments: list[CaseDocHostAssignmentData]) -> list[CaseDocTargetDeviceSlotData]:
+    return [
+        CaseDocTargetDeviceSlotData(
+            excel_no=index,
+            slot_key=assignment.slot_key,
+            device_type=assignment.device_type,
+            system=assignment.system,
+            host_name=assignment.host_name,
+        )
+        for index, assignment in enumerate(target_assignments, start=1)
+    ]
+
+
 def _to_host_assignments(hosts: dict[str, object]) -> list[CaseDocHostAssignmentData]:
     return [
         CaseDocHostAssignmentData(
@@ -780,6 +794,7 @@ class SeedCaseDocMasterRepository:
             unit_config=_to_unit_config_item(unit_config),
             target_assignment=target_assignments[0],
             target_assignments=target_assignments,
+            target_device_slots=_to_target_device_slots(target_assignments),
             host_assignments=host_assignments,
             common_values=common_values,
             resolved_placeholders=resolved_placeholders,
@@ -869,6 +884,7 @@ class ExportFileCaseDocMasterRepository:
             unit_config=_to_unit_config_item(unit_config),
             target_assignment=target_assignments[0],
             target_assignments=target_assignments,
+            target_device_slots=_to_target_device_slots(target_assignments),
             host_assignments=host_assignments,
             common_values=common_values,
             resolved_placeholders=resolved_placeholders,

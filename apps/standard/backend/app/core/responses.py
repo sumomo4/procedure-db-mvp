@@ -672,6 +672,16 @@ class CaseDocHostAssignmentData(BaseModel):
     host_name: str
 
 
+class CaseDocTargetDeviceSlotData(BaseModel):
+    """Mapping between generated Excel target number and selected target device."""
+
+    excel_no: int = Field(ge=1, le=20)
+    slot_key: str
+    device_type: str
+    system: str | None = None
+    host_name: str
+
+
 class CaseDocCommonValueData(BaseModel):
     """Common value resolved without manual input."""
 
@@ -741,6 +751,7 @@ class CaseDocResolveContextData(BaseModel):
     unit_config: CaseDocUnitConfigItemData
     target_assignment: CaseDocHostAssignmentData
     target_assignments: list[CaseDocHostAssignmentData]
+    target_device_slots: list[CaseDocTargetDeviceSlotData]
     host_assignments: list[CaseDocHostAssignmentData]
     common_values: list[CaseDocCommonValueData]
     resolved_placeholders: list[CaseDocResolvedPlaceholderData]
