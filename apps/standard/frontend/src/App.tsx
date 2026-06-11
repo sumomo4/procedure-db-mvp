@@ -803,6 +803,7 @@ function App() {
         <Route path="/home" element={<HomePage />} />
         <Route path="/modules/search" element={<ModuleSearchPage />} />
         <Route path="/modules/list" element={<ModuleListPage />} />
+        <Route path="/modules/approval" element={<ModuleApprovalStatusPage />} />
         <Route path="/modules/:moduleId" element={<ModuleDetailPage />} />
         <Route path="/modules/register" element={<ModuleRegisterPageV2 />} />
         <Route path="/documents/search" element={<DocumentSearchPage />} />
@@ -852,6 +853,7 @@ function Shell() {
           <NavItem to="/home" label="HOME" icon="⌂" />
           <NavItem to="/modules/register" label="モジュール登録" icon="⇧" />
           <NavItem to="/modules/search" label="モジュール検索" icon="⌕" />
+          <NavItem to="/modules/approval" label="モジュール承認状態確認" icon="✓" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
           <NavItem to="/documents/search" label="原本参照" icon="▤" />
           <NavItem to="/approval" label="原本承認状態確認" icon="✓" />
@@ -1550,16 +1552,6 @@ function ModuleDetailPage() {
     items: [],
     message: "モジュール版一覧は未取得です。",
   });
-  const [moduleApprovalState, setModuleApprovalState] = useState<ApprovalStatusDetailState>({
-    status: "idle",
-    item: null,
-    message: "対象版を選ぶと承認状態を表示します。",
-  });
-  const [moduleApprovalMutationState, setModuleApprovalMutationState] = useState<ApprovalStatusMutationState>({
-    status: "idle",
-    message: "承認操作を選ぶと状態変更APIを呼び出します。",
-  });
-  const [moduleApprovalComment, setModuleApprovalComment] = useState("");
   const [moduleDiffState, setModuleDiffState] = useState<ModuleDiffState>({
     status: "idle",
     item: null,
@@ -1567,8 +1559,6 @@ function ModuleDetailPage() {
   });
   const [diffFromVersionNo, setDiffFromVersionNo] = useState<number | null>(null);
   const [diffToVersionNo, setDiffToVersionNo] = useState<number | null>(null);
-  const currentUser = getStoredAuthUser();
-  const approvalActor = currentUser?.displayName ?? "";
   const versionOptions = [...versionListState.items].sort((a, b) => a.version_no - b.version_no);
   const nextVersionNo =
     versionListState.items.length > 0
@@ -1635,65 +1625,6 @@ function ModuleDetailPage() {
   }, [moduleId]);
 
   useEffect(() => {
-    if (!item || !moduleId) {
-      setModuleApprovalState({
-        status: "idle",
-        item: null,
-        message: "対象版を選ぶと承認状態を表示します。",
-      });
-      return;
-    }
-
-    const abortController = new AbortController();
-    const targetVersionNo = item.version_no;
-
-    async function fetchModuleApprovalStatus(): Promise<void> {
-      setModuleApprovalState({
-        status: "loading",
-        item: null,
-        message: "モジュール版の承認状態を取得しています。",
-      });
-
-      try {
-        const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}/versions/${targetVersionNo}/status`), {
-          signal: abortController.signal,
-        });
-        const responseBody = await readApiResponse<ApprovalStatusDetailData>(response);
-
-        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
-          setModuleApprovalState({
-            status: "unavailable",
-            item: null,
-            message: responseBody.message || `モジュール版の承認状態取得に失敗しました。HTTP ${response.status}`,
-          });
-          return;
-        }
-
-        setModuleApprovalState({
-          status: "available",
-          item: responseBody.data,
-          message: responseBody.message || "モジュール版の承認状態を取得しました。",
-        });
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-        setModuleApprovalState({
-          status: "unavailable",
-          item: null,
-          message: "モジュール版の承認状態取得中にAPI接続で失敗しました。",
-        });
-      }
-    }
-
-    void fetchModuleApprovalStatus();
-
-    return () => {
-      abortController.abort();
-    };
-  }, [item?.version_no, moduleId]);
-
-  useEffect(() => {
     const versionNos = versionOptions.map((version) => version.version_no);
     const previousVersionNo =
       item && versionNos.includes(item.version_no - 1)
@@ -1709,97 +1640,10 @@ function ModuleDetailPage() {
       item: null,
       message: "比較元と比較先を選ぶと差分を確認できます。",
     });
-    setModuleApprovalMutationState({
-      status: "idle",
-      message: "承認操作を選ぶと状態変更APIを呼び出します。",
-    });
-    setModuleApprovalComment("");
   }, [item?.version_no, versionListState.items]);
 
   function handleVersionSelect(versionNo: number): void {
     setSearchParams({ version_no: String(versionNo) });
-  }
-
-  async function handleModuleApprovalTransition(toStatus: ModuleApiStatus): Promise<void> {
-    if (!item || !moduleId || moduleApprovalState.item === null) {
-      return;
-    }
-    if (!canRunApprovalTransition(currentUser?.role, moduleApprovalState.item.status, toStatus)) {
-      setModuleApprovalMutationState({
-        status: "error",
-        message: "現在のユーザー権限では、この承認操作は実行できません。",
-      });
-      return;
-    }
-
-    const normalizedActor = approvalActor.trim();
-    const normalizedComment = moduleApprovalComment.trim();
-    if (normalizedActor.length === 0) {
-      setModuleApprovalMutationState({
-        status: "error",
-        message: "実行者を確認できません。再ログインしてください。",
-      });
-      return;
-    }
-    if (isReturnTransition(moduleApprovalState.item.status, toStatus) && normalizedComment.length === 0) {
-      setModuleApprovalMutationState({
-        status: "error",
-        message: returnReasonRequiredMessage,
-      });
-      return;
-    }
-
-    setModuleApprovalMutationState({
-      status: "submitting",
-      message: "モジュール版の承認状態を変更しています。",
-    });
-
-    try {
-      const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}/versions/${item.version_no}/status`), {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          status: toStatus,
-          changed_by: normalizedActor,
-          note: normalizedComment || undefined,
-        }),
-      });
-      const responseBody = await readApiResponse<ApprovalStatusDetailData>(response);
-
-      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
-        setModuleApprovalMutationState({
-          status: "error",
-          message: responseBody.message || `モジュール版の承認状態変更に失敗しました。HTTP ${response.status}`,
-        });
-        return;
-      }
-
-      setModuleApprovalState({
-        status: "available",
-        item: responseBody.data,
-        message: responseBody.message || "モジュール版の承認状態を更新しました。",
-      });
-      setModuleApprovalMutationState({
-        status: "success",
-        message: responseBody.message || "モジュール版の承認状態を更新しました。",
-      });
-      setModuleApprovalComment("");
-      setVersionListState((current) => ({
-        ...current,
-        items: current.items.map((version) =>
-          version.version_no === item.version_no
-            ? { ...version, status: responseBody.data!.status, status_label: responseBody.data!.status_label }
-            : version,
-        ),
-      }));
-    } catch (error) {
-      setModuleApprovalMutationState({
-        status: "error",
-        message: "モジュール版の承認状態変更中にAPI接続で失敗しました。",
-      });
-    }
   }
 
   async function handleFetchModuleDiff(): Promise<void> {
@@ -1953,14 +1797,21 @@ function ModuleDetailPage() {
             state={versionListState}
             onSelectVersion={handleVersionSelect}
           />
-          <ModuleApprovalPanel
-            approvalState={moduleApprovalState}
-            mutationState={moduleApprovalMutationState}
-            comment={moduleApprovalComment}
-            currentUser={currentUser}
-            onCommentChange={setModuleApprovalComment}
-            onApplyTransition={handleModuleApprovalTransition}
-          />
+          <section className="section-band">
+            <div className="section-heading-row">
+              <div>
+                <h2>承認状態</h2>
+                <p>承認依頼、承認、差戻し、保管は専用画面で行います。</p>
+              </div>
+              <ModuleStatusPill status={item.status} label={item.status_label} />
+            </div>
+            <Toolbar>
+              <button className="secondary" type="button" onClick={() => navigate("/modules/approval")}>
+                <span aria-hidden="true">→</span>
+                モジュール承認状態確認へ
+              </button>
+            </Toolbar>
+          </section>
           <ModuleDiffPanel
             currentVersionNo={item.version_no}
             versionOptions={versionOptions}
@@ -2036,112 +1887,6 @@ function ModuleVersionPanel({
         </div>
       ) : (
         <p>表示できる版はありません。</p>
-      )}
-    </section>
-  );
-}
-
-function ModuleApprovalPanel({
-  approvalState,
-  mutationState,
-  comment,
-  currentUser,
-  onCommentChange,
-  onApplyTransition,
-}: {
-  approvalState: ApprovalStatusDetailState;
-  mutationState: ApprovalStatusMutationState;
-  comment: string;
-  currentUser: AuthUser | null;
-  onCommentChange: (value: string) => void;
-  onApplyTransition: (statusValue: ModuleApiStatus) => void;
-}) {
-  const detail = approvalState.item;
-  const executableTransitions = detail?.allowed_transitions.filter((transition) =>
-    canRunApprovalTransition(currentUser?.role, detail.status, transition.to_status)
-  ) ?? [];
-  const canComment = executableTransitions.length > 0;
-  const latestReturnHistory = getLatestReturnHistory(detail?.history);
-  const showReturnReasonError =
-    mutationState.status === "error" && mutationState.message === returnReasonRequiredMessage;
-
-  return (
-    <section className="section-band module-approval-panel">
-      <div className="section-heading-row">
-        <div>
-          <h2>承認状態</h2>
-          <p>{approvalState.message}</p>
-        </div>
-        {detail ? <ModuleStatusPill status={detail.status} label={detail.status_label} /> : null}
-      </div>
-      {detail ? (
-        <>
-          <div className="module-approval-grid">
-            <Fact label="現在の版" value={formatVersionLabel(detail)} />
-            <Fact label="次の操作" value={detail.next_action} />
-            <Fact label="実行ユーザー" value={currentUser ? `${currentUser.displayName} / ${getAuthRoleLabel(currentUser.role)}` : "未ログイン"} />
-          </div>
-          {detail.status === "review_requested" ? (
-            <div className="approval-lock-note">
-              <strong>承認依頼中です</strong>
-              <span>メンバー側では編集・再依頼操作を行わず、承認者の確認を待つ状態です。</span>
-            </div>
-          ) : null}
-          {detail.status === "returned" && latestReturnHistory ? (
-            <div className="approval-return-note">
-              <strong>差戻しコメント</strong>
-              <span>{latestReturnHistory.note ?? "コメントはありません。"}</span>
-            </div>
-          ) : null}
-          <label className="approval-comment-field">
-            コメント
-            <textarea
-              value={comment}
-              onChange={(event) => onCommentChange(event.target.value)}
-              disabled={!canComment}
-              placeholder={canComment ? "承認依頼の補足や差戻し理由を入力します。" : "現在のユーザーで実行できる操作はありません。"}
-            />
-          </label>
-          {showReturnReasonError ? <p className="approval-inline-error">{returnReasonRequiredMessage}</p> : null}
-          <div className="approval-transition-list">
-            {executableTransitions.length > 0 ? (
-              executableTransitions.map((transition) => (
-                <button
-                  key={transition.to_status}
-                  className="approval-transition-card"
-                  type="button"
-                  onClick={() => onApplyTransition(transition.to_status)}
-                  disabled={mutationState.status === "submitting"}
-                >
-                  <strong>{transition.action_label}</strong>
-                </button>
-              ))
-            ) : detail.allowed_transitions.length > 0 ? (
-              <p>現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
-            ) : (
-              <p>この状態から実行できる承認操作はありません。</p>
-            )}
-          </div>
-          {!showReturnReasonError ? (
-            <p className={mutationState.status === "error" ? "form-error" : "form-hint"}>{mutationState.message}</p>
-          ) : null}
-          <h3>承認履歴</h3>
-          {detail.history.length > 0 ? (
-            <DataTable
-              columns={["日時", "変更", "実行者", "コメント"]}
-              rows={detail.history.map((history) => [
-                history.changed_at,
-                `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
-                history.changed_by ?? "-",
-                history.note ?? "",
-              ])}
-            />
-          ) : (
-            <p>承認履歴はまだありません。</p>
-          )}
-        </>
-      ) : (
-        <p>承認状態を表示できません。</p>
       )}
     </section>
   );
@@ -6653,6 +6398,546 @@ function CaseDocPlaceholdersPage() {
   );
 }
 
+function ModuleApprovalStatusPage() {
+  const navigate = useNavigate();
+  const [moduleListState, setModuleListState] = useState<ModuleListState>({
+    status: "loading",
+    items: [],
+    message: "モジュール一覧を取得しています。",
+  });
+  const [selectedModuleVersionId, setSelectedModuleVersionId] = useState<number | null>(null);
+  const [approvalDetailState, setApprovalDetailState] = useState<ApprovalStatusDetailState>({
+    status: "idle",
+    item: null,
+    message: "対象モジュールを選ぶと承認状態の詳細を表示します。",
+  });
+  const [approvalMutationState, setApprovalMutationState] = useState<ApprovalStatusMutationState>({
+    status: "idle",
+    message: "実行できる操作を選ぶと状態変更APIを呼び出します。",
+  });
+  const currentUser = getStoredAuthUser();
+  const approvalActor = currentUser?.displayName ?? "";
+  const currentRoleLabel = currentUser ? getAuthRoleLabel(currentUser.role) : "未ログイン";
+  const currentRoleDescription = currentUser ? getAuthRoleDescription(currentUser.role) : "ログインしてください。";
+  const [approvalComment, setApprovalComment] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | ModuleApiStatus>("all");
+  const [reloadTick, setReloadTick] = useState(0);
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    async function fetchModules(): Promise<void> {
+      setModuleListState({
+        status: "loading",
+        items: [],
+        message: "モジュール一覧を取得しています。",
+      });
+
+      try {
+        const response = await fetch(buildApiUrl("/api/v1/modules"), {
+          signal: abortController.signal,
+        });
+        const responseBody = await readApiResponse<ModuleListData>(response);
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setModuleListState({
+            status: "unavailable",
+            items: [],
+            message: responseBody.message || `モジュール一覧の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        const items = responseBody.data.items;
+        setModuleListState({
+          status: "available",
+          items,
+          message: responseBody.message || "モジュール一覧を取得しました。",
+        });
+
+        setSelectedModuleVersionId((current) => {
+          if (items.length === 0) {
+            return null;
+          }
+          if (current !== null && items.some((item) => item.module_version_id === current)) {
+            return current;
+          }
+          return items[0].module_version_id;
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setModuleListState({
+          status: "unavailable",
+          items: [],
+          message: "モジュール一覧の取得中にAPI接続で失敗しました。",
+        });
+      }
+    }
+
+    void fetchModules();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [reloadTick]);
+
+  const selectedSummary =
+    moduleListState.items.find((item) => item.module_version_id === selectedModuleVersionId) ?? null;
+
+  useEffect(() => {
+    if (selectedSummary === null) {
+      setApprovalDetailState({
+        status: "idle",
+        item: null,
+        message: "対象モジュールを選ぶと承認状態の詳細を表示します。",
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+    const targetModule = selectedSummary;
+
+    async function fetchApprovalDetail(): Promise<void> {
+      setApprovalDetailState({
+        status: "loading",
+        item: null,
+        message: "モジュール承認状態の詳細を取得しています。",
+      });
+
+      try {
+        const response = await fetch(
+          buildApiUrl(`/api/v1/modules/${targetModule.module_id}/versions/${targetModule.version_no}/status`),
+          { signal: abortController.signal },
+        );
+        const responseBody = await readApiResponse<ApprovalStatusDetailData>(response);
+
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setApprovalDetailState({
+            status: "unavailable",
+            item: null,
+            message: responseBody.message || `モジュール承認状態詳細の取得に失敗しました。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setApprovalDetailState({
+          status: "available",
+          item: responseBody.data,
+          message: responseBody.message || "モジュール承認状態の詳細を取得しました。",
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setApprovalDetailState({
+          status: "unavailable",
+          item: null,
+          message: "モジュール承認状態詳細の取得中にAPI接続で失敗しました。",
+        });
+      }
+    }
+
+    void fetchApprovalDetail();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [selectedSummary?.module_id, selectedSummary?.version_no, reloadTick]);
+
+  useEffect(() => {
+    setApprovalMutationState({
+      status: "idle",
+      message: "実行できる操作を選ぶと状態変更APIを呼び出します。",
+    });
+    setApprovalComment("");
+  }, [selectedModuleVersionId]);
+
+  const selectedItem = approvalDetailState.item;
+  const selectedExecutableTransitions = selectedItem?.allowed_transitions.filter((transition) =>
+    canRunApprovalTransition(currentUser?.role, selectedItem.status, transition.to_status)
+  ) ?? [];
+  const canCommentOnSelectedApproval = selectedExecutableTransitions.length > 0;
+  const selectedLatestReturnHistory = getLatestReturnHistory(selectedItem?.history);
+  const statusFilterOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
+    { value: "all", label: "0. 全件表示" },
+    { value: "draft", label: "1. 作成中" },
+    { value: "review_requested", label: "2. 承認依頼中" },
+    { value: "returned", label: "3. 差戻し" },
+    { value: "published", label: "4. 承認済み" },
+    { value: "archived", label: "5. 保管済み" },
+  ];
+  const filteredModuleItems = moduleListState.items.filter((item) =>
+    statusFilter === "all" ? true : item.status === statusFilter,
+  );
+
+  function handleStatusFilterChange(nextFilter: "all" | ModuleApiStatus): void {
+    setStatusFilter(nextFilter);
+    const nextItems = moduleListState.items.filter((item) =>
+      nextFilter === "all" ? true : item.status === nextFilter,
+    );
+    if (nextItems.length > 0) {
+      setSelectedModuleVersionId(nextItems[0].module_version_id);
+    }
+  }
+
+  async function handleApplyTransition(toStatus: ModuleApiStatus): Promise<void> {
+    if (selectedSummary === null || selectedItem === null) {
+      return;
+    }
+
+    if (!canRunApprovalTransition(currentUser?.role, selectedItem.status, toStatus)) {
+      setApprovalMutationState({
+        status: "error",
+        message: "現在のユーザー権限では、この承認操作は実行できません。",
+      });
+      return;
+    }
+
+    const normalizedActor = approvalActor.trim();
+    const normalizedComment = approvalComment.trim();
+    if (normalizedActor.length === 0) {
+      setApprovalMutationState({
+        status: "error",
+        message: "実行者を確認できません。ログインしてください。",
+      });
+      return;
+    }
+    if (isReturnTransition(selectedItem.status, toStatus) && normalizedComment.length === 0) {
+      setApprovalMutationState({
+        status: "error",
+        message: returnReasonRequiredMessage,
+      });
+      return;
+    }
+
+    setApprovalMutationState({
+      status: "submitting",
+      message: "モジュール承認状態を変更しています。",
+    });
+
+    try {
+      const response = await fetch(
+        buildApiUrl(`/api/v1/modules/${selectedSummary.module_id}/versions/${selectedSummary.version_no}/status`),
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            status: toStatus,
+            changed_by: normalizedActor,
+            note: normalizedComment || undefined,
+          }),
+        },
+      );
+      const responseBody = await readApiResponse<ApprovalStatusDetailData>(response);
+
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setApprovalMutationState({
+          status: "error",
+          message: responseBody.message || `モジュール承認状態変更に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setApprovalDetailState({
+        status: "available",
+        item: responseBody.data,
+        message: responseBody.message || "モジュール承認状態を更新しました。",
+      });
+      setApprovalMutationState({
+        status: "success",
+        message: responseBody.message || "モジュール承認状態を更新しました。",
+      });
+      setApprovalComment("");
+      setModuleListState((current) => ({
+        ...current,
+        items: current.items.map((item) =>
+          item.module_version_id === selectedSummary.module_version_id
+            ? {
+                ...item,
+                status: responseBody.data!.status,
+                status_label: responseBody.data!.status_label,
+                version_no: responseBody.data!.version_no,
+                version_major: responseBody.data!.version_major ?? item.version_major,
+                version_minor: responseBody.data!.version_minor ?? item.version_minor,
+                version_label: responseBody.data!.version_label ?? item.version_label,
+              }
+            : item,
+        ),
+      }));
+      setReloadTick((current) => current + 1);
+    } catch (error) {
+      setApprovalMutationState({
+        status: "error",
+        message: "モジュール承認状態変更の実行中にAPI接続で失敗しました。",
+      });
+    }
+  }
+
+  const detailStatusClass =
+    approvalDetailState.status === "idle" ? "loading" : approvalDetailState.status;
+  const mutationStatusClass =
+    approvalMutationState.status === "success"
+      ? "available"
+      : approvalMutationState.status === "error"
+        ? "unavailable"
+        : "loading";
+  const showReturnReasonError =
+    approvalMutationState.status === "error" && approvalMutationState.message === returnReasonRequiredMessage;
+
+  return (
+    <Page
+      title="モジュール承認状態確認 / 変更"
+      description="モジュール版の承認状態を確認し、承認依頼・承認・差戻し・保管を行います。"
+    >
+      <section className="approval-flow" aria-label="モジュール承認状態フィルター">
+        {statusFilterOptions.map((option) => (
+          <button
+            key={option.value}
+            className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"}
+            type="button"
+            onClick={() => handleStatusFilterChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </section>
+
+      <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
+        <div>
+          <span>一覧取得状態</span>
+          <strong>
+            {moduleListState.status === "loading"
+              ? "取得中"
+              : moduleListState.status === "available"
+                ? "取得成功"
+                : "取得失敗"}
+          </strong>
+        </div>
+        <div>
+          <span>対象件数</span>
+          <strong>{filteredModuleItems.length}/{moduleListState.items.length}</strong>
+        </div>
+        <div>
+          <span>選択中</span>
+          <strong>{selectedSummary?.module_key ?? "未選択"}</strong>
+        </div>
+        <p>{moduleListState.message}</p>
+      </section>
+
+      {moduleListState.status === "available" && filteredModuleItems.length === 0 ? (
+        <section className="empty-state">
+          <h2>{moduleListState.items.length === 0 ? "モジュールはまだありません" : "条件に一致するモジュールはありません"}</h2>
+          <p>
+            {moduleListState.items.length === 0
+              ? "モジュールを登録すると、この画面から承認状態と次の操作を確認できます。"
+              : "フィルターを切り替えると、別の状態のモジュールを確認できます。"}
+          </p>
+        </section>
+      ) : (
+        <DataTable
+          columns={["モジュールID", "モジュール名", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択"]}
+          rows={filteredModuleItems.map((item) => [
+            item.module_key,
+            item.module_name,
+            formatVersionLabel(item),
+            <ModuleStatusPill status={item.status} label={item.status_label} />,
+            selectedItem?.target_id === item.module_id && selectedItem.version_no === item.version_no
+              ? selectedItem.next_action
+              : "-",
+            String(item.row_count),
+            item.created_by ?? "-",
+            item.updated_at,
+            <button className="text-button" onClick={() => setSelectedModuleVersionId(item.module_version_id)}>
+              対象を選ぶ
+            </button>,
+          ])}
+        />
+      )}
+
+      <section className={`list-status list-status-${detailStatusClass}`} aria-live="polite">
+        <div>
+          <span>選択状態</span>
+          <strong>
+            {approvalDetailState.status === "idle"
+              ? "未選択"
+              : approvalDetailState.status === "loading"
+                ? "取得中"
+                : approvalDetailState.status === "available"
+                  ? "取得成功"
+                  : "取得失敗"}
+          </strong>
+        </div>
+        <div>
+          <span>対象ID</span>
+          <strong>{selectedSummary?.module_key ?? "未選択"}</strong>
+        </div>
+        <div>
+          <span>次の操作</span>
+          <strong>{selectedItem?.next_action ?? "-"}</strong>
+        </div>
+        <p>{approvalDetailState.message}</p>
+      </section>
+
+      <section className={`list-status list-status-${mutationStatusClass}`} aria-live="polite">
+        <div>
+          <span>状態変更</span>
+          <strong>
+            {approvalMutationState.status === "idle"
+              ? "未実行"
+              : approvalMutationState.status === "submitting"
+                ? "変更中"
+                : approvalMutationState.status === "success"
+                  ? "変更成功"
+                  : "変更失敗"}
+          </strong>
+        </div>
+        <div>
+          <span>対象</span>
+          <strong>{selectedSummary?.module_key ?? "未選択"}</strong>
+        </div>
+        <div>
+          <span>実行候補</span>
+          <strong>{selectedItem?.allowed_transitions.length ?? 0}</strong>
+        </div>
+        {!showReturnReasonError ? <p>{approvalMutationState.message}</p> : null}
+      </section>
+
+      {selectedItem && selectedSummary ? (
+        <>
+          <section className="detail-layout">
+            <div className="facts">
+              <Fact label="モジュールID" value={selectedSummary.module_key} />
+              <Fact label="モジュール名" value={selectedSummary.module_name} />
+              <Fact label="版" value={formatVersionLabel(selectedItem)} />
+              <Fact label="承認状態" value={selectedItem.status_label} />
+              <Fact label="行数" value={String(selectedSummary.row_count)} />
+              <Fact label="更新日" value={selectedSummary.updated_at} />
+            </div>
+            <div className="module-detail-note">
+              <span>説明</span>
+              <p>{selectedSummary.description ?? "説明は未設定です。"}</p>
+              <span>先頭作業</span>
+              <p>{selectedSummary.first_work_text ?? "先頭作業は未設定です。"}</p>
+            </div>
+          </section>
+
+          <section className="section-band approval-detail-grid">
+            <div>
+              <h2>実行できる操作</h2>
+              <div className={`approval-permission-panel ${canCommentOnSelectedApproval ? "can-manage" : "view-only"}`}>
+                <span>現在の権限</span>
+                <strong>{currentRoleLabel}</strong>
+                <p>{currentRoleDescription}</p>
+              </div>
+              <label className="approval-actor-field">
+                実行者
+                <input value={approvalActor || "未ログイン"} readOnly />
+              </label>
+              {selectedItem.status === "review_requested" ? (
+                <div className="approval-lock-note">
+                  <strong>承認依頼中です</strong>
+                  <span>メンバー側では編集・再依頼操作を行わず、承認者の確認を待つ状態です。</span>
+                </div>
+              ) : null}
+              {selectedItem.status === "returned" && selectedLatestReturnHistory ? (
+                <div className="approval-return-note">
+                  <strong>差戻しコメント</strong>
+                  <span>{selectedLatestReturnHistory.note ?? "コメントはありません。"}</span>
+                </div>
+              ) : null}
+              {!canCommentOnSelectedApproval ? (
+                <p className="approval-role-note">現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
+              ) : null}
+              <label className="approval-comment-field">
+                コメント
+                <textarea
+                  value={approvalComment}
+                  onChange={(event) => setApprovalComment(event.target.value)}
+                  disabled={!canCommentOnSelectedApproval}
+                  rows={3}
+                  placeholder={
+                    canCommentOnSelectedApproval
+                      ? "承認依頼の補足や差戻し理由を入力します。"
+                      : "現在のユーザーで実行できる操作はありません。"
+                  }
+                />
+              </label>
+              {showReturnReasonError ? <p className="approval-inline-error">{returnReasonRequiredMessage}</p> : null}
+              {selectedItem.allowed_transitions.length > 0 ? (
+                <div className="approval-transition-list">
+                  {selectedExecutableTransitions.length > 0 ? (
+                    selectedExecutableTransitions.map((transition) => (
+                      <article key={transition.to_status} className="approval-transition-card">
+                        <strong>{transition.action_label}</strong>
+                        <button
+                          className="primary"
+                          onClick={() => void handleApplyTransition(transition.to_status)}
+                          disabled={approvalMutationState.status === "submitting"}
+                          title={transition.action_label}
+                        >
+                          {approvalMutationState.status === "submitting"
+                            ? "変更中..."
+                            : transition.action_label}
+                        </button>
+                      </article>
+                    ))
+                  ) : (
+                    <p>現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
+                  )}
+                </div>
+              ) : (
+                <p>この状態から実行できる承認操作はありません。</p>
+              )}
+            </div>
+            <div>
+              <h2>モジュール情報</h2>
+              <div className="facts">
+                <Fact label="取込元" value={selectedSummary.source_xlsx_path ?? "-"} />
+                <Fact label="作成者" value={selectedSummary.created_by ?? "-"} />
+                <Fact label="現在の版" value={formatVersionLabel(selectedItem)} />
+              </div>
+            </div>
+          </section>
+
+          <section className="section-band">
+            <h2>承認履歴</h2>
+            {(selectedItem.history ?? []).length > 0 ? (
+              <DataTable
+                columns={["日時", "操作", "変更", "実行者", "コメント"]}
+                rows={(selectedItem.history ?? []).map((history) => [
+                  history.changed_at,
+                  history.action_label,
+                  `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
+                  history.changed_by ?? "-",
+                  history.note ?? "",
+                ])}
+              />
+            ) : (
+              <p>承認履歴はまだありません。</p>
+            )}
+          </section>
+
+          <Toolbar>
+            <button className="secondary" onClick={() => navigate(`/modules/${selectedSummary.module_id}?version_no=${selectedSummary.version_no}`)}>
+              <span aria-hidden="true">→</span>
+              モジュール詳細へ
+            </button>
+          </Toolbar>
+        </>
+      ) : (
+        <section className="empty-state">
+          <h2>モジュールを選択してください</h2>
+          <p>{approvalDetailState.message}</p>
+        </section>
+      )}
+    </Page>
+  );
+}
+
 function ApprovalPage() {
   const navigate = useNavigate();
   const [approvalListState, setApprovalListState] = useState<ApprovalStatusListState>({
@@ -7287,13 +7572,14 @@ function routeTitle(path: string) {
     "/modules/search": "モジュール検索",
     "/modules/list": "一覧 / 詳細",
     "/modules/register": "モジュール登録",
+    "/modules/approval": "モジュール承認状態確認",
     "/documents/search": "原本検索",
     "/documents/create": "原本作成 / 更新",
     "/case-docs": "\u6848\u4ef6\u5316",
     "/case-docs/placeholders": "\u30d7\u30ec\u30fc\u30b9\u30db\u30eb\u30c0\u4e00\u89a7",
     "/approval": "原本承認状態確認",
   };
-  if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list") {
+  if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list" && path !== "/modules/approval") {
     return "モジュール詳細";
   }
   return map[path] ?? "一覧 / 詳細画面";
