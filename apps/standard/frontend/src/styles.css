@@ -1750,6 +1750,13 @@ th {
   font-weight: 800;
 }
 
+.approval-inline-error {
+  margin: -6px 0 14px;
+  color: #b64a3a;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
 .approval-lock-note,
 .approval-return-note {
   margin: 0 0 14px;

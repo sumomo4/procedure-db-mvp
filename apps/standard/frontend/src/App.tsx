@@ -688,6 +688,7 @@ type ApprovalStatusMutationState = {
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const returnReasonRequiredMessage = "差戻し時は理由を入力してください。";
 
 const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
   { value: "all", label: "すべて" },
@@ -1743,7 +1744,7 @@ function ModuleDetailPage() {
     if (isReturnTransition(moduleApprovalState.item.status, toStatus) && normalizedComment.length === 0) {
       setModuleApprovalMutationState({
         status: "error",
-        message: "差戻し時は理由を入力してください。",
+        message: returnReasonRequiredMessage,
       });
       return;
     }
@@ -2061,6 +2062,8 @@ function ModuleApprovalPanel({
   ) ?? [];
   const canComment = executableTransitions.length > 0;
   const latestReturnHistory = getLatestReturnHistory(detail?.history);
+  const showReturnReasonError =
+    mutationState.status === "error" && mutationState.message === returnReasonRequiredMessage;
 
   return (
     <section className="section-band module-approval-panel">
@@ -2099,6 +2102,7 @@ function ModuleApprovalPanel({
               placeholder={canComment ? "承認依頼の補足や差戻し理由を入力します。" : "現在のユーザーで実行できる操作はありません。"}
             />
           </label>
+          {showReturnReasonError ? <p className="approval-inline-error">{returnReasonRequiredMessage}</p> : null}
           <div className="approval-transition-list">
             {executableTransitions.length > 0 ? (
               executableTransitions.map((transition) => (
@@ -2118,7 +2122,9 @@ function ModuleApprovalPanel({
               <p>この状態から実行できる承認操作はありません。</p>
             )}
           </div>
-          <p className={mutationState.status === "error" ? "form-error" : "form-hint"}>{mutationState.message}</p>
+          {!showReturnReasonError ? (
+            <p className={mutationState.status === "error" ? "form-error" : "form-hint"}>{mutationState.message}</p>
+          ) : null}
           <h3>承認履歴</h3>
           {detail.history.length > 0 ? (
             <DataTable
@@ -6857,7 +6863,7 @@ function ApprovalPage() {
     if (isReturnTransition(selectedItem.status, toStatus) && normalizedComment.length === 0) {
       setApprovalMutationState({
         status: "error",
-        message: "差戻し理由を入力してください。",
+        message: returnReasonRequiredMessage,
       });
       return;
     }
@@ -6917,6 +6923,8 @@ function ApprovalPage() {
       : approvalMutationState.status === "error"
         ? "unavailable"
         : "loading";
+  const showReturnReasonError =
+    approvalMutationState.status === "error" && approvalMutationState.message === returnReasonRequiredMessage;
 
   return (
     <Page
@@ -7029,7 +7037,7 @@ function ApprovalPage() {
           <span>実行候補</span>
           <strong>{selectedItem?.allowed_transitions.length ?? 0}</strong>
         </div>
-        <p>{approvalMutationState.message}</p>
+        {!showReturnReasonError ? <p>{approvalMutationState.message}</p> : null}
       </section>
 
       {selectedItem ? (
@@ -7092,6 +7100,7 @@ function ApprovalPage() {
                   }
                 />
               </label>
+              {showReturnReasonError ? <p className="approval-inline-error">{returnReasonRequiredMessage}</p> : null}
               {selectedItem.allowed_transitions.length > 0 ? (
                 <div className="approval-transition-list">
                   {selectedExecutableTransitions.length > 0 ? (
