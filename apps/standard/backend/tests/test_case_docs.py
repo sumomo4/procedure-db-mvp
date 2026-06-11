@@ -539,13 +539,16 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
         archive_names = generated_archive.namelist()
         assert "xl/vbaProject.bin" in archive_names
         assert not any(name.startswith("xl/externalLinks/") for name in archive_names)
-        prompt_sheet_xml = generated_archive.read("xl/worksheets/sheet2.xml").decode("utf-8")
-        prompt_button_xml = generated_archive.read("xl/drawings/vmlDrawing1.vml").decode("utf-8")
+        macro_button_xml = "\n".join(
+            generated_archive.read(name).decode("utf-8")
+            for name in archive_names
+            if name.startswith("xl/drawings/") and name.endswith(".vml")
+        )
         workbook_xml = generated_archive.read("xl/workbook.xml").decode("utf-8")
         workbook_rels = generated_archive.read("xl/_rels/workbook.xml.rels").decode("utf-8")
-        assert "<x:FmlaMacro>runCdCreator</x:FmlaMacro>" in prompt_button_xml
-        assert "[0]!runCdCreator" not in prompt_sheet_xml
-        assert "[0]!runCdCreator" not in prompt_button_xml
+        assert "<x:FmlaMacro>runCdCreator</x:FmlaMacro>" in macro_button_xml
+        assert "<x:FmlaMacro>AssignNumbersOnActiveSheet</x:FmlaMacro>" in macro_button_xml
+        assert "[0]!" not in macro_button_xml
         assert "externalReferences" not in workbook_xml
         assert "externalLink" not in workbook_rels
         generated_vba_hash = sha256(generated_archive.read("xl/vbaProject.bin")).hexdigest()

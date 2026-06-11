@@ -40,6 +40,8 @@ EXTERNAL_REFERENCES_RE = re.compile(r"<externalReferences>.*?</externalReference
 EXTERNAL_LINK_RELATIONSHIP_RE = re.compile(
     r'<Relationship [^>]*Type="http://schemas\.openxmlformats\.org/officeDocument/2006/relationships/externalLink"[^>]*/>'
 )
+RECOVERED_MACRO_ATTRIBUTE_RE = re.compile(r'macro="\[0\]!([^"]+)"')
+RECOVERED_FORM_BUTTON_MACRO_RE = re.compile(r"(<x:FmlaMacro>)\[0\]!([^<]+)(</x:FmlaMacro>)")
 BODY_HEADER_TO_FIELD = {
     "\u5927": "major_no",
     "\u4e2d": "middle_no",
@@ -749,7 +751,7 @@ def _write_source_doc_expansion_sheet(sheet: Worksheet, source_doc: SourceDocDet
 
 
 def _sanitize_cd_creator_package(workbook_bytes: bytes) -> bytes:
-    """Remove recovered external links and keep the CD Creator button local."""
+    """Remove recovered external links and keep workbook button macros local."""
 
     source = BytesIO(workbook_bytes)
     output = BytesIO()
@@ -762,8 +764,8 @@ def _sanitize_cd_creator_package(workbook_bytes: bytes) -> bytes:
             data = input_archive.read(name)
             if name.endswith((".xml", ".vml", ".rels")):
                 text = data.decode("utf-8", errors="strict")
-                text = text.replace('macro="[0]!runCdCreator"', 'macro="runCdCreator"')
-                text = text.replace("<x:FmlaMacro>[0]!runCdCreator</x:FmlaMacro>", "<x:FmlaMacro>runCdCreator</x:FmlaMacro>")
+                text = RECOVERED_MACRO_ATTRIBUTE_RE.sub(r'macro="\1"', text)
+                text = RECOVERED_FORM_BUTTON_MACRO_RE.sub(r"\1\2\3", text)
                 if name == "[Content_Types].xml":
                     text = EXTERNAL_LINK_CONTENT_TYPE_RE.sub("", text)
                 elif name == "xl/workbook.xml":
