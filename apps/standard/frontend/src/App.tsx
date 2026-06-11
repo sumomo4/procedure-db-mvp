@@ -854,7 +854,7 @@ function Shell() {
           <NavItem to="/modules/search" label="モジュール検索" icon="⌕" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
           <NavItem to="/documents/search" label="原本参照" icon="▤" />
-          <NavItem to="/approval" label="承認状態確認" icon="✓" />
+          <NavItem to="/approval" label="原本承認状態確認" icon="✓" />
           <NavItem to="/case-docs" label={caseDocText.title} icon="CS" end />
           {currentUser.role === "admin" ? (
             <NavItem to="/case-docs/placeholders" label={caseDocPlaceholderText.title} icon="{}" />
@@ -954,7 +954,7 @@ function LoginPage() {
         <div className="login-copy">
           <p className="eyebrow">Sprint 1 / SB1-04</p>
           <h1 id="login-title">手順書DB WebUI</h1>
-          <p>モジュール登録、検索、原本作成、承認状態確認までの主要操作をWebUIから辿れるM1向け画面です。</p>
+          <p>モジュール登録、検索、原本作成、原本承認状態確認までの主要操作をWebUIから辿れるM1向け画面です。</p>
           <div className="demo-users">
             <span>テストユーザー</span>
             <strong>member / password</strong>
@@ -1050,7 +1050,7 @@ function HomePage() {
       <section className="dashboard-grid" aria-label="主要操作">
         <ActionCard title="モジュール" body="検索、一覧確認、Excelファイル登録を行います。" to="/modules/search" action="検索へ" icon="⌕" />
         <ActionCard title="原本" body="モジュールを組み合わせて原本の作成、更新、参照を行います。" to="/documents/create" action="作成へ" icon="✎" />
-        <ActionCard title="承認状態" body="Draft、承認待ち、保管済みの状態と版数を確認します。" to="/approval" action="確認へ" icon="✓" />
+        <ActionCard title="原本承認状態" body="Draft、承認待ち、保管済みの状態と版数を確認します。" to="/approval" action="確認へ" icon="✓" />
       </section>
       <section className="section-band">
         <h2>遷移サマリー</h2>
@@ -1059,7 +1059,7 @@ function HomePage() {
           <FlowStep label="HOME" />
           <FlowStep label="検索 / 登録" />
           <FlowStep label="一覧 / 詳細" />
-          <FlowStep label="承認状態確認" />
+          <FlowStep label="原本承認状態確認" />
         </div>
       </section>
     </Page>
@@ -6928,7 +6928,7 @@ function ApprovalPage() {
 
   return (
     <Page
-      title="承認状態確認 / 変更"
+      title="原本承認状態確認 / 変更"
       description="会議で整理した版管理・承認ルールに沿って、原本の状態確認と変更を行います。"
     >
       <section className="approval-flow" aria-label="\u627f\u8a8d\u72b6\u614b\u30d5\u30a3\u30eb\u30bf\u30fc">
@@ -7291,7 +7291,7 @@ function routeTitle(path: string) {
     "/documents/create": "原本作成 / 更新",
     "/case-docs": "\u6848\u4ef6\u5316",
     "/case-docs/placeholders": "\u30d7\u30ec\u30fc\u30b9\u30db\u30eb\u30c0\u4e00\u89a7",
-    "/approval": "承認状態確認",
+    "/approval": "原本承認状態確認",
   };
   if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list") {
     return "モジュール詳細";
