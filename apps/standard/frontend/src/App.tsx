@@ -2384,10 +2384,10 @@ function ExcelModuleCaseSheet({
                   const entry = getModuleDeviceEntry(row, header.slot_no);
                   return (
                     <Fragment key={`${row.module_row_id}-${header.slot_no}`}>
-                      <td className="excel-center">{entry?.time_text ?? row.time_text ?? ""}</td>
-                      <td>{entry?.window_text ?? row.window_text ?? ""}</td>
-                      <td>{entry?.p_text ?? row.p_text ?? ""}</td>
-                      <td className="excel-command-cell">{entry?.command_text ?? row.command_text ?? ""}</td>
+                      <td className="excel-center">{getModuleDeviceEntryValue(row, entry, "time_text")}</td>
+                      <td>{getModuleDeviceEntryValue(row, entry, "window_text")}</td>
+                      <td>{getModuleDeviceEntryValue(row, entry, "p_text")}</td>
+                      <td className="excel-command-cell">{getModuleDeviceEntryValue(row, entry, "command_text")}</td>
                     </Fragment>
                   );
                 })}
@@ -5200,8 +5200,11 @@ function ExcelSourceDocPreview({
         <div className="excel-cell excel-device-value">{moduleNames.join(", ") || "-"}</div>
       </div>
 
-      {item.items.map((module) => (
-        <article key={module.blueprint_item_id} className="source-doc-module-block">
+      {item.items.map((module) => {
+        const deviceHeaders = getSourceDocModuleDeviceHeaders(module);
+
+        return (
+          <article key={module.blueprint_item_id} className="source-doc-module-block">
           <header className="source-doc-module-header">
             <div>
               <span>順序 {module.item_order}</span>
@@ -5226,10 +5229,14 @@ function ExcelSourceDocPreview({
                 <col className="excel-col-doc" />
                 <col className="excel-col-work" />
                 <col className="excel-col-check" />
-                <col className="excel-col-time" />
-                <col className="excel-col-window" />
-                <col className="excel-col-prompt" />
-                <col className="excel-col-command" />
+                {deviceHeaders.map((header) => (
+                  <Fragment key={"source-cols-" + module.blueprint_item_id + "-" + header.slot_no}>
+                    <col className="excel-col-time" />
+                    <col className="excel-col-window" />
+                    <col className="excel-col-prompt" />
+                    <col className="excel-col-command" />
+                  </Fragment>
+                ))}
               </colgroup>
               <thead>
                 <tr>
@@ -5239,10 +5246,14 @@ function ExcelSourceDocPreview({
                   <th>技術資料名</th>
                   <th>作業内容</th>
                   <th>確認事項 or 項目</th>
-                  <th>時刻</th>
-                  <th>window</th>
-                  <th>P</th>
-                  <th>コマンド</th>
+                  {deviceHeaders.map((header) => (
+                    <Fragment key={"source-header-" + module.blueprint_item_id + "-" + header.slot_no}>
+                      <th>時刻</th>
+                      <th>window</th>
+                      <th>P</th>
+                      <th>コマンド</th>
+                    </Fragment>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -5260,17 +5271,25 @@ function ExcelSourceDocPreview({
                       <IndentedExcelText text={row.expected_result} indentLevel={0} />
                       <ModuleRowImageList images={row.images ?? []} placement="expected" />
                     </td>
-                    <td className="excel-center">{row.time_text ?? ""}</td>
-                    <td>{row.window_text ?? ""}</td>
-                    <td>{row.p_text ?? ""}</td>
-                    <td className="excel-command-cell">{row.command_text ?? ""}</td>
+                    {deviceHeaders.map((header) => {
+                      const entry = getModuleDeviceEntry(row, header.slot_no);
+                      return (
+                        <Fragment key={"source-row-" + module.blueprint_item_id + "-" + row.module_row_id + "-" + header.slot_no}>
+                          <td className="excel-center">{getModuleDeviceEntryValue(row, entry, "time_text")}</td>
+                          <td>{getModuleDeviceEntryValue(row, entry, "window_text")}</td>
+                          <td>{getModuleDeviceEntryValue(row, entry, "p_text")}</td>
+                          <td className="excel-command-cell">{getModuleDeviceEntryValue(row, entry, "command_text")}</td>
+                        </Fragment>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </article>
-      ))}
+          </article>
+        );
+      })}
     </section>
   );
 }
@@ -5332,6 +5351,36 @@ function convertImportPreviewToModuleDetail(item: ModuleImportPreviewData): Modu
   };
 }
 
+function getSourceDocModuleDeviceHeaders(item: SourceDocModuleItemData): ModuleDeviceHeaderData[] {
+  const headersBySlot = new Map<number, ModuleDeviceHeaderData>();
+
+  item.rows.forEach((row) => {
+    row.device_entries.forEach((entry) => {
+      if (!headersBySlot.has(entry.slot_no)) {
+        headersBySlot.set(entry.slot_no, {
+          slot_no: entry.slot_no,
+          header_time_text: null,
+          target_text: null,
+          p_text: null,
+          target_device_text: "device-" + String(entry.slot_no).padStart(2, "0"),
+        });
+      }
+    });
+  });
+
+  if (headersBySlot.size === 0) {
+    headersBySlot.set(1, {
+      slot_no: 1,
+      header_time_text: null,
+      target_text: null,
+      p_text: null,
+      target_device_text: null,
+    });
+  }
+
+  return [...headersBySlot.values()].sort((left, right) => left.slot_no - right.slot_no);
+}
+
 function getModuleDeviceHeaders(item: ModuleDetailData): ModuleDeviceHeaderData[] {
   const headersBySlot = new Map<number, ModuleDeviceHeaderData>();
 
@@ -5382,6 +5431,24 @@ function getModuleDeviceEntry(row: ModuleDetailRowData, slotNo: number): ModuleR
     p_text: row.p_text,
     command_text: row.command_text,
   };
+}
+
+type ModuleDeviceEntryValueKey = "time_text" | "window_text" | "p_text" | "command_text";
+
+function getModuleDeviceEntryValue(
+  row: ModuleDetailRowData,
+  entry: ModuleRowDeviceEntryData | null,
+  key: ModuleDeviceEntryValueKey,
+): string {
+  if (entry) {
+    return entry[key] ?? "";
+  }
+
+  if (row.device_entries.length > 0) {
+    return "";
+  }
+
+  return row[key] ?? "";
 }
 
 function buildIndentedRows(rows: ModuleDetailRowData[]): Array<{ row: ModuleDetailRowData; indentLevel: 0 | 1 | 2 | 3 | 4 }> {
