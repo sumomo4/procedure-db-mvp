@@ -1,4 +1,43 @@
-﻿services:
+services:
+  lab-web:
+    build:
+      context: ./apps/lab/frontend
+    ports:
+      - "3100:80"
+    env_file:
+      - ./infra/env/lab.env.example
+    depends_on:
+      lab-api:
+        condition: service_started
+    volumes:
+      - ./storage/lab:/app/storage
+      - ./logs/lab:/app/logs
+
+  lab-api:
+    build:
+      context: ./apps/lab/backend
+    ports:
+      - "8100:8000"
+    env_file:
+      - ./infra/env/lab.env.example
+    depends_on:
+      lab-db:
+        condition: service_healthy
+    volumes:
+      - ./storage/lab:/app/storage
+      - ./logs/lab:/app/logs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   lab-db:
     image: postgres:16-alpine
     ports:
@@ -11,6 +50,11 @@
       - lab-db-data:/var/lib/postgresql/data
       - ./apps/lab/db/init:/docker-entrypoint-initdb.d
       - ./logs/lab/db:/var/log/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab_user -d mvp_lab"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   lab-db-data:

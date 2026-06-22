@@ -1,0 +1,1 @@
+"""standard API application package."""
