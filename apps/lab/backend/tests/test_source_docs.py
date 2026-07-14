@@ -28,6 +28,11 @@ def test_read_source_docs_returns_success_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        created_by: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
+        module_name: str | None = None,
+        sort: str | None = None,
     ) -> SourceDocListData:
         """Return deterministic source document list data."""
 
@@ -110,6 +115,11 @@ def test_read_source_docs_returns_error_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        created_by: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
+        module_name: str | None = None,
+        sort: str | None = None,
     ) -> SourceDocListData:
         """Raise a deterministic database error."""
 

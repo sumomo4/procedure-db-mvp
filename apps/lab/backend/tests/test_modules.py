@@ -95,6 +95,12 @@ def test_read_modules_returns_success_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        folder_path: str | None = None,
+        created_by: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
+        has_images: str | None = None,
+        sort: str | None = None,
     ) -> ModuleListData:
         """Return deterministic module list data."""
 
@@ -108,6 +114,7 @@ def test_read_modules_returns_success_response(
                     module_key="MOD-001",
                     module_name="初期点検手順",
                     description="説明",
+                    folder_path="未分類",
                     module_version_id=10,
                     version_no=1,
                     status="draft",
@@ -118,7 +125,8 @@ def test_read_modules_returns_success_response(
                     created_by="seed",
                     updated_at="2026-04-22",
                 )
-            ]
+            ],
+            folders=["未分類"],
         )
 
     monkeypatch.setattr(modules, "list_modules", fake_list_modules)
@@ -135,6 +143,7 @@ def test_read_modules_returns_success_response(
                     "module_key": "MOD-001",
                     "module_name": "初期点検手順",
                     "description": "説明",
+                    "folder_path": "未分類",
                         "module_version_id": 10,
                         "version_no": 1,
                         "version_major": 0,
@@ -148,7 +157,8 @@ def test_read_modules_returns_success_response(
                     "created_by": "seed",
                     "updated_at": "2026-04-22",
                 }
-            ]
+            ],
+            "folders": ["未分類"],
         },
         "message": "モジュール一覧を取得しました。",
     }
@@ -177,6 +187,12 @@ def test_read_modules_returns_error_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        folder_path: str | None = None,
+        created_by: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
+        has_images: str | None = None,
+        sort: str | None = None,
     ) -> ModuleListData:
         """Raise a deterministic database error."""
 

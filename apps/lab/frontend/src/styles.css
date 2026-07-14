@@ -368,33 +368,39 @@ nav {
   position: fixed;
   inset: 0;
   z-index: 30;
-  padding: 18px;
-  overflow: auto;
+  padding: 12px;
+  overflow: hidden;
   background: rgba(23, 32, 38, 0.66);
 }
 
 .preview-overlay-panel {
-  width: min(1720px, 100%);
-  min-height: calc(100vh - 36px);
+  width: calc(100vw - 24px);
+  height: calc(100vh - 24px);
   margin: 0 auto;
   border-radius: 8px;
   background: #f4f0e8;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
 }
 
 .preview-overlay-shell {
-  padding: 24px;
+  height: 100%;
+  padding: 18px;
   display: grid;
-  gap: 24px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
 }
 
 .preview-overlay-content {
+  min-height: 0;
   display: grid;
-  gap: 24px;
+  gap: 16px;
+  overflow: auto;
 }
 
 .preview-surface {
-  padding: 18px;
+  min-height: 0;
+  padding: 12px;
   border: 1px solid #d6cdbc;
   border-radius: 8px;
   background: #fbfaf7;
@@ -402,11 +408,17 @@ nav {
 }
 
 .preview-surface-sheet {
+  min-height: 0;
   padding: 8px;
   border: 1px solid #b8c1c7;
   border-radius: 2px;
   background: #ffffff;
   box-shadow: none;
+  display: grid;
+}
+
+.preview-overlay-content > .preview-surface-sheet {
+  height: 100%;
 }
 
 .register-inline-actions {
@@ -872,6 +884,134 @@ nav {
 }
 
 
+
+.module-explorer-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.module-folder-pane {
+  border: 1px solid #ded6c8;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.module-folder-pane-header {
+  display: grid;
+  gap: 4px;
+  padding: 4px 4px 8px;
+  border-bottom: 1px solid #e6ded1;
+}
+
+.module-folder-pane-header span {
+  color: #53636d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.module-folder-pane-header strong {
+  color: #13232d;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.module-folder-tree {
+  display: grid;
+  gap: 4px;
+}
+
+.module-folder-button {
+  min-height: 40px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #243641;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  padding: 8px 10px;
+  padding-left: calc(10px + (var(--folder-depth, 0) * 18px));
+  font-weight: 800;
+}
+
+.module-folder-button span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-folder-button:hover,
+.module-folder-button.active {
+  border-color: #8dc2cb;
+  background: #edf8fa;
+  color: #1f7a83;
+}
+
+.module-folder-rename-form {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #e6ded1;
+  display: grid;
+  gap: 8px;
+}
+
+.module-folder-rename-form label {
+  display: grid;
+  gap: 6px;
+  color: #43545f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.module-folder-rename-form input {
+  min-width: 0;
+}
+
+.module-folder-rename-form button {
+  width: 100%;
+}
+
+.module-folder-rename-message {
+  margin: 0;
+  color: #53636d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.module-folder-rename-message.success {
+  color: #207a4f;
+  font-weight: 800;
+}
+
+.module-folder-rename-message.error {
+  color: #ba3c2f;
+  font-weight: 800;
+}
+
+.module-explorer-main {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+
+@media (max-width: 980px) {
+  .module-explorer-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .module-folder-pane {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .module-folder-pane-header {
+    grid-column: 1 / -1;
+  }
+}
 
 .case-doc-panel {
   background: rgba(255, 255, 255, 0.72);
@@ -2066,7 +2206,7 @@ th {
 .excel-small-heading,
 .excel-sequence-cell {
   justify-content: center;
-  background: #d9eaf7;
+  background: #d4e9fb;
   font-size: 13px;
   font-weight: 900;
 }
@@ -2091,6 +2231,19 @@ th {
   overflow-x: auto;
   border: 1px solid #9aa6ac;
   background: #ffffff;
+}
+
+.preview-overlay .excel-preview-fullscreen,
+.preview-overlay .preview-surface-sheet > .excel-preview {
+  min-height: 0;
+  height: 100%;
+}
+
+.preview-overlay .preview-surface-sheet .excel-sheet-wrap,
+.preview-overlay .excel-preview-fullscreen .excel-sheet-wrap {
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
 }
 
 .excel-sheet {
@@ -2130,7 +2283,7 @@ th {
   top: 0;
   z-index: 1;
   color: #172026;
-  background: #d9eaf7;
+  background: #d4e9fb;
   text-align: center;
   font-weight: 900;
 }
@@ -2205,6 +2358,168 @@ th {
 
 .excel-sheet-case .excel-col-command {
   width: 350px;
+}
+
+
+
+.excel-sheet-scroll-with-sticky-left {
+  --sticky-scroll-tail-width: 0px;
+  padding-right: var(--sticky-scroll-tail-width);
+}
+
+.excel-sheet-scroll-source {
+  --sticky-scroll-tail-width: 934px;
+}
+
+.excel-sheet-scroll-case {
+  --sticky-scroll-tail-width: 962px;
+}
+
+.excel-sheet-sticky-left {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.excel-sheet-source-sticky tr > :nth-child(1),
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(1) {
+  position: sticky;
+  left: 0;
+}
+
+.excel-sheet-source-sticky tr > :nth-child(2) {
+  position: sticky;
+  left: 48px;
+}
+
+.excel-sheet-source-sticky tr > :nth-child(3) {
+  position: sticky;
+  left: 96px;
+}
+
+.excel-sheet-source-sticky tr > :nth-child(4) {
+  position: sticky;
+  left: 144px;
+}
+
+.excel-sheet-source-sticky tr > :nth-child(5) {
+  position: sticky;
+  left: 294px;
+}
+
+.excel-sheet-source-sticky tr > :nth-child(6) {
+  position: sticky;
+  left: 654px;
+  box-shadow: 5px 0 8px rgba(16, 32, 42, 0.12);
+}
+
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(2) {
+  position: sticky;
+  left: 24px;
+}
+
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(3) {
+  position: sticky;
+  left: 48px;
+}
+
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(4) {
+  position: sticky;
+  left: 72px;
+}
+
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(5) {
+  position: sticky;
+  left: 150px;
+}
+
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(6) {
+  position: sticky;
+  left: 426px;
+  box-shadow: 5px 0 8px rgba(16, 32, 42, 0.12);
+}
+
+.excel-sheet-case-sticky .excel-case-title-cell,
+.excel-sheet-case-sticky .excel-case-left-blank {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: #ffffff;
+  box-shadow: 5px 0 8px rgba(16, 32, 42, 0.12);
+}
+
+.excel-sheet-case-sticky .excel-case-group-row > :nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 6;
+  background: #d4e9fb;
+}
+
+.excel-sheet-case-sticky .excel-case-group-row > :nth-child(2) {
+  position: sticky;
+  left: 72px;
+  z-index: 6;
+  background: #d4e9fb;
+}
+
+.excel-sheet-case-sticky .excel-case-group-row > :nth-child(3) {
+  position: sticky;
+  left: 150px;
+  z-index: 6;
+  background: #d4e9fb;
+}
+
+.excel-sheet-case-sticky .excel-case-group-row > :nth-child(4) {
+  position: sticky;
+  left: 426px;
+  z-index: 6;
+  background: #d4e9fb;
+  box-shadow: 5px 0 8px rgba(16, 32, 42, 0.12);
+}
+
+.excel-sheet-source-sticky tbody td:nth-child(-n + 6),
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > td:nth-child(-n + 6) {
+  z-index: 3;
+  background: #ffffff;
+}
+
+.excel-sheet-source-sticky thead th:nth-child(8n + 7),
+.excel-sheet-source-sticky thead th:nth-child(8n + 8),
+.excel-sheet-source-sticky thead th:nth-child(8n + 9),
+.excel-sheet-source-sticky thead th:nth-child(8n + 10) {
+  background: #d4e9fb;
+}
+
+.excel-sheet-source-sticky thead th:nth-child(8n + 11),
+.excel-sheet-source-sticky thead th:nth-child(8n + 12),
+.excel-sheet-source-sticky thead th:nth-child(8n + 13),
+.excel-sheet-source-sticky thead th:nth-child(8n + 14) {
+  background: #acd1e8;
+}
+
+.excel-sheet-case .excel-device-block-odd {
+  background: #d4e9fb;
+}
+
+.excel-sheet-case .excel-device-block-even {
+  background: #acd1e8;
+}
+
+.excel-sheet-case .excel-case-top-label.excel-device-block-odd,
+.excel-sheet-case .excel-case-group-cell.excel-device-block-odd,
+.excel-sheet-case .excel-case-device-name.excel-device-block-odd {
+  background: #c3def0;
+}
+
+.excel-sheet-case .excel-case-top-label.excel-device-block-even,
+.excel-sheet-case .excel-case-group-cell.excel-device-block-even,
+.excel-sheet-case .excel-case-device-name.excel-device-block-even {
+  background: #9fc6dd;
+}
+
+.excel-sheet-source-sticky thead th:nth-child(-n + 6),
+.excel-sheet-case-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > th:nth-child(-n + 6) {
+  z-index: 6;
+  background: #d4e9fb;
 }
 
 .excel-row-header td {
@@ -2464,6 +2779,7 @@ th {
 
   .preview-overlay-panel {
     width: 100%;
+    height: 100vh;
     min-height: 100vh;
     border-radius: 0;
   }

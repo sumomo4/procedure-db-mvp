@@ -119,6 +119,7 @@ type ModuleListItemData = {
   module_key: string;
   module_name: string;
   description: string | null;
+  folder_path: string;
   module_version_id: number;
   version_no: number;
   version_major: number;
@@ -135,6 +136,7 @@ type ModuleListItemData = {
 
 type ModuleListData = {
   items: ModuleListItemData[];
+  folders: string[];
 };
 
 type ModuleVersionListItemData = {
@@ -248,7 +250,20 @@ type HealthCheckState = {
 type ModuleListState = {
   status: "loading" | "available" | "unavailable";
   items: ModuleListItemData[];
+  folders?: string[];
   message: string;
+};
+
+type ModuleFolderRenameState = {
+  status: "idle" | "submitting" | "success" | "error";
+  message: string;
+};
+
+type ModuleFolderTreeItem = {
+  path: string;
+  label: string;
+  depth: number;
+  hasDirectModule: boolean;
 };
 
 type ModuleDetailState = {
@@ -708,6 +723,38 @@ const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] =
   { value: "archived", label: "保管済み" },
 ];
 
+function normalizeModuleFolderPath(folderPath: string): string {
+  const normalized = folderPath
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join("/");
+  return normalized || "未分類";
+}
+
+function buildModuleFolderTreeItems(folders: string[]): ModuleFolderTreeItem[] {
+  const directFolders = new Set(folders.map((folder) => normalizeModuleFolderPath(folder)));
+  const itemMap = new Map<string, ModuleFolderTreeItem>();
+
+  directFolders.forEach((folder) => {
+    const parts = folder.split("/").filter((part) => part.length > 0);
+    parts.forEach((part, index) => {
+      const path = parts.slice(0, index + 1).join("/");
+      const existing = itemMap.get(path);
+      itemMap.set(path, {
+        path,
+        label: part,
+        depth: index,
+        hasDirectModule: existing?.hasDirectModule === true || directFolders.has(path),
+      });
+    });
+  });
+
+  return Array.from(itemMap.values()).sort((left, right) => left.path.localeCompare(right.path, "ja"));
+}
+
 function formatVersionLabel(item: { version_no: number; version_label?: string | null }): string {
   return item.version_label ?? `ver.${item.version_no}.0`;
 }
@@ -864,7 +911,7 @@ function Shell() {
           <NavItem to="/modules/search" label="モジュール検索" icon="⌕" />
           <NavItem to="/modules/approval" label="モジュール承認状態確認" icon="✓" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
-          <NavItem to="/documents/search" label="原本参照" icon="▤" />
+          <NavItem to="/documents/search" label={"原本検索"} icon={"▤"} />
           <NavItem to="/approval" label="原本承認状態確認" icon="✓" />
           <NavItem to="/case-docs" label={caseDocText.title} icon="CS" end />
           {currentUser.role === "admin" ? (
@@ -1257,74 +1304,55 @@ function HealthStatusRow({
 
 function ModuleSearchPage() {
   const navigate = useNavigate();
-  const [keyword, setKeyword] = useState("");
-  const [status, setStatus] = useState<(typeof moduleStatusOptions)[number]["value"]>("all");
-
-  function handleSubmit(): void {
-    const params = new URLSearchParams();
-    const normalizedKeyword = keyword.trim();
-
-    if (normalizedKeyword) {
-      params.set("keyword", normalizedKeyword);
-    }
-
-    if (status !== "all") {
-      params.set("status", status);
-    }
-
-    const query = params.toString();
-    navigate(query ? `/modules/list?${query}` : "/modules/list");
-  }
-
-  return (
-    <Page title="モジュール検索" description="キーワードと承認状態で、登録済みモジュールを検索します。">
-      <form
-        className="search-form module-search-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          handleSubmit();
-        }}
-      >
-        <label>
-          キーワード
-          <input
-            placeholder="例: 点検、交換、MOD-001"
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-          />
-        </label>
-        <label>
-          承認状態
-          <select
-            value={status}
-            onChange={(event) => setStatus(event.target.value as (typeof moduleStatusOptions)[number]["value"])}
-          >
-            {moduleStatusOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="primary" type="submit">
-          <span aria-hidden="true">⌕</span>
-          検索
-        </button>
-      </form>
-    </Page>
-  );
-}
-
-function ModuleListPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const keyword = searchParams.get("keyword") ?? "";
-  const statusFilter = searchParams.get("status") ?? "all";
+  const initialKeyword = searchParams.get("keyword") ?? "";
+  const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
+  const initialCreatedBy = searchParams.get("created_by") ?? "";
+  const initialFolderPath = searchParams.get("folder_path") ?? "";
+  const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
+  const initialUpdatedTo = searchParams.get("updated_to") ?? "";
+  const initialHasImages = searchParams.get("has_images") ?? "all";
+  const initialSort = searchParams.get("sort") ?? "key_asc";
+  const [keywordInput, setKeywordInput] = useState(initialKeyword);
+  const [statusInput, setStatusInput] = useState(initialStatus);
+  const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
+  const [folderPathInput, setFolderPathInput] = useState(initialFolderPath);
+  const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
+  const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
+  const [hasImagesInput, setHasImagesInput] = useState(initialHasImages);
+  const [sortInput, setSortInput] = useState(initialSort);
+  const keyword = initialKeyword;
+  const statusFilter = initialStatus;
+  const createdByFilter = initialCreatedBy;
+  const folderPathFilter = initialFolderPath;
+  const updatedFromFilter = initialUpdatedFrom;
+  const updatedToFilter = initialUpdatedTo;
+  const hasImagesFilter = initialHasImages;
+  const sortFilter = initialSort;
   const [moduleListState, setModuleListState] = useState<ModuleListState>({
     status: "loading",
     items: [],
+    folders: [],
     message: "モジュール一覧を取得しています。",
   });
+  const [folderRenameInput, setFolderRenameInput] = useState(initialFolderPath || "未分類");
+  const [folderRenameState, setFolderRenameState] = useState<ModuleFolderRenameState>({
+    status: "idle",
+    message: "選択中のフォルダ名を変更できます。",
+  });
+
+  useEffect(() => {
+    setKeywordInput(initialKeyword);
+    setStatusInput(initialStatus);
+    setCreatedByInput(initialCreatedBy);
+    setFolderPathInput(initialFolderPath);
+    setFolderRenameInput(initialFolderPath || "未分類");
+    setFolderRenameState({ status: "idle", message: "選択中のフォルダ名を変更できます。" });
+    setUpdatedFromInput(initialUpdatedFrom);
+    setUpdatedToInput(initialUpdatedTo);
+    setHasImagesInput(initialHasImages);
+    setSortInput(initialSort);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPath, initialUpdatedFrom, initialUpdatedTo, initialHasImages, initialSort]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1333,31 +1361,31 @@ function ModuleListPage() {
       setModuleListState({
         status: "loading",
         items: [],
+        folders: [],
         message: "モジュール一覧を取得しています。",
       });
 
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
 
-        if (keyword) {
-          endpoint.searchParams.set("keyword", keyword);
-        }
+        if (keyword) endpoint.searchParams.set("keyword", keyword);
+        if (statusFilter !== "all") endpoint.searchParams.set("status", statusFilter);
+        if (createdByFilter) endpoint.searchParams.set("created_by", createdByFilter);
+        if (folderPathFilter) endpoint.searchParams.set("folder_path", folderPathFilter);
+        if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
+        if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
+        if (hasImagesFilter !== "all") endpoint.searchParams.set("has_images", hasImagesFilter);
+        if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
 
-        if (statusFilter !== "all") {
-          endpoint.searchParams.set("status", statusFilter);
-        }
-
-        const response = await fetch(endpoint.toString(), {
-          signal: abortController.signal,
-        });
-
+        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setModuleListState({
             status: "unavailable",
             items: [],
-            message: responseBody.message || `モジュール一覧の取得に失敗しました。HTTP ${response.status}`,
+            folders: [],
+            message: responseBody.message || "モジュール一覧の取得に失敗しました。HTTP " + response.status,
           });
           return;
         }
@@ -1365,114 +1393,296 @@ function ModuleListPage() {
         setModuleListState({
           status: "available",
           items: responseBody.data.items,
+          folders: responseBody.data.folders ?? [],
           message: responseBody.message || "モジュール一覧を取得しました。",
         });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-
-        setModuleListState({
-          status: "unavailable",
-          items: [],
-          message: "APIに接続できませんでした。",
-        });
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setModuleListState({ status: "unavailable", items: [], folders: [], message: "APIに接続できませんでした。" });
       }
     }
 
     void fetchModules();
 
-    return () => {
-      abortController.abort();
-    };
-  }, [keyword, statusFilter]);
+    return () => abortController.abort();
+  }, [keyword, statusFilter, createdByFilter, folderPathFilter, updatedFromFilter, updatedToFilter, hasImagesFilter, sortFilter]);
 
-  const statusFilterLabel =
-    moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
-
-  function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
+  function navigateWithFilters(filters: {
+    keyword: string;
+    status: (typeof moduleStatusOptions)[number]["value"];
+    createdBy: string;
+    folderPath: string;
+    updatedFrom: string;
+    updatedTo: string;
+    hasImages: string;
+    sort: string;
+  }): void {
     const params = new URLSearchParams();
+    const normalizedKeyword = filters.keyword.trim();
+    const normalizedCreatedBy = filters.createdBy.trim();
+    const normalizedFolderPath = filters.folderPath.trim();
 
-    if (keyword) {
-      params.set("keyword", keyword);
-    }
-
-    if (nextStatus !== "all") {
-      params.set("status", nextStatus);
-    }
+    if (normalizedKeyword) params.set("keyword", normalizedKeyword);
+    if (filters.status !== "all") params.set("status", filters.status);
+    if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
+    if (normalizedFolderPath) params.set("folder_path", normalizedFolderPath);
+    if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
+    if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
+    if (filters.hasImages !== "all") params.set("has_images", filters.hasImages);
+    if (filters.sort !== "key_asc") params.set("sort", filters.sort);
 
     const query = params.toString();
-    navigate(query ? `/modules/list?${query}` : "/modules/list");
+    navigate(query ? "/modules/search?" + query : "/modules/search");
   }
 
+  function handleSubmit(): void {
+    navigateWithFilters({
+      keyword: keywordInput,
+      status: statusInput,
+      createdBy: createdByInput,
+      folderPath: folderPathInput,
+      updatedFrom: updatedFromInput,
+      updatedTo: updatedToInput,
+      hasImages: hasImagesInput,
+      sort: sortInput,
+    });
+  }
+
+  function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
+    setStatusInput(nextStatus);
+    navigateWithFilters({
+      keyword,
+      status: nextStatus,
+      createdBy: createdByFilter,
+      folderPath: folderPathFilter,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      hasImages: hasImagesFilter,
+      sort: sortFilter,
+    });
+  }
+
+  function handleFolderFilterChange(nextFolderPath: string): void {
+    setFolderPathInput(nextFolderPath);
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      createdBy: createdByFilter,
+      folderPath: nextFolderPath,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      hasImages: hasImagesFilter,
+      sort: sortFilter,
+    });
+  }
+
+  async function handleFolderRenameSubmit(): Promise<void> {
+    const currentFolder = normalizeModuleFolderPath(folderPathFilter || "未分類");
+    const nextFolder = normalizeModuleFolderPath(folderRenameInput);
+
+    if (folderPathFilter === "") {
+      setFolderRenameState({ status: "error", message: "先に変更対象のフォルダを選択してください。" });
+      return;
+    }
+
+    if (currentFolder === nextFolder) {
+      setFolderRenameState({ status: "error", message: "変更前と変更後のフォルダ名が同じです。" });
+      return;
+    }
+
+    setFolderRenameState({ status: "submitting", message: "フォルダ名を変更しています。" });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_folder_path: currentFolder, new_folder_path: nextFolder }),
+      });
+      const responseBody = await readApiResponse<ModuleListData>(response);
+
+      if (!response.ok || responseBody.result !== "success") {
+        setFolderRenameState({
+          status: "error",
+          message: responseBody.message || `フォルダ名の変更に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setFolderRenameState({ status: "success", message: responseBody.message || "フォルダ名を変更しました。" });
+      setFolderPathInput(nextFolder);
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: nextFolder,
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderRenameState({ status: "error", message: "フォルダ名の変更中にAPI接続で失敗しました。" });
+    }
+  }
+
+  const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  const moduleFolderOptions = moduleListState.folders ?? [];
+  const folderOptions = moduleFolderOptions.length > 0 ? moduleFolderOptions : ["未分類"];
+  const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
+  const selectedFolderLabel = folderPathFilter || "すべて";
+  const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
+
   return (
-    <Page title="モジュール一覧" description="APIから取得したモジュール一覧と検索結果を確認します。">
-      <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
-        <div>
-          <span>取得状態</span>
-          <strong>
-            {moduleListState.status === "loading"
-              ? "取得中"
-              : moduleListState.status === "available"
-                ? "取得完了"
-                : "取得失敗"}
-          </strong>
-        </div>
-        <div>
-          <span>検索キーワード</span>
-          <strong>{keyword || "指定なし"}</strong>
-        </div>
-        <div>
-          <span>承認状態</span>
-          <strong>{statusFilterLabel}</strong>
-        </div>
+    <Page title={"モジュール検索"} description={"APIから取得したモジュール一覧を検索し、詳細情報と版管理を確認できます。"}>
+      <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
+        <label>
+          {"キーワード"}
+          <input placeholder="MOD-001 / 点検 / TeraTerm" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} />
+        </label>
+        <label>
+          {"承認状態"}
+          <select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>
+            {moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>
+          {"作成者"}
+          <input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
+        </label>
+        <label>
+          {"フォルダ"}
+          <input placeholder="未分類 / ネットワーク" value={folderPathInput} onChange={(event) => setFolderPathInput(event.target.value)} />
+        </label>
+        <label>
+          {"更新日 From"}
+          <input type="date" value={updatedFromInput} onChange={(event) => setUpdatedFromInput(event.target.value)} />
+        </label>
+        <label>
+          {"更新日 To"}
+          <input type="date" value={updatedToInput} onChange={(event) => setUpdatedToInput(event.target.value)} />
+        </label>
+        <label>
+          {"画像"}
+          <select value={hasImagesInput} onChange={(event) => setHasImagesInput(event.target.value)}>
+            <option value="all">{"すべて"}</option>
+            <option value="with">{"画像あり"}</option>
+            <option value="without">{"画像なし"}</option>
+          </select>
+        </label>
+        <label>
+          {"並び替え"}
+          <select value={sortInput} onChange={(event) => setSortInput(event.target.value)}>
+            <option value="key_asc">{"ID昇順"}</option>
+            <option value="key_desc">{"ID降順"}</option>
+            <option value="updated_desc">{"更新日が新しい順"}</option>
+            <option value="updated_asc">{"更新日が古い順"}</option>
+            <option value="status_asc">{"承認状態順"}</option>
+          </select>
+        </label>
+        <button className="primary" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
+      </form>
+
+      <section className={"list-status list-status-" + moduleListState.status} aria-live="polite">
+        <div><span>{"取得状態"}</span><strong>{moduleListState.status === "loading" ? "取得中" : moduleListState.status === "available" ? "取得完了" : "取得失敗"}</strong></div>
+        <div><span>{"検索キーワード"}</span><strong>{keyword || "指定なし"}</strong></div>
+        <div><span>{"承認状態"}</span><strong>{statusFilterLabel}</strong></div>
+        <div><span>{"作成者"}</span><strong>{createdByFilter || "指定なし"}</strong></div>
+        <div><span>{"フォルダ"}</span><strong>{folderPathFilter || "すべて"}</strong></div>
         <p>{moduleListState.message}</p>
       </section>
-      <section className="approval-flow" aria-label="モジュール承認状態フィルター">
-        {moduleStatusOptions.map((option) => (
+
+      <div className="module-explorer-layout">
+        <aside className="module-folder-pane" aria-label="モジュールフォルダ">
+          <div className="module-folder-pane-header">
+            <span>フォルダ</span>
+            <strong>{selectedFolderLabel}</strong>
+          </div>
           <button
-            key={option.value}
             type="button"
-            className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"}
-            onClick={() => handleStatusFilterChange(option.value)}
+            className={folderPathFilter === "" ? "module-folder-button active" : "module-folder-button"}
+            onClick={() => handleFolderFilterChange("")}
           >
-            {option.label}
+            <span aria-hidden="true">▦</span>
+            <span>すべて</span>
           </button>
-        ))}
-      </section>
-      <Toolbar>
-        <button className="secondary" onClick={() => navigate("/modules/search")}>
-          <span aria-hidden="true">←</span>
-          条件変更
-        </button>
-        <button className="primary" onClick={() => navigate("/documents/create")}>
-          <span aria-hidden="true">＋</span>
-          原本作成へ
-        </button>
-      </Toolbar>
-      {moduleListState.status === "available" && moduleListState.items.length === 0 ? (
-        <section className="empty-state">
-          <h2>該当するモジュールはありません</h2>
-          <p>検索条件を変えて再度確認してください。</p>
-        </section>
-      ) : (
-        <DataTable
-          columns={["モジュールID", "モジュール名", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "選択"]}
-          rows={moduleListState.items.map((item) => [
-            item.module_key,
-            item.module_name,
-            formatVersionLabel(item),
-            <ModuleStatusPill status={item.status} label={item.status_label} />,
-            String(item.row_count),
-            item.first_work_text ?? "-",
-            item.created_by ?? "-",
-            item.updated_at,
-            <button className="text-button" onClick={() => navigate(`/modules/${item.module_id}`)}>詳細</button>,
-          ])}
-        />
-      )}
+          <div className="module-folder-tree" role="tree" aria-label="フォルダ一覧">
+            {folderTreeItems.map((folder) => (
+              <button
+                key={folder.path}
+                type="button"
+                role="treeitem"
+                aria-level={folder.depth + 1}
+                className={folderPathFilter === folder.path ? "module-folder-button active" : "module-folder-button"}
+                style={{ "--folder-depth": folder.depth } as CSSProperties}
+                onClick={() => handleFolderFilterChange(folder.path)}
+              >
+                <span aria-hidden="true">{folder.hasDirectModule ? "▤" : "▸"}</span>
+                <span>{folder.label}</span>
+              </button>
+            ))}
+          </div>
+          <form
+            className="module-folder-rename-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleFolderRenameSubmit();
+            }}
+          >
+            <label>
+              フォルダ名変更
+              <input
+                value={folderRenameInput}
+                disabled={folderPathFilter === ""}
+                placeholder="例: ネットワーク/SBC"
+                onChange={(event) => setFolderRenameInput(event.target.value)}
+              />
+            </label>
+            <button type="submit" className="secondary" disabled={!canRenameFolder}>
+              変更
+            </button>
+            <p className={"module-folder-rename-message " + folderRenameState.status}>{folderRenameState.message}</p>
+          </form>
+        </aside>
+
+        <div className="module-explorer-main">
+          <section className="approval-flow" aria-label="モジュール承認状態フィルター">
+            {moduleStatusOptions.map((option) => (
+              <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>
+            ))}
+          </section>
+
+          <Toolbar>
+            <button className="secondary" onClick={() => navigate("/modules/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
+            <button className="primary" onClick={() => navigate("/modules/register")}><span aria-hidden="true">+</span>{"モジュール登録"}</button>
+          </Toolbar>
+          {moduleListState.status === "available" && moduleListState.items.length === 0 ? (
+            <section className="empty-state"><h2>{"該当するモジュールはありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
+          ) : (
+            <DataTable
+              columns={["モジュールID", "モジュール名", "フォルダ", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "操作"]}
+              rows={moduleListState.items.map((item) => [
+                item.module_key,
+                item.module_name,
+                item.folder_path || "未分類",
+                formatVersionLabel(item),
+                <ModuleStatusPill status={item.status} label={item.status_label} />,
+                item.row_count,
+                item.first_work_text ?? "-",
+                item.created_by ?? "-",
+                item.updated_at,
+                <button className="text-button" onClick={() => navigate("/modules/" + item.module_id)}>{"詳細"}</button>,
+              ])}
+            />
+          )}
+        </div>
+      </div>
     </Page>
   );
+}
+
+function ModuleListPage() {
+  const location = useLocation();
+  return <Navigate to={"/modules/search" + location.search} replace />;
 }
 
 function useModuleDetailState(moduleId: string | undefined, versionNo: string | null = null): ModuleDetailState {
@@ -1831,7 +2041,6 @@ function ModuleDetailPage() {
             onToVersionChange={setDiffToVersionNo}
             onFetchDiff={handleFetchModuleDiff}
           />
-          <ExcelModulePreview item={item} />
         </>
       ) : (
         <section className="empty-state">
@@ -2287,8 +2496,8 @@ function ExcelModuleCaseSheet({
 
   return (
     <section className="excel-preview excel-preview-fullscreen" aria-label="案件CSプレビュー">
-      <div className="excel-sheet-wrap excel-sheet-wrap-case">
-        <table className="excel-sheet excel-sheet-case excel-sheet-multi-device">
+      <div className="excel-sheet-wrap excel-sheet-wrap-case excel-sheet-scroll-with-sticky-left excel-sheet-scroll-case">
+        <table className="excel-sheet excel-sheet-case excel-sheet-multi-device excel-sheet-sticky-left excel-sheet-case-sticky">
           <colgroup>
             <col className="excel-col-small" />
             <col className="excel-col-small" />
@@ -2313,25 +2522,31 @@ function ExcelModuleCaseSheet({
               <td colSpan={9} className="excel-case-title-cell">
                 {caseTitle}
               </td>
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`top-label-${header.slot_no}`}>
-                  <td className="excel-case-top-label">時刻</td>
-                  <td className="excel-case-top-label">terget</td>
-                  <td className="excel-case-top-label">P</td>
-                  <td className="excel-case-top-label">対象装置</td>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`top-label-${header.slot_no}`}>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>時刻</td>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>terget</td>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>P</td>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>対象装置</td>
+                  </Fragment>
+                );
+              })}
             </tr>
             <tr className="excel-case-device-meta-row">
               <td colSpan={9} className="excel-case-left-blank" />
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`top-value-${header.slot_no}`}>
-                  <td className="excel-center">{header.header_time_text ?? ""}</td>
-                  <td>{header.target_text ?? String(header.slot_no)}</td>
-                  <td className="excel-center">{header.p_text ?? ""}</td>
-                  <td>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</td>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`top-value-${header.slot_no}`}>
+                    <td className={`excel-center ${deviceToneClass}`}>{header.header_time_text ?? ""}</td>
+                    <td className={deviceToneClass}>{header.target_text ?? String(header.slot_no)}</td>
+                    <td className={`excel-center ${deviceToneClass}`}>{header.p_text ?? ""}</td>
+                    <td className={deviceToneClass}>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</td>
+                  </Fragment>
+                );
+              })}
             </tr>
             <tr className="excel-case-spacer-row">
               <td colSpan={totalColumnSpan} />
@@ -2341,14 +2556,17 @@ function ExcelModuleCaseSheet({
               <td className="excel-case-group-cell" />
               <td colSpan={4} className="excel-case-group-cell">作業内容</td>
               <td className="excel-case-group-cell" />
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`group-${header.slot_no}`}>
-                  <td className="excel-case-group-cell" />
-                  <td className="excel-case-group-cell" />
-                  <td className="excel-case-group-cell" />
-                  <td className="excel-case-device-name">{header.target_device_text ?? `{{DEVICE_${header.slot_no}}}`}</td>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`group-${header.slot_no}`}>
+                    <td className={`excel-case-group-cell ${deviceToneClass}`} />
+                    <td className={`excel-case-group-cell ${deviceToneClass}`} />
+                    <td className={`excel-case-group-cell ${deviceToneClass}`} />
+                    <td className={`excel-case-device-name ${deviceToneClass}`}>{header.target_device_text ?? `{{DEVICE_${header.slot_no}}}`}</td>
+                  </Fragment>
+                );
+              })}
             </tr>
             <tr>
               <th>大</th>
@@ -2357,14 +2575,17 @@ function ExcelModuleCaseSheet({
               <th>技術資料名</th>
               <th colSpan={4}>作業内容</th>
               <th>確認事項 or 項目</th>
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`header-${header.slot_no}`}>
-                  <th>時刻</th>
-                  <th>window</th>
-                  <th>P</th>
-                  <th>コマンド</th>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`header-${header.slot_no}`}>
+                    <th className={deviceToneClass}>時刻</th>
+                    <th className={deviceToneClass}>window</th>
+                    <th className={deviceToneClass}>P</th>
+                    <th className={deviceToneClass}>コマンド</th>
+                  </Fragment>
+                );
+              })}
             </tr>
             {rowsWithIndent.map(({ row, indentLevel }) => (
               <tr key={row.module_row_id} className={`excel-row excel-row-${row.row_type}`}>
@@ -4050,10 +4271,25 @@ function DocumentSearchPage() {
   const [searchParams] = useSearchParams();
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
+  const initialCreatedBy = searchParams.get("created_by") ?? "";
+  const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
+  const initialUpdatedTo = searchParams.get("updated_to") ?? "";
+  const initialModuleName = searchParams.get("module_name") ?? "";
+  const initialSort = searchParams.get("sort") ?? "key_asc";
   const [keywordInput, setKeywordInput] = useState(initialKeyword);
   const [statusInput, setStatusInput] = useState(initialStatus);
+  const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
+  const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
+  const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
+  const [moduleNameInput, setModuleNameInput] = useState(initialModuleName);
+  const [sortInput, setSortInput] = useState(initialSort);
   const keyword = initialKeyword;
   const statusFilter = initialStatus;
+  const createdByFilter = initialCreatedBy;
+  const updatedFromFilter = initialUpdatedFrom;
+  const updatedToFilter = initialUpdatedTo;
+  const moduleNameFilter = initialModuleName;
+  const sortFilter = initialSort;
   const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
     status: "loading",
     items: [],
@@ -4063,173 +4299,122 @@ function DocumentSearchPage() {
   useEffect(() => {
     setKeywordInput(initialKeyword);
     setStatusInput(initialStatus);
-  }, [initialKeyword, initialStatus]);
+    setCreatedByInput(initialCreatedBy);
+    setUpdatedFromInput(initialUpdatedFrom);
+    setUpdatedToInput(initialUpdatedTo);
+    setModuleNameInput(initialModuleName);
+    setSortInput(initialSort);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialUpdatedFrom, initialUpdatedTo, initialModuleName, initialSort]);
 
   useEffect(() => {
     const abortController = new AbortController();
 
     async function fetchSourceDocs(): Promise<void> {
-      setSourceDocListState({
-        status: "loading",
-        items: [],
-        message: "原本一覧を取得しています。",
-      });
+      setSourceDocListState({ status: "loading", items: [], message: "原本一覧を取得しています。" });
 
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/source-docs"), window.location.origin);
 
-        if (keyword) {
-          endpoint.searchParams.set("keyword", keyword);
-        }
+        if (keyword) endpoint.searchParams.set("keyword", keyword);
+        if (statusFilter !== "all") endpoint.searchParams.set("status", statusFilter);
+        if (createdByFilter) endpoint.searchParams.set("created_by", createdByFilter);
+        if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
+        if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
+        if (moduleNameFilter) endpoint.searchParams.set("module_name", moduleNameFilter);
+        if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
 
-        if (statusFilter !== "all") {
-          endpoint.searchParams.set("status", statusFilter);
-        }
-
-        const response = await fetch(endpoint.toString(), {
-          signal: abortController.signal,
-        });
-
+        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<SourceDocListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
-          setSourceDocListState({
-            status: "unavailable",
-            items: [],
-            message: responseBody.message || `原本一覧の取得に失敗しました。HTTP ${response.status}`,
-          });
+          setSourceDocListState({ status: "unavailable", items: [], message: responseBody.message || "原本一覧の取得に失敗しました。HTTP " + response.status });
           return;
         }
 
-        setSourceDocListState({
-          status: "available",
-          items: responseBody.data.items,
-          message: responseBody.message || "原本一覧を取得しました。",
-        });
+        setSourceDocListState({ status: "available", items: responseBody.data.items, message: responseBody.message || "原本一覧を取得しました。" });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-
-        setSourceDocListState({
-          status: "unavailable",
-          items: [],
-          message: "APIに接続できませんでした。",
-        });
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSourceDocListState({ status: "unavailable", items: [], message: "APIに接続できませんでした。" });
       }
     }
 
     void fetchSourceDocs();
 
-    return () => {
-      abortController.abort();
-    };
-  }, [keyword, statusFilter]);
+    return () => abortController.abort();
+  }, [keyword, statusFilter, createdByFilter, updatedFromFilter, updatedToFilter, moduleNameFilter, sortFilter]);
 
-  function handleSubmit(): void {
-    const nextParams = new URLSearchParams();
+  function navigateWithFilters(filters: {
+    keyword: string;
+    status: (typeof moduleStatusOptions)[number]["value"];
+    createdBy: string;
+    updatedFrom: string;
+    updatedTo: string;
+    moduleName: string;
+    sort: string;
+  }): void {
+    const params = new URLSearchParams();
+    const normalizedKeyword = filters.keyword.trim();
+    const normalizedCreatedBy = filters.createdBy.trim();
+    const normalizedModuleName = filters.moduleName.trim();
 
-    if (keywordInput.trim()) {
-      nextParams.set("keyword", keywordInput.trim());
-    }
+    if (normalizedKeyword) params.set("keyword", normalizedKeyword);
+    if (filters.status !== "all") params.set("status", filters.status);
+    if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
+    if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
+    if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
+    if (normalizedModuleName) params.set("module_name", normalizedModuleName);
+    if (filters.sort !== "key_asc") params.set("sort", filters.sort);
 
-    if (statusInput !== "all") {
-      nextParams.set("status", statusInput);
-    }
-
-    const nextQuery = nextParams.toString();
-    navigate(nextQuery ? `/documents/search?${nextQuery}` : "/documents/search");
+    const nextQuery = params.toString();
+    navigate(nextQuery ? "/documents/search?" + nextQuery : "/documents/search");
   }
 
-  const statusFilterLabel =
-    moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  function handleSubmit(): void {
+    navigateWithFilters({ keyword: keywordInput, status: statusInput, createdBy: createdByInput, updatedFrom: updatedFromInput, updatedTo: updatedToInput, moduleName: moduleNameInput, sort: sortInput });
+  }
+
+  function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
+    setStatusInput(nextStatus);
+    navigateWithFilters({ keyword, status: nextStatus, createdBy: createdByFilter, updatedFrom: updatedFromFilter, updatedTo: updatedToFilter, moduleName: moduleNameFilter, sort: sortFilter });
+  }
+
+  const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
 
   return (
-    <Page title="原本参照" description="APIから取得した原本一覧を確認し、関連モジュールと詳細情報を追えます。">
-      <form
-        className="search-form module-search-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          handleSubmit();
-        }}
-      >
-        <label>
-          キーワード
-          <input
-            placeholder="例: M1確認用 / MOD-001 / 原本A"
-            value={keywordInput}
-            onChange={(event) => setKeywordInput(event.target.value)}
-          />
-        </label>
-        <label>
-          状態
-          <select
-            value={statusInput}
-            onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}
-          >
-            {moduleStatusOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="primary" type="submit">
-          <span aria-hidden="true">⌕</span>
-          検索
-        </button>
+    <Page title={"原本検索"} description={"APIから取得した原本一覧を検索し、関連モジュールと詳細情報を確認できます。"}>
+      <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
+        <label>{"キーワード"}<input placeholder="例: M1確認用 / MOD-001 / 原本A" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} /></label>
+        <label>{"承認状態"}<select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>{moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <label>{"作成者"}<input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} /></label>
+        <label>{"更新日 From"}<input type="date" value={updatedFromInput} onChange={(event) => setUpdatedFromInput(event.target.value)} /></label>
+        <label>{"更新日 To"}<input type="date" value={updatedToInput} onChange={(event) => setUpdatedToInput(event.target.value)} /></label>
+        <label>{"利用モジュール"}<input placeholder="MOD-001 / ボーレート" value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} /></label>
+        <label>{"並び替え"}<select value={sortInput} onChange={(event) => setSortInput(event.target.value)}><option value="key_asc">{"ID昇順"}</option><option value="key_desc">{"ID降順"}</option><option value="updated_desc">{"更新日が新しい順"}</option><option value="updated_asc">{"更新日が古い順"}</option><option value="status_asc">{"承認状態順"}</option></select></label>
+        <button className="primary" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
       </form>
 
-      <section className={`list-status list-status-${sourceDocListState.status}`} aria-live="polite">
-        <div>
-          <span>取得状態</span>
-          <strong>
-            {sourceDocListState.status === "loading"
-              ? "取得中"
-              : sourceDocListState.status === "available"
-                ? "取得成功"
-                : "取得失敗"}
-          </strong>
-        </div>
-        <div>
-          <span>検索キーワード</span>
-          <strong>{keyword || "指定なし"}</strong>
-        </div>
-        <div>
-          <span>状態</span>
-          <strong>{statusFilterLabel}</strong>
-        </div>
+      <section className={"list-status list-status-" + sourceDocListState.status} aria-live="polite">
+        <div><span>{"取得状態"}</span><strong>{sourceDocListState.status === "loading" ? "取得中" : sourceDocListState.status === "available" ? "取得完了" : "取得失敗"}</strong></div>
+        <div><span>{"検索キーワード"}</span><strong>{keyword || "指定なし"}</strong></div>
+        <div><span>{"承認状態"}</span><strong>{statusFilterLabel}</strong></div>
+        <div><span>{"利用モジュール"}</span><strong>{moduleNameFilter || "指定なし"}</strong></div>
         <p>{sourceDocListState.message}</p>
       </section>
+
+      <section className="approval-flow" aria-label="原本承認状態フィルター">
+        {moduleStatusOptions.map((option) => <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>)}
+      </section>
+
       <Toolbar>
-        <button className="secondary" onClick={() => navigate("/documents/search")}>
-          <span aria-hidden="true">↺</span>
-          条件をリセット
-        </button>
-        <button className="primary" onClick={() => navigate("/documents/create")}>
-          <span aria-hidden="true">＋</span>
-          原本を登録
-        </button>
+        <button className="secondary" onClick={() => navigate("/documents/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
+        <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">+</span>{"原本登録"}</button>
       </Toolbar>
       {sourceDocListState.status === "available" && sourceDocListState.items.length === 0 ? (
-        <section className="empty-state">
-          <h2>該当する原本はありません</h2>
-          <p>検索条件を変えて再度確認してください。</p>
-        </section>
+        <section className="empty-state"><h2>{"該当する原本はありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
       ) : (
         <DataTable
           columns={["原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "作成者", "更新日", "操作"]}
-          rows={sourceDocListState.items.map((item) => [
-            item.source_doc_key,
-            item.source_doc_name,
-            formatVersionLabel(item),
-            <ModuleStatusPill status={item.status} label={item.status_label} />,
-            item.module_names.join(", ") || "-",
-            `${item.enabled_module_count}/${item.module_count}`,
-            item.created_by ?? "-",
-            item.updated_at,
-            <button className="text-button" onClick={() => navigate(`/documents/${item.source_doc_id}`)}>詳細</button>,
-          ])}
+          rows={sourceDocListState.items.map((item) => [item.source_doc_key, item.source_doc_name, formatVersionLabel(item), <ModuleStatusPill status={item.status} label={item.status_label} />, item.module_names.join(", ") || "-", item.enabled_module_count + "/" + item.module_count, item.created_by ?? "-", item.updated_at, <button className="text-button" onClick={() => navigate("/documents/" + item.source_doc_id)}>{"詳細"}</button>])}
         />
       )}
     </Page>
@@ -5147,7 +5332,6 @@ function DocumentDetailPage() {
               <p>{item.change_note ?? "変更メモは未設定です。"}</p>
             </div>
           </section>
-          <ExcelSourceDocPreview item={item} onOpenModule={(moduleId) => navigate(`/modules/${moduleId}`)} />
         </>
       ) : (
         <section className="empty-state">
@@ -5220,8 +5404,8 @@ function ExcelSourceDocPreview({
             </div>
           </header>
 
-          <div className="excel-sheet-wrap">
-            <table className="excel-sheet">
+          <div className="excel-sheet-wrap excel-sheet-scroll-with-sticky-left excel-sheet-scroll-source">
+            <table className="excel-sheet excel-sheet-sticky-left excel-sheet-source-sticky">
               <colgroup>
                 <col className="excel-col-small" />
                 <col className="excel-col-small" />
@@ -5493,60 +5677,60 @@ function IndentedExcelText({
 
 
 const caseDocText = {
-  title: "\u6848\u4ef6\u5316",
-  description: "\u539f\u672c\u3068Access\u7531\u6765\u306e\u30de\u30b9\u30bf\u5024\u3092\u7d10\u3065\u3051\u3001\u6848\u4ef6CS\u751f\u6210\u306b\u4f7f\u3046\u5024\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002",
-  sourceDoc: "\u539f\u672c",
-  prefecture: "\u90fd\u9053\u5e9c\u770c",
-  building: "\u30d3\u30eb",
-  unitConfig: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210",
-  resolve: "\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d",
-  location: "\u8a2d\u7f6e\u5834\u6240",
-  unit: "\u30e6\u30cb\u30c3\u30c8",
-  targetDevice: "\u5bfe\u8c61\u88c5\u7f6e",
-  none: "\u672a\u9078\u629e",
-  targetDeviceSlots: "\u5bfe\u8c61\u88c5\u7f6e\u756a\u53f7\u5bfe\u5fdc\u8868",
-  excelNo: "Excel\u756a\u53f7",
-  hostAssignments: "\u30db\u30b9\u30c8\u5272\u5f53",
-  commonValues: "\u5171\u901a\u5024",
-  resolvedValues: "\u89e3\u6c7a\u6e08\u307f\u5024",
-  slot: "\u30b9\u30ed\u30c3\u30c8",
-  deviceType: "\u88c5\u7f6e\u7a2e\u5225",
-  system: "\u7cfb",
-  hostName: "\u30db\u30b9\u30c8\u540d",
-  key: "\u30ad\u30fc",
-  value: "\u5024",
-  source: "\u51fa\u5178",
-  valueName: "\u5024\u540d",
-  sourceTable: "\u51fa\u5178\u30c6\u30fc\u30d6\u30eb",
-  sourceColumn: "\u51fa\u5178\u30ab\u30e9\u30e0",
-  emptyTitle: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044",
-  loadingSourceDocs: "\u539f\u672c\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  loadingPrefectures: "\u90fd\u9053\u5e9c\u770c\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  loadingBuildings: "\u30d3\u30eb\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  loadingUnitConfigs: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  selectLocation: "\u90fd\u9053\u5e9c\u770c\u3068\u30d3\u30eb\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  ready: "\u6848\u4ef6CS\u751f\u6210\u306b\u4f7f\u3046\u5024\u3092\u78ba\u8a8d\u3067\u304d\u307e\u3059\u3002",
-  sourceDocFailed: "\u539f\u672c\u4e00\u89a7\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  sourceDocLoaded: "\u539f\u672c\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  prefectureFailed: "\u90fd\u9053\u5e9c\u770c\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  prefectureLoaded: "\u90fd\u9053\u5e9c\u770c\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  selectPrefecture: "\u90fd\u9053\u5e9c\u770c\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  buildingFailed: "\u30d3\u30eb\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  buildingLoaded: "\u30d3\u30eb\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  unitConfigFailed: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  unitConfigLoaded: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  apiFailed: "API\u306b\u63a5\u7d9a\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002",
-  selectRequired: "\u539f\u672c\u3001\u90fd\u9053\u5e9c\u770c\u3001\u30d3\u30eb\u3001\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  resolving: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u3066\u3044\u307e\u3059\u3002",
-  resolveFailed: "\u5024\u306e\u89e3\u6c7a\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  resolved: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u307e\u3057\u305f\u3002",
-  generate: "\u6848\u4ef6CS\u3092\u751f\u6210",
-  generateStatus: "\u751f\u6210\u72b6\u614b",
-  generateReady: "\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d\u5f8c\u3001\u6848\u4ef6CS\u3092\u751f\u6210\u3067\u304d\u307e\u3059\u3002",
-  generateFirst: "\u5148\u306b\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  generating: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u3066\u3044\u307e\u3059\u3002",
-  generated: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u307e\u3057\u305f\u3002",
-  generateFailed: "\u6848\u4ef6CS\u306e\u751f\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  title: "案件化",
+  description: "原本とAccess由来のマスタ値を紐づけ、案件CS生成に使う値を確認します。",
+  sourceDoc: "原本",
+  prefecture: "都道府県",
+  building: "ビル",
+  unitConfig: "ユニット構成",
+  resolve: "解決値を確認",
+  location: "設置場所",
+  unit: "ユニット",
+  targetDevice: "対象装置",
+  none: "未選択",
+  targetDeviceSlots: "対象装置番号対応表",
+  excelNo: "Excel番号",
+  hostAssignments: "ホスト割当",
+  commonValues: "共通値",
+  resolvedValues: "解決済み値",
+  slot: "スロット",
+  deviceType: "装置種別",
+  system: "系",
+  hostName: "ホスト名",
+  key: "キー",
+  value: "値",
+  source: "出典",
+  valueName: "値名",
+  sourceTable: "出典テーブル",
+  sourceColumn: "出典カラム",
+  emptyTitle: "案件CS生成用の値を確認してください",
+  loadingSourceDocs: "原本一覧を取得しています。",
+  loadingPrefectures: "都道府県を取得しています。",
+  loadingBuildings: "ビルを取得しています。",
+  loadingUnitConfigs: "ユニット構成を取得しています。",
+  selectLocation: "都道府県とビルを選択してください。",
+  ready: "案件CS生成に使う値を確認できます。",
+  sourceDocFailed: "原本一覧の取得に失敗しました。",
+  sourceDocLoaded: "原本一覧を取得しました。",
+  prefectureFailed: "都道府県の取得に失敗しました。",
+  prefectureLoaded: "都道府県を取得しました。",
+  selectPrefecture: "都道府県を選択してください。",
+  buildingFailed: "ビルの取得に失敗しました。",
+  buildingLoaded: "ビルを取得しました。",
+  unitConfigFailed: "ユニット構成の取得に失敗しました。",
+  unitConfigLoaded: "ユニット構成を取得しました。",
+  apiFailed: "APIに接続できませんでした。",
+  selectRequired: "原本、都道府県、ビル、ユニット構成を選択してください。",
+  resolving: "案件CS生成用の値を解決しています。",
+  resolveFailed: "値の解決に失敗しました。",
+  resolved: "案件CS生成用の値を解決しました。",
+  generate: "案件CSを生成",
+  generateStatus: "生成状態",
+  generateReady: "解決値を確認後、案件CSを生成できます。",
+  generateFirst: "先に解決値を確認してください。",
+  generating: "案件CSを生成しています。",
+  generated: "案件CSを生成しました。",
+  generateFailed: "案件CSの生成に失敗しました。",
   selectTargetRequired: "対象装置を1台以上選択してください。",
 };
 
@@ -6314,7 +6498,7 @@ function CaseDocPlaceholdersPage() {
     <Page title={caseDocPlaceholderText.title} description={caseDocPlaceholderText.description}>
       <Toolbar>
         <NavLink to="/case-docs" className="button-link">
-          <span aria-hidden="true">{"\u2190"}</span>
+          <span aria-hidden="true">{"←"}</span>
           {caseDocPlaceholderText.backToCaseDocs}
         </NavLink>
         <button className="primary" type="button" onClick={openCreateEditor}>
@@ -6837,10 +7021,11 @@ function ModuleApprovalStatusPage() {
         </section>
       ) : (
         <DataTable
-          columns={["モジュールID", "モジュール名", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択"]}
+          columns={["モジュールID", "モジュール名", "フォルダ", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択"]}
           rows={filteredModuleItems.map((item) => [
             item.module_key,
             item.module_name,
+            item.folder_path || "未分類",
             formatVersionLabel(item),
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             selectedItem?.target_id === item.module_id && selectedItem.version_no === item.version_no
@@ -7200,7 +7385,7 @@ function ApprovalPage() {
   const canCommentOnSelectedApproval = selectedExecutableTransitions.length > 0;
   const selectedLatestReturnHistory = getLatestReturnHistory(selectedItem?.history);
   const approvalStatusFilterOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
-    { value: "all", label: "0. \u5168\u4ef6\u8868\u793a" },
+    { value: "all", label: "0. 全件表示" },
     { value: "draft", label: "1. 作成中" },
     { value: "review_requested", label: "2. 承認依頼中" },
     { value: "returned", label: "3. 差戻し" },
@@ -7314,7 +7499,7 @@ function ApprovalPage() {
       title="原本承認状態確認 / 変更"
       description="会議で整理した版管理・承認ルールに沿って、原本の状態確認と変更を行います。"
     >
-      <section className="approval-flow" aria-label="\u627f\u8a8d\u72b6\u614b\u30d5\u30a3\u30eb\u30bf\u30fc">
+      <section className="approval-flow" aria-label="承認状態フィルター">
         {approvalStatusFilterOptions.map((option) => (
           <button
             key={option.value}
@@ -7673,8 +7858,8 @@ function routeTitle(path: string) {
     "/modules/approval": "モジュール承認状態確認",
     "/documents/search": "原本検索",
     "/documents/create": "原本作成 / 更新",
-    "/case-docs": "\u6848\u4ef6\u5316",
-    "/case-docs/placeholders": "\u30d7\u30ec\u30fc\u30b9\u30db\u30eb\u30c0\u4e00\u89a7",
+    "/case-docs": "案件化",
+    "/case-docs/placeholders": "プレースホルダ一覧",
     "/approval": "原本承認状態確認",
   };
   if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list" && path !== "/modules/approval") {
@@ -7685,3 +7870,5 @@ function routeTitle(path: string) {
 
 
 export default App;
+
+

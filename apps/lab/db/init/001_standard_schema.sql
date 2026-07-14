@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS proc.modules (
     module_key text NOT NULL UNIQUE,
     name text NOT NULL,
     description text,
+    folder_path text NOT NULL DEFAULT '未分類',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -38,6 +39,12 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
 
 CREATE INDEX IF NOT EXISTS idx_module_versions_status
     ON proc.module_versions (status);
+
+ALTER TABLE proc.modules
+    ADD COLUMN IF NOT EXISTS folder_path text NOT NULL DEFAULT '未分類';
+
+CREATE INDEX IF NOT EXISTS idx_modules_folder_path
+    ON proc.modules (folder_path);
 
 ALTER TABLE proc.module_versions
     ADD COLUMN IF NOT EXISTS version_major integer NOT NULL DEFAULT 0;
