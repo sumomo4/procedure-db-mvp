@@ -993,6 +993,80 @@ nav {
   font-weight: 800;
 }
 
+.module-folder-move-panel {
+  border: 1px solid #ded6c8;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(280px, 1fr) minmax(180px, auto);
+  gap: 12px;
+  align-items: end;
+}
+
+.module-folder-move-panel > div {
+  display: grid;
+  gap: 4px;
+}
+
+.module-folder-move-panel span,
+.module-folder-move-panel label {
+  color: #53636d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.module-folder-move-panel strong {
+  color: #13232d;
+  font-size: 18px;
+}
+
+.module-folder-move-panel form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.module-folder-move-panel label {
+  display: grid;
+  gap: 6px;
+}
+
+.module-folder-move-panel input {
+  min-width: 0;
+}
+
+.module-folder-move-message {
+  margin: 0;
+  color: #53636d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.module-folder-move-message.success {
+  color: #207a4f;
+  font-weight: 800;
+}
+
+.module-folder-move-message.error {
+  color: #ba3c2f;
+  font-weight: 800;
+}
+
+.module-row-select-all {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 980px) {
+  .module-folder-move-panel,
+  .module-folder-move-panel form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .module-explorer-main {
   min-width: 0;
   display: grid;

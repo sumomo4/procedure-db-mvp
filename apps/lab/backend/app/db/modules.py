@@ -1311,6 +1311,46 @@ def rename_module_folder(
     return list_modules(settings, folder_path=new_folder)
 
 
+def move_modules_to_folder(
+    settings: AppSettings,
+    module_ids: list[int],
+    folder_path: str,
+) -> ModuleListData:
+    """Move selected modules to a virtual folder path."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    unique_module_ids = sorted({int(module_id) for module_id in module_ids if int(module_id) > 0})
+    if not unique_module_ids:
+        raise DatabaseConnectionError("No modules were selected for folder move.")
+
+    new_folder = _normalize_module_folder_path(folder_path)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_folder_column(cursor)
+                cursor.execute(
+                    """
+                    UPDATE proc.modules
+                    SET folder_path = %(new_folder)s
+                    WHERE module_id = ANY(%(module_ids)s);
+                    """,
+                    {"new_folder": new_folder, "module_ids": unique_module_ids},
+                )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module folder move failed.") from exception
+
+    return list_modules(settings, folder_path=new_folder)
+
+
 def get_module_detail(settings: AppSettings, module_id: int, version_no: int | None = None) -> ModuleDetailData | None:
     """Read the latest module version and rows from PostgreSQL."""
 

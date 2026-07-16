@@ -141,6 +141,13 @@ class ModuleFolderRenameRequest(BaseModel):
     new_folder_path: str = Field(min_length=1)
 
 
+class ModuleFolderMoveRequest(BaseModel):
+    """Request payload for moving modules to a virtual folder."""
+
+    module_ids: list[int] = Field(min_length=1)
+    folder_path: str = Field(min_length=1)
+
+
 class ModuleVersionListItemData(BaseModel):
     """Module version list item response payload."""
 

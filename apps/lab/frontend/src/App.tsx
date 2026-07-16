@@ -254,6 +254,11 @@ type ModuleListState = {
   message: string;
 };
 
+type ModuleFolderMoveState = {
+  status: "idle" | "submitting" | "success" | "error";
+  message: string;
+};
+
 type ModuleFolderRenameState = {
   status: "idle" | "submitting" | "success" | "error";
   message: string;
@@ -1340,6 +1345,12 @@ function ModuleSearchPage() {
     status: "idle",
     message: "選択中のフォルダ名を変更できます。",
   });
+  const [selectedModuleIds, setSelectedModuleIds] = useState<number[]>([]);
+  const [folderMoveInput, setFolderMoveInput] = useState(initialFolderPath || "未分類");
+  const [folderMoveState, setFolderMoveState] = useState<ModuleFolderMoveState>({
+    status: "idle",
+    message: "選択したモジュールだけを任意フォルダへ移動できます。",
+  });
 
   useEffect(() => {
     setKeywordInput(initialKeyword);
@@ -1347,7 +1358,9 @@ function ModuleSearchPage() {
     setCreatedByInput(initialCreatedBy);
     setFolderPathInput(initialFolderPath);
     setFolderRenameInput(initialFolderPath || "未分類");
+    setFolderMoveInput(initialFolderPath || "未分類");
     setFolderRenameState({ status: "idle", message: "選択中のフォルダ名を変更できます。" });
+    setFolderMoveState({ status: "idle", message: "選択したモジュールだけを任意フォルダへ移動できます。" });
     setUpdatedFromInput(initialUpdatedFrom);
     setUpdatedToInput(initialUpdatedTo);
     setHasImagesInput(initialHasImages);
@@ -1406,6 +1419,12 @@ function ModuleSearchPage() {
 
     return () => abortController.abort();
   }, [keyword, statusFilter, createdByFilter, folderPathFilter, updatedFromFilter, updatedToFilter, hasImagesFilter, sortFilter]);
+
+  useEffect(() => {
+    setSelectedModuleIds((current) =>
+      current.filter((moduleId) => moduleListState.items.some((item) => item.module_id === moduleId)),
+    );
+  }, [moduleListState.items]);
 
   function navigateWithFilters(filters: {
     keyword: string;
@@ -1525,12 +1544,70 @@ function ModuleSearchPage() {
     }
   }
 
+  function toggleSelectedModule(moduleId: number): void {
+    setSelectedModuleIds((current) =>
+      current.includes(moduleId) ? current.filter((selectedId) => selectedId !== moduleId) : [...current, moduleId],
+    );
+  }
+
+  function toggleAllVisibleModules(): void {
+    const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
+    const allVisibleSelected = visibleModuleIds.length > 0 && visibleModuleIds.every((moduleId) => selectedModuleIds.includes(moduleId));
+    setSelectedModuleIds(allVisibleSelected ? [] : visibleModuleIds);
+  }
+
+  async function handleFolderMoveSubmit(): Promise<void> {
+    const targetFolder = normalizeModuleFolderPath(folderMoveInput);
+
+    if (selectedModuleIds.length === 0) {
+      setFolderMoveState({ status: "error", message: "移動するモジュールを選択してください。" });
+      return;
+    }
+
+    setFolderMoveState({ status: "submitting", message: "選択したモジュールを移動しています。" });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/folders/modules"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ module_ids: selectedModuleIds, folder_path: targetFolder }),
+      });
+      const responseBody = await readApiResponse<ModuleListData>(response);
+
+      if (!response.ok || responseBody.result !== "success") {
+        setFolderMoveState({
+          status: "error",
+          message: responseBody.message || `モジュール移動に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setSelectedModuleIds([]);
+      setFolderMoveState({ status: "success", message: responseBody.message || "選択したモジュールを移動しました。" });
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: targetFolder,
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderMoveState({ status: "error", message: "モジュール移動中にAPI接続で失敗しました。" });
+    }
+  }
+
   const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
   const moduleFolderOptions = moduleListState.folders ?? [];
   const folderOptions = moduleFolderOptions.length > 0 ? moduleFolderOptions : ["未分類"];
   const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
   const selectedFolderLabel = folderPathFilter || "すべて";
   const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
+  const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
+  const allVisibleModulesSelected = visibleModuleIds.length > 0 && visibleModuleIds.every((moduleId) => selectedModuleIds.includes(moduleId));
+  const canMoveSelectedModules = selectedModuleIds.length > 0 && folderMoveState.status !== "submitting";
 
   return (
     <Page title={"モジュール検索"} description={"APIから取得したモジュール一覧を検索し、詳細情報と版管理を確認できます。"}>
@@ -1651,6 +1728,32 @@ function ModuleSearchPage() {
             ))}
           </section>
 
+          <section className="module-folder-move-panel" aria-label="モジュールのフォルダ移動">
+            <div>
+              <span>選択中</span>
+              <strong>{selectedModuleIds.length} 件</strong>
+            </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleFolderMoveSubmit();
+              }}
+            >
+              <label>
+                移動先フォルダ
+                <input
+                  value={folderMoveInput}
+                  placeholder="例: ネットワーク/SBC"
+                  onChange={(event) => setFolderMoveInput(event.target.value)}
+                />
+              </label>
+              <button className="secondary" type="submit" disabled={!canMoveSelectedModules}>
+                選択モジュールを移動
+              </button>
+            </form>
+            <p className={"module-folder-move-message " + folderMoveState.status}>{folderMoveState.message}</p>
+          </section>
+
           <Toolbar>
             <button className="secondary" onClick={() => navigate("/modules/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
             <button className="primary" onClick={() => navigate("/modules/register")}><span aria-hidden="true">+</span>{"モジュール登録"}</button>
@@ -1659,8 +1762,34 @@ function ModuleSearchPage() {
             <section className="empty-state"><h2>{"該当するモジュールはありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
           ) : (
             <DataTable
-              columns={["モジュールID", "モジュール名", "フォルダ", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "操作"]}
+              columns={[
+                <label className="module-row-select-all">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleModulesSelected}
+                    onChange={toggleAllVisibleModules}
+                    aria-label="表示中のモジュールをすべて選択"
+                  />
+                  選択
+                </label>,
+                "モジュールID",
+                "モジュール名",
+                "フォルダ",
+                "版",
+                "承認状態",
+                "行数",
+                "先頭作業",
+                "作成者",
+                "更新日",
+                "操作",
+              ]}
               rows={moduleListState.items.map((item) => [
+                <input
+                  type="checkbox"
+                  checked={selectedModuleIds.includes(item.module_id)}
+                  onChange={() => toggleSelectedModule(item.module_id)}
+                  aria-label={item.module_key + " を選択"}
+                />,
                 item.module_key,
                 item.module_name,
                 item.folder_path || "未分類",
@@ -7801,12 +7930,12 @@ function SearchForm({ fields, onSubmit }: { fields: [string, string][]; onSubmit
   );
 }
 
-function DataTable({ columns, rows }: { columns: string[]; rows: ReactNode[][] }) {
+function DataTable({ columns, rows }: { columns: ReactNode[]; rows: ReactNode[][] }) {
   return (
     <div className="table-wrap">
       <table>
         <thead>
-          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
+          <tr>{columns.map((column, index) => <th key={index}>{column}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((row, index) => (

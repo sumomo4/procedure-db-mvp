@@ -21,6 +21,7 @@ from app.core.responses import (
     ModuleCreateRequest,
     ModuleDetailData,
     ModuleDiffData,
+    ModuleFolderMoveRequest,
     ModuleFolderRenameRequest,
     ModuleListData,
     ModuleVersionListData,
@@ -37,6 +38,7 @@ from app.db.modules import (
     get_module_version_status,
     list_module_versions,
     list_modules,
+    move_modules_to_folder,
     rename_module_folder,
     update_module_version_status,
 )
@@ -142,6 +144,31 @@ def rename_module_folder_path(
         ) from exception
 
     return success_response(data, "フォルダ名を変更しました。")
+
+
+@router.patch("/folders/modules", response_model=ApiResponse[ModuleListData])
+def move_selected_modules_to_folder(
+    request: ModuleFolderMoveRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleListData]:
+    """Move selected modules to a virtual folder path."""
+
+    target_folder = request.folder_path.strip()
+    if not request.module_ids or not target_folder:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="module_ids and folder_path are required.",
+        )
+
+    try:
+        data = move_modules_to_folder(settings, request.module_ids, target_folder)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "選択したモジュールをフォルダへ移動しました。")
 
 
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
