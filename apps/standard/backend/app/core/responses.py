@@ -91,6 +91,7 @@ class ModuleListItemData(BaseModel):
         module_key: Human-readable unique module key.
         module_name: Module display name.
         description: Optional module description.
+        folder_path: Virtual folder path for WebUI module management.
         module_version_id: Internal module version identifier.
         version_no: Module version number.
         status: Current module version status.
@@ -106,6 +107,7 @@ class ModuleListItemData(BaseModel):
     module_key: str
     module_name: str
     description: str | None
+    folder_path: str = "未分類"
     module_version_id: int
     version_no: int
     version_major: int = 0
@@ -125,9 +127,31 @@ class ModuleListData(BaseModel):
 
     Attributes:
         items: Module list items.
+        folders: Virtual folder paths available for module browsing.
     """
 
     items: list[ModuleListItemData]
+    folders: list[str] = Field(default_factory=list)
+
+
+class ModuleFolderRenameRequest(BaseModel):
+    """Request payload for virtual module folder rename."""
+
+    current_folder_path: str = Field(min_length=1)
+    new_folder_path: str = Field(min_length=1)
+
+
+class ModuleFolderDeleteRequest(BaseModel):
+    """Request payload for virtual module folder deletion."""
+
+    folder_path: str = Field(min_length=1)
+
+
+class ModuleFolderMoveRequest(BaseModel):
+    """Request payload for moving modules to a virtual folder."""
+
+    module_ids: list[int] = Field(min_length=1)
+    folder_path: str = Field(min_length=1)
 
 
 class ModuleVersionListItemData(BaseModel):

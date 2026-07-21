@@ -119,6 +119,7 @@ type ModuleListItemData = {
   module_key: string;
   module_name: string;
   description: string | null;
+  folder_path: string;
   module_version_id: number;
   version_no: number;
   version_major: number;
@@ -135,6 +136,7 @@ type ModuleListItemData = {
 
 type ModuleListData = {
   items: ModuleListItemData[];
+  folders: string[];
 };
 
 type ModuleVersionListItemData = {
@@ -248,7 +250,25 @@ type HealthCheckState = {
 type ModuleListState = {
   status: "loading" | "available" | "unavailable";
   items: ModuleListItemData[];
+  folders?: string[];
   message: string;
+};
+
+type ModuleFolderMoveState = {
+  status: "idle" | "submitting" | "success" | "error";
+  message: string;
+};
+
+type ModuleFolderRenameState = {
+  status: "idle" | "submitting" | "success" | "error";
+  message: string;
+};
+
+type ModuleFolderTreeItem = {
+  path: string;
+  label: string;
+  depth: number;
+  hasDirectModule: boolean;
 };
 
 type ModuleDetailState = {
@@ -707,6 +727,39 @@ const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] =
   { value: "published", label: "承認済み" },
   { value: "archived", label: "保管済み" },
 ];
+
+function normalizeModuleFolderPath(folderPath: string): string {
+  const normalized = folderPath
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join("/");
+  return normalized || "未分類";
+}
+
+function buildModuleFolderTreeItems(folders: string[]): ModuleFolderTreeItem[] {
+  const directFolders = new Set(folders.map((folder) => normalizeModuleFolderPath(folder)));
+  const itemMap = new Map<string, ModuleFolderTreeItem>();
+
+  directFolders.forEach((folder) => {
+    const parts = folder.split("/").filter((part) => part.length > 0);
+    parts.forEach((part, index) => {
+      const path = parts.slice(0, index + 1).join("/");
+      const existing = itemMap.get(path);
+      itemMap.set(path, {
+        path,
+        label: part,
+        depth: index,
+        hasDirectModule: existing?.hasDirectModule === true || directFolders.has(path),
+      });
+    });
+  });
+
+  return Array.from(itemMap.values()).sort((left, right) => left.path.localeCompare(right.path, "ja"));
+}
+
 
 function formatVersionLabel(item: { version_no: number; version_label?: string | null }): string {
   return item.version_label ?? `ver.${item.version_no}.0`;
@@ -1257,74 +1310,77 @@ function HealthStatusRow({
 
 function ModuleSearchPage() {
   const navigate = useNavigate();
-  const [keyword, setKeyword] = useState("");
-  const [status, setStatus] = useState<(typeof moduleStatusOptions)[number]["value"]>("all");
-
-  function handleSubmit(): void {
-    const params = new URLSearchParams();
-    const normalizedKeyword = keyword.trim();
-
-    if (normalizedKeyword) {
-      params.set("keyword", normalizedKeyword);
-    }
-
-    if (status !== "all") {
-      params.set("status", status);
-    }
-
-    const query = params.toString();
-    navigate(query ? `/modules/list?${query}` : "/modules/list");
-  }
-
-  return (
-    <Page title="モジュール検索" description="キーワードと承認状態で、登録済みモジュールを検索します。">
-      <form
-        className="search-form module-search-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          handleSubmit();
-        }}
-      >
-        <label>
-          キーワード
-          <input
-            placeholder="例: 点検、交換、MOD-001"
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-          />
-        </label>
-        <label>
-          承認状態
-          <select
-            value={status}
-            onChange={(event) => setStatus(event.target.value as (typeof moduleStatusOptions)[number]["value"])}
-          >
-            {moduleStatusOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="primary" type="submit">
-          <span aria-hidden="true">⌕</span>
-          検索
-        </button>
-      </form>
-    </Page>
-  );
-}
-
-function ModuleListPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const keyword = searchParams.get("keyword") ?? "";
-  const statusFilter = searchParams.get("status") ?? "all";
+  const initialKeyword = searchParams.get("keyword") ?? "";
+  const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
+  const initialCreatedBy = searchParams.get("created_by") ?? "";
+  const initialFolderPath = searchParams.get("folder_path") ?? "";
+  const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
+  const initialUpdatedTo = searchParams.get("updated_to") ?? "";
+  const initialHasImages = searchParams.get("has_images") ?? "all";
+  const initialSort = searchParams.get("sort") ?? "key_asc";
+  const [keywordInput, setKeywordInput] = useState(initialKeyword);
+  const [statusInput, setStatusInput] = useState(initialStatus);
+  const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
+  const [folderPathInput, setFolderPathInput] = useState(initialFolderPath);
+  const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
+  const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
+  const [hasImagesInput, setHasImagesInput] = useState(initialHasImages);
+  const [sortInput, setSortInput] = useState(initialSort);
+  const keyword = initialKeyword;
+  const statusFilter = initialStatus;
+  const createdByFilter = initialCreatedBy;
+  const folderPathFilter = initialFolderPath;
+  const updatedFromFilter = initialUpdatedFrom;
+  const updatedToFilter = initialUpdatedTo;
+  const hasImagesFilter = initialHasImages;
+  const sortFilter = initialSort;
   const [moduleListState, setModuleListState] = useState<ModuleListState>({
     status: "loading",
     items: [],
+    folders: [],
     message: "モジュール一覧を取得しています。",
   });
+  const [folderRenameInput, setFolderRenameInput] = useState(initialFolderPath || "未分類");
+  const [folderRenameState, setFolderRenameState] = useState<ModuleFolderRenameState>({
+    status: "idle",
+    message: "選択中のフォルダ名を変更できます。",
+  });
+  const [folderDeleteState, setFolderDeleteState] = useState<ModuleFolderRenameState>({
+    status: "idle",
+    message: "選択中のフォルダを削除できます。",
+  });
+  const [isFolderDeleteConfirmOpen, setIsFolderDeleteConfirmOpen] = useState(false);
+  const [selectedModuleIds, setSelectedModuleIds] = useState<number[]>([]);
+  const [isFolderCreateOpen, setIsFolderCreateOpen] = useState(false);
+  const [folderCreateInput, setFolderCreateInput] = useState("");
+  const [folderCreateState, setFolderCreateState] = useState<ModuleFolderMoveState>({
+    status: "idle",
+    message: "新規フォルダには最低1つのモジュールを格納します。",
+  });
+  const [folderMoveTarget, setFolderMoveTarget] = useState(initialFolderPath || "未分類");
+  const [folderMoveState, setFolderMoveState] = useState<ModuleFolderMoveState>({
+    status: "idle",
+    message: "選択したモジュールを既存フォルダへ移動できます。",
+  });
+
+  useEffect(() => {
+    setKeywordInput(initialKeyword);
+    setStatusInput(initialStatus);
+    setCreatedByInput(initialCreatedBy);
+    setFolderPathInput(initialFolderPath);
+    setFolderRenameInput(initialFolderPath || "未分類");
+    setFolderMoveTarget(initialFolderPath || "未分類");
+    setFolderRenameState({ status: "idle", message: "選択中のフォルダ名を変更できます。" });
+    setFolderDeleteState({ status: "idle", message: "選択中のフォルダを削除できます。" });
+    setIsFolderDeleteConfirmOpen(false);
+    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
+    setFolderMoveState({ status: "idle", message: "選択したモジュールを既存フォルダへ移動できます。" });
+    setUpdatedFromInput(initialUpdatedFrom);
+    setUpdatedToInput(initialUpdatedTo);
+    setHasImagesInput(initialHasImages);
+    setSortInput(initialSort);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPath, initialUpdatedFrom, initialUpdatedTo, initialHasImages, initialSort]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1333,31 +1389,31 @@ function ModuleListPage() {
       setModuleListState({
         status: "loading",
         items: [],
+        folders: [],
         message: "モジュール一覧を取得しています。",
       });
 
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
 
-        if (keyword) {
-          endpoint.searchParams.set("keyword", keyword);
-        }
+        if (keyword) endpoint.searchParams.set("keyword", keyword);
+        if (statusFilter !== "all") endpoint.searchParams.set("status", statusFilter);
+        if (createdByFilter) endpoint.searchParams.set("created_by", createdByFilter);
+        if (folderPathFilter) endpoint.searchParams.set("folder_path", folderPathFilter);
+        if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
+        if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
+        if (hasImagesFilter !== "all") endpoint.searchParams.set("has_images", hasImagesFilter);
+        if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
 
-        if (statusFilter !== "all") {
-          endpoint.searchParams.set("status", statusFilter);
-        }
-
-        const response = await fetch(endpoint.toString(), {
-          signal: abortController.signal,
-        });
-
+        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setModuleListState({
             status: "unavailable",
             items: [],
-            message: responseBody.message || `モジュール一覧の取得に失敗しました。HTTP ${response.status}`,
+            folders: [],
+            message: responseBody.message || "モジュール一覧の取得に失敗しました。HTTP " + response.status,
           });
           return;
         }
@@ -1365,114 +1421,584 @@ function ModuleListPage() {
         setModuleListState({
           status: "available",
           items: responseBody.data.items,
+          folders: responseBody.data.folders ?? [],
           message: responseBody.message || "モジュール一覧を取得しました。",
         });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-
-        setModuleListState({
-          status: "unavailable",
-          items: [],
-          message: "APIに接続できませんでした。",
-        });
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setModuleListState({ status: "unavailable", items: [], folders: [], message: "APIに接続できませんでした。" });
       }
     }
 
     void fetchModules();
 
-    return () => {
-      abortController.abort();
-    };
-  }, [keyword, statusFilter]);
+    return () => abortController.abort();
+  }, [keyword, statusFilter, createdByFilter, folderPathFilter, updatedFromFilter, updatedToFilter, hasImagesFilter, sortFilter]);
 
-  const statusFilterLabel =
-    moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  useEffect(() => {
+    setSelectedModuleIds((current) =>
+      current.filter((moduleId) => moduleListState.items.some((item) => item.module_id === moduleId)),
+    );
+  }, [moduleListState.items]);
 
-  function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
+  function navigateWithFilters(filters: {
+    keyword: string;
+    status: (typeof moduleStatusOptions)[number]["value"];
+    createdBy: string;
+    folderPath: string;
+    updatedFrom: string;
+    updatedTo: string;
+    hasImages: string;
+    sort: string;
+  }): void {
     const params = new URLSearchParams();
+    const normalizedKeyword = filters.keyword.trim();
+    const normalizedCreatedBy = filters.createdBy.trim();
+    const normalizedFolderPath = filters.folderPath.trim();
 
-    if (keyword) {
-      params.set("keyword", keyword);
-    }
-
-    if (nextStatus !== "all") {
-      params.set("status", nextStatus);
-    }
+    if (normalizedKeyword) params.set("keyword", normalizedKeyword);
+    if (filters.status !== "all") params.set("status", filters.status);
+    if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
+    if (normalizedFolderPath) params.set("folder_path", normalizedFolderPath);
+    if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
+    if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
+    if (filters.hasImages !== "all") params.set("has_images", filters.hasImages);
+    if (filters.sort !== "key_asc") params.set("sort", filters.sort);
 
     const query = params.toString();
-    navigate(query ? `/modules/list?${query}` : "/modules/list");
+    navigate(query ? "/modules/search?" + query : "/modules/search");
   }
 
+  function handleSubmit(): void {
+    navigateWithFilters({
+      keyword: keywordInput,
+      status: statusInput,
+      createdBy: createdByInput,
+      folderPath: folderPathInput,
+      updatedFrom: updatedFromInput,
+      updatedTo: updatedToInput,
+      hasImages: hasImagesInput,
+      sort: sortInput,
+    });
+  }
+
+  function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
+    setStatusInput(nextStatus);
+    navigateWithFilters({
+      keyword,
+      status: nextStatus,
+      createdBy: createdByFilter,
+      folderPath: folderPathFilter,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      hasImages: hasImagesFilter,
+      sort: sortFilter,
+    });
+  }
+
+  function handleFolderFilterChange(nextFolderPath: string): void {
+    setFolderPathInput(nextFolderPath);
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      createdBy: createdByFilter,
+      folderPath: nextFolderPath,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      hasImages: hasImagesFilter,
+      sort: sortFilter,
+    });
+  }
+
+  async function handleFolderRenameSubmit(): Promise<void> {
+    const currentFolder = normalizeModuleFolderPath(folderPathFilter || "未分類");
+    const nextFolder = normalizeModuleFolderPath(folderRenameInput);
+
+    if (folderPathFilter === "") {
+      setFolderRenameState({ status: "error", message: "先に変更対象のフォルダを選択してください。" });
+      return;
+    }
+
+    if (currentFolder === nextFolder) {
+      setFolderRenameState({ status: "error", message: "変更前と変更後のフォルダ名が同じです。" });
+      return;
+    }
+
+    setFolderRenameState({ status: "submitting", message: "フォルダ名を変更しています。" });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_folder_path: currentFolder, new_folder_path: nextFolder }),
+      });
+      const responseBody = await readApiResponse<ModuleListData>(response);
+
+      if (!response.ok || responseBody.result !== "success") {
+        setFolderRenameState({
+          status: "error",
+          message: responseBody.message || `フォルダ名の変更に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setFolderRenameState({ status: "success", message: responseBody.message || "フォルダ名を変更しました。" });
+      setFolderPathInput(nextFolder);
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: nextFolder,
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderRenameState({ status: "error", message: "フォルダ名の変更中にAPI接続で失敗しました。" });
+    }
+  }
+
+  async function handleFolderDeleteConfirm(): Promise<void> {
+    const targetFolder = normalizeModuleFolderPath(folderPathFilter);
+    setFolderDeleteState({ status: "submitting", message: "フォルダを削除しています。" });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_path: targetFolder }),
+      });
+      const responseBody = await readApiResponse<ModuleListData>(response);
+
+      if (!response.ok || responseBody.result !== "success") {
+        setFolderDeleteState({
+          status: "error",
+          message: responseBody.message || `フォルダの削除に失敗しました。HTTP ${response.status}`,
+        });
+        setIsFolderDeleteConfirmOpen(false);
+        return;
+      }
+
+      setIsFolderDeleteConfirmOpen(false);
+      setFolderDeleteState({ status: "success", message: responseBody.message || "フォルダを削除しました。" });
+      setFolderPathInput("");
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: "",
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderDeleteState({ status: "error", message: "フォルダ削除中にAPI接続で失敗しました。" });
+      setIsFolderDeleteConfirmOpen(false);
+    }
+  }
+
+  function toggleSelectedModule(moduleId: number): void {
+    setSelectedModuleIds((current) =>
+      current.includes(moduleId) ? current.filter((selectedId) => selectedId !== moduleId) : [...current, moduleId],
+    );
+  }
+
+  function toggleAllVisibleModules(): void {
+    const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
+    const allVisibleSelected = visibleModuleIds.length > 0 && visibleModuleIds.every((moduleId) => selectedModuleIds.includes(moduleId));
+    setSelectedModuleIds(allVisibleSelected ? [] : visibleModuleIds);
+  }
+
+  async function moveSelectedModulesToFolder(targetFolder: string): Promise<ApiResponse<ModuleListData>> {
+    const response = await fetch(buildApiUrl("/api/v1/modules/folders/modules"), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ module_ids: selectedModuleIds, folder_path: targetFolder }),
+    });
+    return readApiResponse<ModuleListData>(response);
+  }
+
+  async function handleFolderCreateSubmit(): Promise<void> {
+    const targetFolder = normalizeModuleFolderPath(folderCreateInput);
+
+    if (selectedModuleIds.length === 0) {
+      setFolderCreateState({ status: "error", message: "最低1つのモジュールを選択してください。" });
+      return;
+    }
+
+    if (folderOptions.some((folder) => normalizeModuleFolderPath(folder) === targetFolder)) {
+      setFolderCreateState({ status: "error", message: "同じ名前のフォルダが既にあります。既存フォルダへの移動を使ってください。" });
+      return;
+    }
+
+    setFolderCreateState({ status: "submitting", message: "フォルダを作成し、選択モジュールを格納しています。" });
+
+    try {
+      const responseBody = await moveSelectedModulesToFolder(targetFolder);
+
+      if (responseBody.result !== "success") {
+        setFolderCreateState({ status: "error", message: responseBody.message || "フォルダ追加に失敗しました。" });
+        return;
+      }
+
+      setSelectedModuleIds([]);
+      setFolderCreateInput("");
+      setIsFolderCreateOpen(false);
+      setFolderCreateState({ status: "success", message: responseBody.message || "フォルダを追加しました。" });
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: targetFolder,
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderCreateState({ status: "error", message: "フォルダ追加中にAPI接続で失敗しました。" });
+    }
+  }
+
+  function handleFolderCreateCancel(): void {
+    setIsFolderCreateOpen(false);
+    setFolderCreateInput("");
+    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
+  }
+
+  async function handleFolderMoveSubmit(): Promise<void> {
+    const targetFolder = normalizeModuleFolderPath(folderMoveTarget);
+
+    if (selectedModuleIds.length === 0) {
+      setFolderMoveState({ status: "error", message: "移動するモジュールを選択してください。" });
+      return;
+    }
+
+    setFolderMoveState({ status: "submitting", message: "選択したモジュールを移動しています。" });
+
+    try {
+      const responseBody = await moveSelectedModulesToFolder(targetFolder);
+
+      if (responseBody.result !== "success") {
+        setFolderMoveState({ status: "error", message: responseBody.message || "モジュール移動に失敗しました。" });
+        return;
+      }
+
+      setSelectedModuleIds([]);
+      setFolderMoveState({ status: "success", message: responseBody.message || "選択したモジュールを移動しました。" });
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: targetFolder,
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderMoveState({ status: "error", message: "モジュール移動中にAPI接続で失敗しました。" });
+    }
+  }
+
+  const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  const moduleFolderOptions = moduleListState.folders ?? [];
+  const folderOptions = moduleFolderOptions.length > 0 ? moduleFolderOptions : ["未分類"];
+  const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
+  const selectedFolderLabel = folderPathFilter || "すべて";
+  const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
+  const canDeleteFolder = folderPathFilter !== "" && folderPathFilter !== "未分類" && folderDeleteState.status !== "submitting";
+  const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
+  const allVisibleModulesSelected = visibleModuleIds.length > 0 && visibleModuleIds.every((moduleId) => selectedModuleIds.includes(moduleId));
+  const canCreateFolder = folderCreateState.status !== "submitting";
+  const canMoveSelectedModules = selectedModuleIds.length > 0 && folderMoveState.status !== "submitting";
+
   return (
-    <Page title="モジュール一覧" description="APIから取得したモジュール一覧と検索結果を確認します。">
-      <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
-        <div>
-          <span>取得状態</span>
-          <strong>
-            {moduleListState.status === "loading"
-              ? "取得中"
-              : moduleListState.status === "available"
-                ? "取得完了"
-                : "取得失敗"}
-          </strong>
-        </div>
-        <div>
-          <span>検索キーワード</span>
-          <strong>{keyword || "指定なし"}</strong>
-        </div>
-        <div>
-          <span>承認状態</span>
-          <strong>{statusFilterLabel}</strong>
-        </div>
+    <Page title={"モジュール検索"} description={"APIから取得したモジュール一覧を検索し、詳細情報と版管理を確認できます。"}>
+      <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
+        <label>
+          {"キーワード"}
+          <input placeholder="MOD-001 / 点検 / TeraTerm" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} />
+        </label>
+        <label>
+          {"承認状態"}
+          <select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>
+            {moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>
+          {"作成者"}
+          <input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
+        </label>
+        <label>
+          {"フォルダ"}
+          <input placeholder="未分類 / ネットワーク" value={folderPathInput} onChange={(event) => setFolderPathInput(event.target.value)} />
+        </label>
+        <label>
+          {"更新日 From"}
+          <input type="date" value={updatedFromInput} onChange={(event) => setUpdatedFromInput(event.target.value)} />
+        </label>
+        <label>
+          {"更新日 To"}
+          <input type="date" value={updatedToInput} onChange={(event) => setUpdatedToInput(event.target.value)} />
+        </label>
+        <label>
+          {"画像"}
+          <select value={hasImagesInput} onChange={(event) => setHasImagesInput(event.target.value)}>
+            <option value="all">{"すべて"}</option>
+            <option value="with">{"画像あり"}</option>
+            <option value="without">{"画像なし"}</option>
+          </select>
+        </label>
+        <label>
+          {"並び替え"}
+          <select value={sortInput} onChange={(event) => setSortInput(event.target.value)}>
+            <option value="key_asc">{"ID昇順"}</option>
+            <option value="key_desc">{"ID降順"}</option>
+            <option value="updated_desc">{"更新日が新しい順"}</option>
+            <option value="updated_asc">{"更新日が古い順"}</option>
+            <option value="status_asc">{"承認状態順"}</option>
+          </select>
+        </label>
+        <button className="primary" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
+      </form>
+
+      <section className={"list-status list-status-" + moduleListState.status} aria-live="polite">
+        <div><span>{"取得状態"}</span><strong>{moduleListState.status === "loading" ? "取得中" : moduleListState.status === "available" ? "取得完了" : "取得失敗"}</strong></div>
+        <div><span>{"検索キーワード"}</span><strong>{keyword || "指定なし"}</strong></div>
+        <div><span>{"承認状態"}</span><strong>{statusFilterLabel}</strong></div>
+        <div><span>{"作成者"}</span><strong>{createdByFilter || "指定なし"}</strong></div>
+        <div><span>{"フォルダ"}</span><strong>{folderPathFilter || "すべて"}</strong></div>
         <p>{moduleListState.message}</p>
       </section>
-      <section className="approval-flow" aria-label="モジュール承認状態フィルター">
-        {moduleStatusOptions.map((option) => (
+
+      <div className="module-explorer-layout">
+        <aside className="module-folder-pane" aria-label="モジュールフォルダ">
+          <div className="module-folder-pane-header">
+            <span>フォルダ</span>
+            <strong>{selectedFolderLabel}</strong>
+          </div>
           <button
-            key={option.value}
             type="button"
-            className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"}
-            onClick={() => handleStatusFilterChange(option.value)}
+            className={folderPathFilter === "" ? "module-folder-button active" : "module-folder-button"}
+            onClick={() => handleFolderFilterChange("")}
           >
-            {option.label}
+            <span aria-hidden="true">▦</span>
+            <span>すべて</span>
           </button>
-        ))}
-      </section>
-      <Toolbar>
-        <button className="secondary" onClick={() => navigate("/modules/search")}>
-          <span aria-hidden="true">←</span>
-          条件変更
-        </button>
-        <button className="primary" onClick={() => navigate("/documents/create")}>
-          <span aria-hidden="true">＋</span>
-          原本作成へ
-        </button>
-      </Toolbar>
-      {moduleListState.status === "available" && moduleListState.items.length === 0 ? (
-        <section className="empty-state">
-          <h2>該当するモジュールはありません</h2>
-          <p>検索条件を変えて再度確認してください。</p>
-        </section>
-      ) : (
-        <DataTable
-          columns={["モジュールID", "モジュール名", "版", "承認状態", "行数", "先頭作業", "作成者", "更新日", "選択"]}
-          rows={moduleListState.items.map((item) => [
-            item.module_key,
-            item.module_name,
-            formatVersionLabel(item),
-            <ModuleStatusPill status={item.status} label={item.status_label} />,
-            String(item.row_count),
-            item.first_work_text ?? "-",
-            item.created_by ?? "-",
-            item.updated_at,
-            <button className="text-button" onClick={() => navigate(`/modules/${item.module_id}`)}>詳細</button>,
-          ])}
-        />
-      )}
+          <div className="module-folder-tree" role="tree" aria-label="フォルダ一覧">
+            {folderTreeItems.map((folder) => (
+              <button
+                key={folder.path}
+                type="button"
+                role="treeitem"
+                aria-level={folder.depth + 1}
+                className={folderPathFilter === folder.path ? "module-folder-button active" : "module-folder-button"}
+                style={{ "--folder-depth": folder.depth } as CSSProperties}
+                onClick={() => handleFolderFilterChange(folder.path)}
+              >
+                <span aria-hidden="true">{folder.hasDirectModule ? "▤" : "▸"}</span>
+                <span>{folder.label}</span>
+              </button>
+            ))}
+          </div>
+          <form
+            className="module-folder-rename-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleFolderRenameSubmit();
+            }}
+          >
+            <label>
+              フォルダ名変更
+              <input
+                value={folderRenameInput}
+                disabled={folderPathFilter === ""}
+                placeholder="例: ネットワーク/SBC"
+                onChange={(event) => setFolderRenameInput(event.target.value)}
+              />
+            </label>
+            <button type="submit" className="secondary" disabled={!canRenameFolder}>
+              変更
+            </button>
+            <p className={"module-folder-rename-message " + folderRenameState.status}>{folderRenameState.message}</p>
+          </form>
+          <div className="module-folder-delete-panel">
+            <button
+              type="button"
+              className="danger"
+              disabled={!canDeleteFolder}
+              onClick={() => setIsFolderDeleteConfirmOpen(true)}
+            >
+              フォルダを削除
+            </button>
+            <p className={"module-folder-rename-message " + folderDeleteState.status}>
+              {folderPathFilter === "未分類" ? "未分類フォルダは削除できません。" : folderDeleteState.message}
+            </p>
+          </div>
+        </aside>
+
+        <div className="module-explorer-main">
+          <section className="approval-flow" aria-label="モジュール承認状態フィルター">
+            {moduleStatusOptions.map((option) => (
+              <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>
+            ))}
+          </section>
+
+          <section className="module-folder-action-panel" aria-label="モジュールフォルダ操作">
+            <div className="module-folder-action-summary">
+              <span>選択中</span>
+              <strong>{selectedModuleIds.length} 件</strong>
+            </div>
+
+            <div className="module-folder-action-card">
+              <header>
+                <h2>フォルダ新規追加</h2>
+                {!isFolderCreateOpen ? (
+                  <button className="secondary" type="button" onClick={() => setIsFolderCreateOpen(true)}>
+                    + 追加
+                  </button>
+                ) : null}
+              </header>
+              {isFolderCreateOpen ? (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleFolderCreateSubmit();
+                  }}
+                >
+                  <label>
+                    新規フォルダ名
+                    <input
+                      value={folderCreateInput}
+                      placeholder="例: ネットワーク/SBC"
+                      onChange={(event) => setFolderCreateInput(event.target.value)}
+                    />
+                  </label>
+                  <div className="module-folder-action-buttons">
+                    <button className="primary" type="submit" disabled={!canCreateFolder}>
+                      作成して格納
+                    </button>
+                    <button className="secondary" type="button" onClick={handleFolderCreateCancel}>
+                      キャンセル
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              <p className={"module-folder-action-message " + folderCreateState.status}>{folderCreateState.message}</p>
+            </div>
+
+            <div className="module-folder-action-card">
+              <header>
+                <h2>選択済みモジュールのフォルダ移動</h2>
+              </header>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleFolderMoveSubmit();
+                }}
+              >
+                <label>
+                  既存の移動先フォルダ
+                  <select value={folderMoveTarget} onChange={(event) => setFolderMoveTarget(event.target.value)}>
+                    {folderOptions.map((folder) => (
+                      <option key={folder} value={folder}>
+                        {folder}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="secondary" type="submit" disabled={!canMoveSelectedModules}>
+                  選択モジュールを移動
+                </button>
+              </form>
+              <p className={"module-folder-action-message " + folderMoveState.status}>{folderMoveState.message}</p>
+            </div>
+          </section>
+
+          <Toolbar>
+            <button className="secondary" onClick={() => navigate("/modules/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
+            <button className="primary" onClick={() => navigate("/modules/register")}><span aria-hidden="true">+</span>{"モジュール登録"}</button>
+          </Toolbar>
+          {moduleListState.status === "available" && moduleListState.items.length === 0 ? (
+            <section className="empty-state"><h2>{"該当するモジュールはありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
+          ) : (
+            <DataTable
+              columns={[
+                <label className="module-row-select-all">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleModulesSelected}
+                    onChange={toggleAllVisibleModules}
+                    aria-label="表示中のモジュールをすべて選択"
+                  />
+                  選択
+                </label>,
+                "モジュールID",
+                "モジュール名",
+                "フォルダ",
+                "版",
+                "承認状態",
+                "行数",
+                "先頭作業",
+                "作成者",
+                "更新日",
+                "操作",
+              ]}
+              rows={moduleListState.items.map((item) => [
+                <input
+                  type="checkbox"
+                  checked={selectedModuleIds.includes(item.module_id)}
+                  onChange={() => toggleSelectedModule(item.module_id)}
+                  aria-label={item.module_key + " を選択"}
+                />,
+                item.module_key,
+                item.module_name,
+                item.folder_path || "未分類",
+                formatVersionLabel(item),
+                <ModuleStatusPill status={item.status} label={item.status_label} />,
+                item.row_count,
+                item.first_work_text ?? "-",
+                item.created_by ?? "-",
+                item.updated_at,
+                <button className="text-button" onClick={() => navigate("/modules/" + item.module_id)}>{"詳細"}</button>,
+              ])}
+            />
+          )}
+        </div>
+      </div>
+      {isFolderDeleteConfirmOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsFolderDeleteConfirmOpen(false)}>
+          <section
+            aria-labelledby="folder-delete-dialog-title"
+            aria-modal="true"
+            className="modal-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="modal-icon" aria-hidden="true">-</span>
+            <h2 id="folder-delete-dialog-title">フォルダを削除しますか？</h2>
+            <p>「{folderPathFilter}」と配下のフォルダを削除し、格納されているモジュールを「未分類」へ移動します。</p>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => setIsFolderDeleteConfirmOpen(false)}>
+                キャンセル
+              </button>
+              <button className="danger" type="button" onClick={() => void handleFolderDeleteConfirm()}>
+                削除する
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </Page>
   );
+}
+
+function ModuleListPage() {
+  const location = useLocation();
+  return <Navigate to={"/modules/search" + location.search} replace />;
 }
 
 function useModuleDetailState(moduleId: string | undefined, versionNo: string | null = null): ModuleDetailState {
@@ -7616,12 +8142,12 @@ function SearchForm({ fields, onSubmit }: { fields: [string, string][]; onSubmit
   );
 }
 
-function DataTable({ columns, rows }: { columns: string[]; rows: ReactNode[][] }) {
+function DataTable({ columns, rows }: { columns: ReactNode[]; rows: ReactNode[][] }) {
   return (
     <div className="table-wrap">
       <table>
         <thead>
-          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
+          <tr>{columns.map((column, index) => <th key={index}>{column}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((row, index) => (

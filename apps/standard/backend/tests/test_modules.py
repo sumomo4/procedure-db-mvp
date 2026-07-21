@@ -95,6 +95,12 @@ def test_read_modules_returns_success_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        folder_path: str | None = None,
+        created_by: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
+        has_images: str | None = None,
+        sort: str | None = None,
     ) -> ModuleListData:
         """Return deterministic module list data."""
 
@@ -108,6 +114,7 @@ def test_read_modules_returns_success_response(
                     module_key="MOD-001",
                     module_name="初期点検手順",
                     description="説明",
+                    folder_path="未分類",
                     module_version_id=10,
                     version_no=1,
                     status="draft",
@@ -118,7 +125,8 @@ def test_read_modules_returns_success_response(
                     created_by="seed",
                     updated_at="2026-04-22",
                 )
-            ]
+            ],
+            folders=["未分類"],
         )
 
     monkeypatch.setattr(modules, "list_modules", fake_list_modules)
@@ -135,6 +143,7 @@ def test_read_modules_returns_success_response(
                     "module_key": "MOD-001",
                     "module_name": "初期点検手順",
                     "description": "説明",
+                    "folder_path": "未分類",
                         "module_version_id": 10,
                         "version_no": 1,
                         "version_major": 0,
@@ -148,7 +157,8 @@ def test_read_modules_returns_success_response(
                     "created_by": "seed",
                     "updated_at": "2026-04-22",
                 }
-            ]
+            ],
+            "folders": ["未分類"],
         },
         "message": "モジュール一覧を取得しました。",
     }
@@ -177,6 +187,12 @@ def test_read_modules_returns_error_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        folder_path: str | None = None,
+        created_by: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
+        has_images: str | None = None,
+        sort: str | None = None,
     ) -> ModuleListData:
         """Raise a deterministic database error."""
 
@@ -192,6 +208,42 @@ def test_read_modules_returns_error_response(
         "result": "error",
         "data": None,
         "message": "Module list query failed.",
+    }
+
+
+def test_delete_module_folder_returns_modules_to_uncategorized(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Folder deletion should call the database helper and return a success response."""
+
+    def fake_delete_module_folder(settings: AppSettings, folder_path: str) -> ModuleListData:
+        assert settings.app_env == "test"
+        assert folder_path == "TEST"
+        return ModuleListData(items=[], folders=["未分類", "test"])
+
+    monkeypatch.setattr(modules, "delete_module_folder", fake_delete_module_folder)
+
+    response = client.request("DELETE", "/api/v1/modules/folders", json={"folder_path": "TEST"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {
+        "result": "success",
+        "data": {"items": [], "folders": ["未分類", "test"]},
+        "message": "フォルダを削除し、格納されていたモジュールを未分類へ移動しました。",
+    }
+
+
+def test_delete_module_folder_rejects_uncategorized(client: TestClient) -> None:
+    """The uncategorized folder is the fallback and must not be deleted."""
+
+    response = client.request("DELETE", "/api/v1/modules/folders", json={"folder_path": "未分類"})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "The uncategorized folder cannot be deleted.",
     }
 
 

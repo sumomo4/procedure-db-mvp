@@ -196,6 +196,32 @@ def _ensure_module_version_number_columns(cursor: Any) -> None:
     )
 
 
+def _normalize_module_folder_path(folder_path: str | None) -> str:
+    """Normalize virtual module folder paths for storage and filtering."""
+
+    normalized = (folder_path or "").strip().replace("\\", "/")
+    normalized = "/".join(part.strip() for part in normalized.split("/") if part.strip())
+    return normalized or "未分類"
+
+
+def _ensure_module_folder_column(cursor: Any) -> None:
+    """Ensure virtual folder metadata exists on existing DB volumes."""
+
+    cursor.execute(
+        """
+        ALTER TABLE proc.modules
+            ADD COLUMN IF NOT EXISTS folder_path text NOT NULL DEFAULT '未分類';
+
+        UPDATE proc.modules
+        SET folder_path = '未分類'
+        WHERE COALESCE(folder_path, '') = '';
+
+        CREATE INDEX IF NOT EXISTS idx_modules_folder_path
+            ON proc.modules (folder_path);
+        """,
+        {},
+    )
+
 def _build_module_transition_data(status_value: str) -> list[ApprovalTransitionData]:
     """Build allowed transitions for a module version status."""
 
@@ -231,6 +257,12 @@ def _build_module_history_items(rows: list[Any]) -> list[ApprovalStatusHistoryIt
 def _build_module_list_query(
     keyword: str | None,
     status_filter: str | None,
+    folder_path: str | None,
+    created_by: str | None,
+    updated_from: str | None,
+    updated_to: str | None,
+    has_images: str | None,
+    sort: str | None,
 ) -> tuple[str, dict[str, str]]:
     """Build the module list query and parameters."""
 
@@ -248,7 +280,12 @@ def _build_module_list_query(
                     SELECT 1
                     FROM proc.module_rows rx
                     WHERE rx.module_version_id = mv.module_version_id
-                      AND COALESCE(rx.work_text, '') ILIKE %(keyword)s
+                      AND (
+                          COALESCE(rx.technical_doc, '') ILIKE %(keyword)s
+                          OR COALESCE(rx.work_text, '') ILIKE %(keyword)s
+                          OR COALESCE(rx.check_text, '') ILIKE %(keyword)s
+                          OR COALESCE(rx.command_text, '') ILIKE %(keyword)s
+                      )
                 )
             )
             """
@@ -259,9 +296,59 @@ def _build_module_list_query(
         conditions.append("mv.status = %(status_filter)s")
         parameters["status_filter"] = status_filter
 
+    if folder_path:
+        conditions.append("COALESCE(NULLIF(m.folder_path, ''), '未分類') = %(folder_path)s")
+        parameters["folder_path"] = _normalize_module_folder_path(folder_path)
+
+    if created_by:
+        conditions.append("COALESCE(mv.created_by, '') ILIKE %(created_by)s")
+        parameters["created_by"] = f"%{created_by}%"
+
+    if updated_from:
+        conditions.append("mv.updated_at::date >= %(updated_from)s::date")
+        parameters["updated_from"] = updated_from
+
+    if updated_to:
+        conditions.append("mv.updated_at::date <= %(updated_to)s::date")
+        parameters["updated_to"] = updated_to
+
+    if has_images == "with":
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM proc.module_rows image_row
+                JOIN proc.module_row_images image
+                    ON image.module_row_id = image_row.module_row_id
+                WHERE image_row.module_version_id = mv.module_version_id
+            )
+            """
+        )
+    elif has_images == "without":
+        conditions.append(
+            """
+            NOT EXISTS (
+                SELECT 1
+                FROM proc.module_rows image_row
+                JOIN proc.module_row_images image
+                    ON image.module_row_id = image_row.module_row_id
+                WHERE image_row.module_version_id = mv.module_version_id
+            )
+            """
+        )
+
     where_clause = ""
     if conditions:
         where_clause = "WHERE " + " AND ".join(conditions)
+
+    order_by_map = {
+        "key_asc": "m.module_key ASC, mv.version_no ASC",
+        "key_desc": "m.module_key DESC, mv.version_no DESC",
+        "updated_desc": "mv.updated_at DESC, m.module_key ASC, mv.version_no DESC",
+        "updated_asc": "mv.updated_at ASC, m.module_key ASC, mv.version_no ASC",
+        "status_asc": "mv.status ASC, m.module_key ASC, mv.version_no ASC",
+    }
+    order_by = order_by_map.get(sort or "key_asc", order_by_map["key_asc"])
 
     query = f"""
         SELECT
@@ -269,6 +356,7 @@ def _build_module_list_query(
             m.module_key,
             m.name AS module_name,
             m.description,
+            COALESCE(NULLIF(m.folder_path, ''), '未分類') AS folder_path,
             mv.module_version_id,
             mv.version_no,
             mv.version_major,
@@ -301,6 +389,7 @@ def _build_module_list_query(
             m.module_key,
             m.name,
             m.description,
+            m.folder_path,
             mv.module_version_id,
             mv.version_no,
             mv.version_major,
@@ -309,9 +398,23 @@ def _build_module_list_query(
             mv.source_xlsx_path,
             mv.created_by,
             mv.updated_at
-        ORDER BY m.module_key, mv.version_no;
+        ORDER BY {order_by};
     """
     return query, parameters
+
+
+def _fetch_module_folder_paths(cursor: Any) -> list[str]:
+    """Return virtual module folders for explorer-style browsing."""
+
+    cursor.execute(
+        """
+        SELECT DISTINCT COALESCE(NULLIF(folder_path, ''), '未分類') AS folder_path
+        FROM proc.modules
+        ORDER BY folder_path ASC;
+        """,
+        {},
+    )
+    return [str(row[0] or "未分類") for row in cursor.fetchall()]
 
 
 def _build_module_detail_query(version_no: int | None = None) -> str:
@@ -1086,6 +1189,12 @@ def list_modules(
     settings: AppSettings,
     keyword: str | None = None,
     status_filter: str | None = None,
+    folder_path: str | None = None,
+    created_by: str | None = None,
+    updated_from: str | None = None,
+    updated_to: str | None = None,
+    has_images: str | None = None,
+    sort: str | None = None,
 ) -> ModuleListData:
     """Read modules from PostgreSQL."""
 
@@ -1094,7 +1203,16 @@ def list_modules(
     except ModuleNotFoundError as exception:
         raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
 
-    query, parameters = _build_module_list_query(keyword, status_filter)
+    query, parameters = _build_module_list_query(
+        keyword,
+        status_filter,
+        folder_path,
+        created_by,
+        updated_from,
+        updated_to,
+        has_images,
+        sort,
+    )
 
     try:
         with psycopg.connect(
@@ -1103,20 +1221,32 @@ def list_modules(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_module_version_number_columns(cursor)
+                _ensure_module_folder_column(cursor)
                 cursor.execute(query, parameters)
                 rows = cursor.fetchall()
+                folders = _fetch_module_folder_paths(cursor)
     except Exception as exception:
         raise DatabaseConnectionError("Module list query failed.") from exception
 
     items: list[ModuleListItemData] = []
     for row in rows:
+        has_folder_column = len(row) >= 15
         has_version_columns = len(row) >= 14
-        status_index = 8 if has_version_columns else 6
+        module_version_index = 5 if has_folder_column else 4
+        version_no_index = 6 if has_folder_column else 5
+        version_major_index = 7 if has_folder_column else 6
+        version_minor_index = 8 if has_folder_column else 7
+        status_index = 9 if has_folder_column else (8 if has_version_columns else 6)
+        row_count_index = 10 if has_folder_column else (9 if has_version_columns else 7)
+        first_work_text_index = 11 if has_folder_column else (10 if has_version_columns else 8)
+        source_xlsx_path_index = 12 if has_folder_column else (11 if has_version_columns else 9)
+        created_by_index = 13 if has_folder_column else (12 if has_version_columns else 10)
+        updated_at_index = 14 if has_folder_column else (13 if has_version_columns else 11)
         version_major, version_minor = _derive_module_version_tuple(
-            row[5],
+            row[version_no_index],
             row[status_index],
-            row[6] if has_version_columns else None,
-            row[7] if has_version_columns else None,
+            row[version_major_index] if has_version_columns else None,
+            row[version_minor_index] if has_version_columns else None,
         )
         items.append(
             ModuleListItemData(
@@ -1124,22 +1254,141 @@ def list_modules(
                 module_key=row[1],
                 module_name=row[2],
                 description=row[3],
-                module_version_id=row[4],
-                version_no=row[5],
+                folder_path=(row[4] if has_folder_column else "未分類") or "未分類",
+                module_version_id=row[module_version_index],
+                version_no=row[version_no_index],
                 version_major=version_major,
                 version_minor=version_minor,
                 version_label=_format_module_version_label(version_major, version_minor),
                 status=row[status_index],
                 status_label=MODULE_STATUS_LABELS.get(row[status_index], row[status_index]),
-                row_count=row[9] if has_version_columns else row[7],
-                first_work_text=(row[10] if has_version_columns else row[8]) or None,
-                source_xlsx_path=row[11] if has_version_columns else row[9],
-                created_by=row[12] if has_version_columns else row[10],
-                updated_at=_format_updated_at(row[13] if has_version_columns else row[11]),
+                row_count=row[row_count_index],
+                first_work_text=row[first_work_text_index] or None,
+                source_xlsx_path=row[source_xlsx_path_index],
+                created_by=row[created_by_index],
+                updated_at=_format_updated_at(row[updated_at_index]),
             )
         )
 
-    return ModuleListData(items=items)
+    return ModuleListData(items=items, folders=folders)
+
+
+def rename_module_folder(
+    settings: AppSettings,
+    current_folder_path: str,
+    new_folder_path: str,
+) -> ModuleListData:
+    """Rename a virtual folder path for all matching modules."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    current_folder = _normalize_module_folder_path(current_folder_path)
+    new_folder = _normalize_module_folder_path(new_folder_path)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_folder_column(cursor)
+                cursor.execute(
+                    """
+                    UPDATE proc.modules
+                    SET folder_path = %(new_folder)s
+                    WHERE COALESCE(NULLIF(folder_path, ''), '未分類') = %(current_folder)s;
+                    """,
+                    {"current_folder": current_folder, "new_folder": new_folder},
+                )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module folder rename failed.") from exception
+
+    return list_modules(settings, folder_path=new_folder)
+
+
+def delete_module_folder(
+    settings: AppSettings,
+    folder_path: str,
+) -> ModuleListData:
+    """Delete a virtual folder subtree by moving contained modules to uncategorized."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    current_folder = _normalize_module_folder_path(folder_path)
+    if current_folder == "未分類":
+        raise DatabaseConnectionError("The uncategorized folder cannot be deleted.")
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_folder_column(cursor)
+                cursor.execute(
+                    """
+                    UPDATE proc.modules
+                    SET folder_path = '未分類'
+                    WHERE COALESCE(NULLIF(folder_path, ''), '未分類') = %(current_folder)s
+                       OR LEFT(
+                            COALESCE(NULLIF(folder_path, ''), '未分類'),
+                            LENGTH(%(current_folder)s) + 1
+                          ) = %(current_folder)s || '/';
+                    """,
+                    {"current_folder": current_folder},
+                )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module folder deletion failed.") from exception
+
+    return list_modules(settings)
+
+
+def move_modules_to_folder(
+    settings: AppSettings,
+    module_ids: list[int],
+    folder_path: str,
+) -> ModuleListData:
+    """Move selected modules to a virtual folder path."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    unique_module_ids = sorted({int(module_id) for module_id in module_ids if int(module_id) > 0})
+    if not unique_module_ids:
+        raise DatabaseConnectionError("No modules were selected for folder move.")
+
+    new_folder = _normalize_module_folder_path(folder_path)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_folder_column(cursor)
+                cursor.execute(
+                    """
+                    UPDATE proc.modules
+                    SET folder_path = %(new_folder)s
+                    WHERE module_id = ANY(%(module_ids)s);
+                    """,
+                    {"new_folder": new_folder, "module_ids": unique_module_ids},
+                )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module folder move failed.") from exception
+
+    return list_modules(settings, folder_path=new_folder)
 
 
 def get_module_detail(settings: AppSettings, module_id: int, version_no: int | None = None) -> ModuleDetailData | None:

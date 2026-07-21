@@ -284,13 +284,14 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
 
     result = list_modules(AppSettings(), keyword="点検", status_filter="draft")
 
-    assert fake_cursor.parameters == {
-        "keyword": "%点検%",
-        "status_filter": "draft",
-    }
+    assert any(
+        parameters == {"keyword": "%点検%", "status_filter": "draft"}
+        for _, parameters in fake_cursor.executions
+    )
     assert result.items[0].module_id == 1
     assert result.items[0].module_key == "MOD-001"
     assert result.items[0].module_name == "初期点検手順"
+    assert result.items[0].folder_path == "未分類"
     assert result.items[0].status == "draft"
     assert result.items[0].status_label == "作成中"
     assert result.items[0].row_count == 3

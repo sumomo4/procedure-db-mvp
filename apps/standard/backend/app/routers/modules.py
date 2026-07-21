@@ -21,6 +21,9 @@ from app.core.responses import (
     ModuleCreateRequest,
     ModuleDetailData,
     ModuleDiffData,
+    ModuleFolderDeleteRequest,
+    ModuleFolderMoveRequest,
+    ModuleFolderRenameRequest,
     ModuleListData,
     ModuleVersionListData,
     RouterEndpointData,
@@ -30,12 +33,15 @@ from app.core.responses import (
 from app.db.modules import (
     VALID_MODULE_STATUSES,
     create_module,
+    delete_module_folder,
     get_module_detail,
     get_module_diff,
     get_module_row_image,
     get_module_version_status,
     list_module_versions,
     list_modules,
+    move_modules_to_folder,
+    rename_module_folder,
     update_module_version_status,
 )
 from app.routers.health import get_app_settings
@@ -67,6 +73,12 @@ def read_modules(
     settings: Annotated[AppSettings, Depends(get_app_settings)],
     keyword: Annotated[str | None, Query(min_length=1)] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
+    folder_path: Annotated[str | None, Query(min_length=1)] = None,
+    created_by: Annotated[str | None, Query(min_length=1)] = None,
+    updated_from: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
+    updated_to: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
+    has_images: Annotated[str | None, Query(pattern=r"^(all|with|without)$")] = None,
+    sort: Annotated[str | None, Query(pattern=r"^(key_asc|key_desc|updated_desc|updated_asc|status_asc)$")] = None,
 ) -> ApiResponse[ModuleListData]:
     """Return module list from PostgreSQL.
 
@@ -94,6 +106,12 @@ def read_modules(
             settings,
             keyword=keyword,
             status_filter=normalized_status,
+            folder_path=folder_path,
+            created_by=created_by,
+            updated_from=updated_from,
+            updated_to=updated_to,
+            has_images=has_images,
+            sort=sort,
         )
     except DatabaseConnectionError as exception:
         raise HTTPException(
@@ -102,6 +120,87 @@ def read_modules(
         ) from exception
 
     return success_response(data, "モジュール一覧を取得しました。")
+
+
+@router.patch("/folders", response_model=ApiResponse[ModuleListData])
+def rename_module_folder_path(
+    request: ModuleFolderRenameRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleListData]:
+    """Rename a virtual module folder path."""
+
+    current_folder = request.current_folder_path.strip()
+    new_folder = request.new_folder_path.strip()
+    if not current_folder or not new_folder:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="folder paths must not be empty.",
+        )
+
+    try:
+        data = rename_module_folder(settings, current_folder, new_folder)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "フォルダ名を変更しました。")
+
+
+@router.delete("/folders", response_model=ApiResponse[ModuleListData])
+def delete_module_folder_path(
+    request: ModuleFolderDeleteRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleListData]:
+    """Delete a virtual folder subtree and return its modules to uncategorized."""
+
+    target_folder = request.folder_path.strip()
+    if not target_folder:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="folder_path must not be empty.",
+        )
+    if target_folder == "未分類":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uncategorized folder cannot be deleted.",
+        )
+
+    try:
+        data = delete_module_folder(settings, target_folder)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "フォルダを削除し、格納されていたモジュールを未分類へ移動しました。")
+
+
+@router.patch("/folders/modules", response_model=ApiResponse[ModuleListData])
+def move_selected_modules_to_folder(
+    request: ModuleFolderMoveRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleListData]:
+    """Move selected modules to a virtual folder path."""
+
+    target_folder = request.folder_path.strip()
+    if not request.module_ids or not target_folder:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="module_ids and folder_path are required.",
+        )
+
+    try:
+        data = move_modules_to_folder(settings, request.module_ids, target_folder)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "選択したモジュールをフォルダへ移動しました。")
 
 
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
