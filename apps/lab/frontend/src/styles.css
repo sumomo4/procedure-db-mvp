@@ -993,6 +993,115 @@ nav {
   font-weight: 800;
 }
 
+.module-folder-action-panel {
+  border: 1px solid #ded6c8;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(280px, 1fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.module-folder-action-summary {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 76px;
+}
+
+.module-folder-action-summary span,
+.module-folder-action-card label {
+  color: #53636d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.module-folder-action-summary strong {
+  color: #13232d;
+  font-size: 18px;
+}
+
+.module-folder-action-card {
+  border-left: 1px solid #e6ded1;
+  padding-left: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.module-folder-action-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.module-folder-action-card h2 {
+  margin: 0;
+  color: #13232d;
+  font-size: 15px;
+}
+
+.module-folder-action-card form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.module-folder-action-card label {
+  display: grid;
+  gap: 6px;
+}
+
+.module-folder-action-card input,
+.module-folder-action-card select {
+  min-width: 0;
+}
+
+.module-folder-action-buttons {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 8px;
+}
+
+.module-folder-action-message {
+  margin: 0;
+  color: #53636d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.module-folder-action-message.success {
+  color: #207a4f;
+  font-weight: 800;
+}
+
+.module-folder-action-message.error {
+  color: #ba3c2f;
+  font-weight: 800;
+}
+
+@media (max-width: 1180px) {
+  .module-folder-action-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .module-folder-action-card {
+    border-left: 0;
+    border-top: 1px solid #e6ded1;
+    padding-left: 0;
+    padding-top: 12px;
+  }
+}
+
+@media (max-width: 720px) {
+  .module-folder-action-card form,
+  .module-folder-action-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
 .module-folder-move-panel {
   border: 1px solid #ded6c8;
   background: rgba(255, 255, 255, 0.72);

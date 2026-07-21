@@ -1346,10 +1346,16 @@ function ModuleSearchPage() {
     message: "選択中のフォルダ名を変更できます。",
   });
   const [selectedModuleIds, setSelectedModuleIds] = useState<number[]>([]);
-  const [folderMoveInput, setFolderMoveInput] = useState(initialFolderPath || "未分類");
+  const [isFolderCreateOpen, setIsFolderCreateOpen] = useState(false);
+  const [folderCreateInput, setFolderCreateInput] = useState("");
+  const [folderCreateState, setFolderCreateState] = useState<ModuleFolderMoveState>({
+    status: "idle",
+    message: "新規フォルダには最低1つのモジュールを格納します。",
+  });
+  const [folderMoveTarget, setFolderMoveTarget] = useState(initialFolderPath || "未分類");
   const [folderMoveState, setFolderMoveState] = useState<ModuleFolderMoveState>({
     status: "idle",
-    message: "選択したモジュールだけを任意フォルダへ移動できます。",
+    message: "選択したモジュールを既存フォルダへ移動できます。",
   });
 
   useEffect(() => {
@@ -1358,9 +1364,10 @@ function ModuleSearchPage() {
     setCreatedByInput(initialCreatedBy);
     setFolderPathInput(initialFolderPath);
     setFolderRenameInput(initialFolderPath || "未分類");
-    setFolderMoveInput(initialFolderPath || "未分類");
+    setFolderMoveTarget(initialFolderPath || "未分類");
     setFolderRenameState({ status: "idle", message: "選択中のフォルダ名を変更できます。" });
-    setFolderMoveState({ status: "idle", message: "選択したモジュールだけを任意フォルダへ移動できます。" });
+    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
+    setFolderMoveState({ status: "idle", message: "選択したモジュールを既存フォルダへ移動できます。" });
     setUpdatedFromInput(initialUpdatedFrom);
     setUpdatedToInput(initialUpdatedTo);
     setHasImagesInput(initialHasImages);
@@ -1556,8 +1563,65 @@ function ModuleSearchPage() {
     setSelectedModuleIds(allVisibleSelected ? [] : visibleModuleIds);
   }
 
+  async function moveSelectedModulesToFolder(targetFolder: string): Promise<ApiResponse<ModuleListData>> {
+    const response = await fetch(buildApiUrl("/api/v1/modules/folders/modules"), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ module_ids: selectedModuleIds, folder_path: targetFolder }),
+    });
+    return readApiResponse<ModuleListData>(response);
+  }
+
+  async function handleFolderCreateSubmit(): Promise<void> {
+    const targetFolder = normalizeModuleFolderPath(folderCreateInput);
+
+    if (selectedModuleIds.length === 0) {
+      setFolderCreateState({ status: "error", message: "最低1つのモジュールを選択してください。" });
+      return;
+    }
+
+    if (folderOptions.some((folder) => normalizeModuleFolderPath(folder) === targetFolder)) {
+      setFolderCreateState({ status: "error", message: "同じ名前のフォルダが既にあります。既存フォルダへの移動を使ってください。" });
+      return;
+    }
+
+    setFolderCreateState({ status: "submitting", message: "フォルダを作成し、選択モジュールを格納しています。" });
+
+    try {
+      const responseBody = await moveSelectedModulesToFolder(targetFolder);
+
+      if (responseBody.result !== "success") {
+        setFolderCreateState({ status: "error", message: responseBody.message || "フォルダ追加に失敗しました。" });
+        return;
+      }
+
+      setSelectedModuleIds([]);
+      setFolderCreateInput("");
+      setIsFolderCreateOpen(false);
+      setFolderCreateState({ status: "success", message: responseBody.message || "フォルダを追加しました。" });
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: targetFolder,
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderCreateState({ status: "error", message: "フォルダ追加中にAPI接続で失敗しました。" });
+    }
+  }
+
+  function handleFolderCreateCancel(): void {
+    setIsFolderCreateOpen(false);
+    setFolderCreateInput("");
+    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
+  }
+
   async function handleFolderMoveSubmit(): Promise<void> {
-    const targetFolder = normalizeModuleFolderPath(folderMoveInput);
+    const targetFolder = normalizeModuleFolderPath(folderMoveTarget);
 
     if (selectedModuleIds.length === 0) {
       setFolderMoveState({ status: "error", message: "移動するモジュールを選択してください。" });
@@ -1567,18 +1631,10 @@ function ModuleSearchPage() {
     setFolderMoveState({ status: "submitting", message: "選択したモジュールを移動しています。" });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules/folders/modules"), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ module_ids: selectedModuleIds, folder_path: targetFolder }),
-      });
-      const responseBody = await readApiResponse<ModuleListData>(response);
+      const responseBody = await moveSelectedModulesToFolder(targetFolder);
 
-      if (!response.ok || responseBody.result !== "success") {
-        setFolderMoveState({
-          status: "error",
-          message: responseBody.message || `モジュール移動に失敗しました。HTTP ${response.status}`,
-        });
+      if (responseBody.result !== "success") {
+        setFolderMoveState({ status: "error", message: responseBody.message || "モジュール移動に失敗しました。" });
         return;
       }
 
@@ -1607,6 +1663,7 @@ function ModuleSearchPage() {
   const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
   const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
   const allVisibleModulesSelected = visibleModuleIds.length > 0 && visibleModuleIds.every((moduleId) => selectedModuleIds.includes(moduleId));
+  const canCreateFolder = folderCreateState.status !== "submitting";
   const canMoveSelectedModules = selectedModuleIds.length > 0 && folderMoveState.status !== "submitting";
 
   return (
@@ -1728,30 +1785,75 @@ function ModuleSearchPage() {
             ))}
           </section>
 
-          <section className="module-folder-move-panel" aria-label="モジュールのフォルダ移動">
-            <div>
+          <section className="module-folder-action-panel" aria-label="モジュールフォルダ操作">
+            <div className="module-folder-action-summary">
               <span>選択中</span>
               <strong>{selectedModuleIds.length} 件</strong>
             </div>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleFolderMoveSubmit();
-              }}
-            >
-              <label>
-                移動先フォルダ
-                <input
-                  value={folderMoveInput}
-                  placeholder="例: ネットワーク/SBC"
-                  onChange={(event) => setFolderMoveInput(event.target.value)}
-                />
-              </label>
-              <button className="secondary" type="submit" disabled={!canMoveSelectedModules}>
-                選択モジュールを移動
-              </button>
-            </form>
-            <p className={"module-folder-move-message " + folderMoveState.status}>{folderMoveState.message}</p>
+
+            <div className="module-folder-action-card">
+              <header>
+                <h2>フォルダ新規追加</h2>
+                {!isFolderCreateOpen ? (
+                  <button className="secondary" type="button" onClick={() => setIsFolderCreateOpen(true)}>
+                    + 追加
+                  </button>
+                ) : null}
+              </header>
+              {isFolderCreateOpen ? (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleFolderCreateSubmit();
+                  }}
+                >
+                  <label>
+                    新規フォルダ名
+                    <input
+                      value={folderCreateInput}
+                      placeholder="例: ネットワーク/SBC"
+                      onChange={(event) => setFolderCreateInput(event.target.value)}
+                    />
+                  </label>
+                  <div className="module-folder-action-buttons">
+                    <button className="primary" type="submit" disabled={!canCreateFolder}>
+                      作成して格納
+                    </button>
+                    <button className="secondary" type="button" onClick={handleFolderCreateCancel}>
+                      キャンセル
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              <p className={"module-folder-action-message " + folderCreateState.status}>{folderCreateState.message}</p>
+            </div>
+
+            <div className="module-folder-action-card">
+              <header>
+                <h2>選択済みモジュールのフォルダ移動</h2>
+              </header>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleFolderMoveSubmit();
+                }}
+              >
+                <label>
+                  既存の移動先フォルダ
+                  <select value={folderMoveTarget} onChange={(event) => setFolderMoveTarget(event.target.value)}>
+                    {folderOptions.map((folder) => (
+                      <option key={folder} value={folder}>
+                        {folder}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="secondary" type="submit" disabled={!canMoveSelectedModules}>
+                  選択モジュールを移動
+                </button>
+              </form>
+              <p className={"module-folder-action-message " + folderMoveState.status}>{folderMoveState.message}</p>
+            </div>
           </section>
 
           <Toolbar>

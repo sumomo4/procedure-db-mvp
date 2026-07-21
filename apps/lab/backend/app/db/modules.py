@@ -298,8 +298,8 @@ def _build_module_list_query(
         parameters["status_filter"] = status_filter
 
     if folder_path:
-        conditions.append("COALESCE(NULLIF(m.folder_path, ''), '未分類') ILIKE %(folder_path)s")
-        parameters["folder_path"] = f"%{folder_path}%"
+        conditions.append("COALESCE(NULLIF(m.folder_path, ''), '未分類') = %(folder_path)s")
+        parameters["folder_path"] = _normalize_module_folder_path(folder_path)
 
     if created_by:
         conditions.append("COALESCE(mv.created_by, '') ILIKE %(created_by)s")
