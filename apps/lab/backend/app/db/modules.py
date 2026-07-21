@@ -1311,6 +1311,47 @@ def rename_module_folder(
     return list_modules(settings, folder_path=new_folder)
 
 
+def delete_module_folder(
+    settings: AppSettings,
+    folder_path: str,
+) -> ModuleListData:
+    """Delete a virtual folder subtree by moving contained modules to uncategorized."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    current_folder = _normalize_module_folder_path(folder_path)
+    if current_folder == "未分類":
+        raise DatabaseConnectionError("The uncategorized folder cannot be deleted.")
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_folder_column(cursor)
+                cursor.execute(
+                    """
+                    UPDATE proc.modules
+                    SET folder_path = '未分類'
+                    WHERE COALESCE(NULLIF(folder_path, ''), '未分類') = %(current_folder)s
+                       OR LEFT(
+                            COALESCE(NULLIF(folder_path, ''), '未分類'),
+                            LENGTH(%(current_folder)s) + 1
+                          ) = %(current_folder)s || '/';
+                    """,
+                    {"current_folder": current_folder},
+                )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Module folder deletion failed.") from exception
+
+    return list_modules(settings)
+
+
 def move_modules_to_folder(
     settings: AppSettings,
     module_ids: list[int],
@@ -2070,4 +2111,3 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
     if detail is None:
         raise DatabaseConnectionError("Module create failed.")
     return detail
-

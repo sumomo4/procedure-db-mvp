@@ -21,6 +21,7 @@ from app.core.responses import (
     ModuleCreateRequest,
     ModuleDetailData,
     ModuleDiffData,
+    ModuleFolderDeleteRequest,
     ModuleFolderMoveRequest,
     ModuleFolderRenameRequest,
     ModuleListData,
@@ -32,6 +33,7 @@ from app.core.responses import (
 from app.db.modules import (
     VALID_MODULE_STATUSES,
     create_module,
+    delete_module_folder,
     get_module_detail,
     get_module_diff,
     get_module_row_image,
@@ -144,6 +146,36 @@ def rename_module_folder_path(
         ) from exception
 
     return success_response(data, "フォルダ名を変更しました。")
+
+
+@router.delete("/folders", response_model=ApiResponse[ModuleListData])
+def delete_module_folder_path(
+    request: ModuleFolderDeleteRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleListData]:
+    """Delete a virtual folder subtree and return its modules to uncategorized."""
+
+    target_folder = request.folder_path.strip()
+    if not target_folder:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="folder_path must not be empty.",
+        )
+    if target_folder == "未分類":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uncategorized folder cannot be deleted.",
+        )
+
+    try:
+        data = delete_module_folder(settings, target_folder)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "フォルダを削除し、格納されていたモジュールを未分類へ移動しました。")
 
 
 @router.patch("/folders/modules", response_model=ApiResponse[ModuleListData])

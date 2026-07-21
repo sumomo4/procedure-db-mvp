@@ -141,6 +141,12 @@ class ModuleFolderRenameRequest(BaseModel):
     new_folder_path: str = Field(min_length=1)
 
 
+class ModuleFolderDeleteRequest(BaseModel):
+    """Request payload for virtual module folder deletion."""
+
+    folder_path: str = Field(min_length=1)
+
+
 class ModuleFolderMoveRequest(BaseModel):
     """Request payload for moving modules to a virtual folder."""
 
@@ -804,4 +810,3 @@ def error_response(message: str) -> ApiResponse[None]:
     """
 
     return ApiResponse(result="error", data=None, message=message)
-

@@ -1345,6 +1345,11 @@ function ModuleSearchPage() {
     status: "idle",
     message: "選択中のフォルダ名を変更できます。",
   });
+  const [folderDeleteState, setFolderDeleteState] = useState<ModuleFolderRenameState>({
+    status: "idle",
+    message: "選択中のフォルダを削除できます。",
+  });
+  const [isFolderDeleteConfirmOpen, setIsFolderDeleteConfirmOpen] = useState(false);
   const [selectedModuleIds, setSelectedModuleIds] = useState<number[]>([]);
   const [isFolderCreateOpen, setIsFolderCreateOpen] = useState(false);
   const [folderCreateInput, setFolderCreateInput] = useState("");
@@ -1366,6 +1371,8 @@ function ModuleSearchPage() {
     setFolderRenameInput(initialFolderPath || "未分類");
     setFolderMoveTarget(initialFolderPath || "未分類");
     setFolderRenameState({ status: "idle", message: "選択中のフォルダ名を変更できます。" });
+    setFolderDeleteState({ status: "idle", message: "選択中のフォルダを削除できます。" });
+    setIsFolderDeleteConfirmOpen(false);
     setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
     setFolderMoveState({ status: "idle", message: "選択したモジュールを既存フォルダへ移動できます。" });
     setUpdatedFromInput(initialUpdatedFrom);
@@ -1551,6 +1558,46 @@ function ModuleSearchPage() {
     }
   }
 
+  async function handleFolderDeleteConfirm(): Promise<void> {
+    const targetFolder = normalizeModuleFolderPath(folderPathFilter);
+    setFolderDeleteState({ status: "submitting", message: "フォルダを削除しています。" });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_path: targetFolder }),
+      });
+      const responseBody = await readApiResponse<ModuleListData>(response);
+
+      if (!response.ok || responseBody.result !== "success") {
+        setFolderDeleteState({
+          status: "error",
+          message: responseBody.message || `フォルダの削除に失敗しました。HTTP ${response.status}`,
+        });
+        setIsFolderDeleteConfirmOpen(false);
+        return;
+      }
+
+      setIsFolderDeleteConfirmOpen(false);
+      setFolderDeleteState({ status: "success", message: responseBody.message || "フォルダを削除しました。" });
+      setFolderPathInput("");
+      navigateWithFilters({
+        keyword,
+        status: statusFilter,
+        createdBy: createdByFilter,
+        folderPath: "",
+        updatedFrom: updatedFromFilter,
+        updatedTo: updatedToFilter,
+        hasImages: hasImagesFilter,
+        sort: sortFilter,
+      });
+    } catch (error) {
+      setFolderDeleteState({ status: "error", message: "フォルダ削除中にAPI接続で失敗しました。" });
+      setIsFolderDeleteConfirmOpen(false);
+    }
+  }
+
   function toggleSelectedModule(moduleId: number): void {
     setSelectedModuleIds((current) =>
       current.includes(moduleId) ? current.filter((selectedId) => selectedId !== moduleId) : [...current, moduleId],
@@ -1661,6 +1708,7 @@ function ModuleSearchPage() {
   const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
   const selectedFolderLabel = folderPathFilter || "すべて";
   const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
+  const canDeleteFolder = folderPathFilter !== "" && folderPathFilter !== "未分類" && folderDeleteState.status !== "submitting";
   const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
   const allVisibleModulesSelected = visibleModuleIds.length > 0 && visibleModuleIds.every((moduleId) => selectedModuleIds.includes(moduleId));
   const canCreateFolder = folderCreateState.status !== "submitting";
@@ -1776,6 +1824,19 @@ function ModuleSearchPage() {
             </button>
             <p className={"module-folder-rename-message " + folderRenameState.status}>{folderRenameState.message}</p>
           </form>
+          <div className="module-folder-delete-panel">
+            <button
+              type="button"
+              className="danger"
+              disabled={!canDeleteFolder}
+              onClick={() => setIsFolderDeleteConfirmOpen(true)}
+            >
+              フォルダを削除
+            </button>
+            <p className={"module-folder-rename-message " + folderDeleteState.status}>
+              {folderPathFilter === "未分類" ? "未分類フォルダは削除できません。" : folderDeleteState.message}
+            </p>
+          </div>
         </aside>
 
         <div className="module-explorer-main">
@@ -1907,6 +1968,29 @@ function ModuleSearchPage() {
           )}
         </div>
       </div>
+      {isFolderDeleteConfirmOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsFolderDeleteConfirmOpen(false)}>
+          <section
+            aria-labelledby="folder-delete-dialog-title"
+            aria-modal="true"
+            className="modal-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="modal-icon" aria-hidden="true">-</span>
+            <h2 id="folder-delete-dialog-title">フォルダを削除しますか？</h2>
+            <p>「{folderPathFilter}」と配下のフォルダを削除し、格納されているモジュールを「未分類」へ移動します。</p>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => setIsFolderDeleteConfirmOpen(false)}>
+                キャンセル
+              </button>
+              <button className="danger" type="button" onClick={() => void handleFolderDeleteConfirm()}>
+                削除する
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </Page>
   );
 }
@@ -8101,5 +8185,3 @@ function routeTitle(path: string) {
 
 
 export default App;
-
-

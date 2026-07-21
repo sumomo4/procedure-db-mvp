@@ -211,6 +211,42 @@ def test_read_modules_returns_error_response(
     }
 
 
+def test_delete_module_folder_returns_modules_to_uncategorized(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Folder deletion should call the database helper and return a success response."""
+
+    def fake_delete_module_folder(settings: AppSettings, folder_path: str) -> ModuleListData:
+        assert settings.app_env == "test"
+        assert folder_path == "TEST"
+        return ModuleListData(items=[], folders=["未分類", "test"])
+
+    monkeypatch.setattr(modules, "delete_module_folder", fake_delete_module_folder)
+
+    response = client.request("DELETE", "/api/v1/modules/folders", json={"folder_path": "TEST"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {
+        "result": "success",
+        "data": {"items": [], "folders": ["未分類", "test"]},
+        "message": "フォルダを削除し、格納されていたモジュールを未分類へ移動しました。",
+    }
+
+
+def test_delete_module_folder_rejects_uncategorized(client: TestClient) -> None:
+    """The uncategorized folder is the fallback and must not be deleted."""
+
+    response = client.request("DELETE", "/api/v1/modules/folders", json={"folder_path": "未分類"})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {
+        "result": "error",
+        "data": None,
+        "message": "The uncategorized folder cannot be deleted.",
+    }
+
+
 def test_read_module_detail_returns_success_response(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
