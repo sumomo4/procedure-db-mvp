@@ -1316,7 +1316,6 @@ function ModuleSearchPage() {
   const initialFolderPath = searchParams.get("folder_path") ?? "";
   const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
   const initialUpdatedTo = searchParams.get("updated_to") ?? "";
-  const initialHasImages = searchParams.get("has_images") ?? "all";
   const initialSort = searchParams.get("sort") ?? "key_asc";
   const [keywordInput, setKeywordInput] = useState(initialKeyword);
   const [statusInput, setStatusInput] = useState(initialStatus);
@@ -1324,7 +1323,6 @@ function ModuleSearchPage() {
   const [folderPathInput, setFolderPathInput] = useState(initialFolderPath);
   const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
   const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
-  const [hasImagesInput, setHasImagesInput] = useState(initialHasImages);
   const [sortInput, setSortInput] = useState(initialSort);
   const keyword = initialKeyword;
   const statusFilter = initialStatus;
@@ -1332,7 +1330,6 @@ function ModuleSearchPage() {
   const folderPathFilter = initialFolderPath;
   const updatedFromFilter = initialUpdatedFrom;
   const updatedToFilter = initialUpdatedTo;
-  const hasImagesFilter = initialHasImages;
   const sortFilter = initialSort;
   const [moduleListState, setModuleListState] = useState<ModuleListState>({
     status: "loading",
@@ -1377,9 +1374,8 @@ function ModuleSearchPage() {
     setFolderMoveState({ status: "idle", message: "選択したモジュールを既存フォルダへ移動できます。" });
     setUpdatedFromInput(initialUpdatedFrom);
     setUpdatedToInput(initialUpdatedTo);
-    setHasImagesInput(initialHasImages);
     setSortInput(initialSort);
-  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPath, initialUpdatedFrom, initialUpdatedTo, initialHasImages, initialSort]);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPath, initialUpdatedFrom, initialUpdatedTo, initialSort]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1401,7 +1397,6 @@ function ModuleSearchPage() {
         if (folderPathFilter) endpoint.searchParams.set("folder_path", folderPathFilter);
         if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
         if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
-        if (hasImagesFilter !== "all") endpoint.searchParams.set("has_images", hasImagesFilter);
         if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
 
         const response = await fetch(endpoint.toString(), { signal: abortController.signal });
@@ -1432,7 +1427,7 @@ function ModuleSearchPage() {
     void fetchModules();
 
     return () => abortController.abort();
-  }, [keyword, statusFilter, createdByFilter, folderPathFilter, updatedFromFilter, updatedToFilter, hasImagesFilter, sortFilter]);
+  }, [keyword, statusFilter, createdByFilter, folderPathFilter, updatedFromFilter, updatedToFilter, sortFilter]);
 
   useEffect(() => {
     setSelectedModuleIds((current) =>
@@ -1447,7 +1442,6 @@ function ModuleSearchPage() {
     folderPath: string;
     updatedFrom: string;
     updatedTo: string;
-    hasImages: string;
     sort: string;
   }): void {
     const params = new URLSearchParams();
@@ -1461,7 +1455,6 @@ function ModuleSearchPage() {
     if (normalizedFolderPath) params.set("folder_path", normalizedFolderPath);
     if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
     if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
-    if (filters.hasImages !== "all") params.set("has_images", filters.hasImages);
     if (filters.sort !== "key_asc") params.set("sort", filters.sort);
 
     const query = params.toString();
@@ -1476,7 +1469,6 @@ function ModuleSearchPage() {
       folderPath: folderPathInput,
       updatedFrom: updatedFromInput,
       updatedTo: updatedToInput,
-      hasImages: hasImagesInput,
       sort: sortInput,
     });
   }
@@ -1490,7 +1482,6 @@ function ModuleSearchPage() {
       folderPath: folderPathFilter,
       updatedFrom: updatedFromFilter,
       updatedTo: updatedToFilter,
-      hasImages: hasImagesFilter,
       sort: sortFilter,
     });
   }
@@ -1504,7 +1495,6 @@ function ModuleSearchPage() {
       folderPath: nextFolderPath,
       updatedFrom: updatedFromFilter,
       updatedTo: updatedToFilter,
-      hasImages: hasImagesFilter,
       sort: sortFilter,
     });
   }
@@ -1550,7 +1540,6 @@ function ModuleSearchPage() {
         folderPath: nextFolder,
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
-        hasImages: hasImagesFilter,
         sort: sortFilter,
       });
     } catch (error) {
@@ -1589,7 +1578,6 @@ function ModuleSearchPage() {
         folderPath: "",
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
-        hasImages: hasImagesFilter,
         sort: sortFilter,
       });
     } catch (error) {
@@ -1653,7 +1641,6 @@ function ModuleSearchPage() {
         folderPath: targetFolder,
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
-        hasImages: hasImagesFilter,
         sort: sortFilter,
       });
     } catch (error) {
@@ -1694,7 +1681,6 @@ function ModuleSearchPage() {
         folderPath: targetFolder,
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
-        hasImages: hasImagesFilter,
         sort: sortFilter,
       });
     } catch (error) {
@@ -1733,23 +1719,28 @@ function ModuleSearchPage() {
         </label>
         <label>
           {"フォルダ"}
-          <input placeholder="未分類 / ネットワーク" value={folderPathInput} onChange={(event) => setFolderPathInput(event.target.value)} />
+          <input
+            list="module-folder-search-options"
+            placeholder="未分類 / ネットワーク"
+            value={folderPathInput}
+            onChange={(event) => setFolderPathInput(event.target.value)}
+          />
+          <datalist id="module-folder-search-options">
+            {folderOptions.map((folder) => (
+              <option key={folder} value={folder} />
+            ))}
+          </datalist>
         </label>
         <label>
-          {"更新日 From"}
-          <input type="date" value={updatedFromInput} onChange={(event) => setUpdatedFromInput(event.target.value)} />
-        </label>
-        <label>
-          {"更新日 To"}
-          <input type="date" value={updatedToInput} onChange={(event) => setUpdatedToInput(event.target.value)} />
-        </label>
-        <label>
-          {"画像"}
-          <select value={hasImagesInput} onChange={(event) => setHasImagesInput(event.target.value)}>
-            <option value="all">{"すべて"}</option>
-            <option value="with">{"画像あり"}</option>
-            <option value="without">{"画像なし"}</option>
-          </select>
+          {"更新日"}
+          <input
+            type="date"
+            value={updatedFromInput}
+            onChange={(event) => {
+              setUpdatedFromInput(event.target.value);
+              setUpdatedToInput(event.target.value);
+            }}
+          />
         </label>
         <label>
           {"並び替え"}
@@ -4701,8 +4692,17 @@ function DocumentSearchPage() {
         <label>{"キーワード"}<input placeholder="例: M1確認用 / MOD-001 / 原本A" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} /></label>
         <label>{"承認状態"}<select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>{moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
         <label>{"作成者"}<input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} /></label>
-        <label>{"更新日 From"}<input type="date" value={updatedFromInput} onChange={(event) => setUpdatedFromInput(event.target.value)} /></label>
-        <label>{"更新日 To"}<input type="date" value={updatedToInput} onChange={(event) => setUpdatedToInput(event.target.value)} /></label>
+        <label>
+          {"更新日"}
+          <input
+            type="date"
+            value={updatedFromInput}
+            onChange={(event) => {
+              setUpdatedFromInput(event.target.value);
+              setUpdatedToInput(event.target.value);
+            }}
+          />
+        </label>
         <label>{"利用モジュール"}<input placeholder="MOD-001 / ボーレート" value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} /></label>
         <label>{"並び替え"}<select value={sortInput} onChange={(event) => setSortInput(event.target.value)}><option value="key_asc">{"ID昇順"}</option><option value="key_desc">{"ID降順"}</option><option value="updated_desc">{"更新日が新しい順"}</option><option value="updated_asc">{"更新日が古い順"}</option><option value="status_asc">{"承認状態順"}</option></select></label>
         <button className="primary" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
