@@ -315,6 +315,47 @@ type ModuleDiffState = {
   message: string;
 };
 
+type ModuleSimilarityScoreBreakdownData = {
+  work_text: number | null;
+  expected_result: number | null;
+  command: number | null;
+  name: number | null;
+  structure: number | null;
+  device_header: number | null;
+};
+
+type ModuleSimilarityCandidateData = {
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  module_version_id: number;
+  version_no: number;
+  version_label: string;
+  status: "published";
+  similarity: number;
+  exact_match: boolean;
+  image_metadata_match: boolean;
+  score_breakdown: ModuleSimilarityScoreBreakdownData;
+  matched_fields: string[];
+};
+
+type ModuleSimilarityCheckData = {
+  threshold: number;
+  checked_count: number;
+  candidate_count: number;
+  exact_match: boolean;
+  input_sha256: string;
+  candidate_set_sha256: string;
+  confirmation_token: string | null;
+  candidates: ModuleSimilarityCandidateData[];
+};
+
+type ModuleSimilarityCheckState = {
+  status: "idle" | "submitting" | "success" | "error";
+  item: ModuleSimilarityCheckData | null;
+  message: string;
+};
+
 type ModuleCreateState = {
   status: "idle" | "submitting" | "success" | "error";
   item: ModuleDetailData | null;
@@ -2571,6 +2612,18 @@ function getModuleDiffChangedFieldLabel(fieldName: string): string {
   return labels[fieldName] ?? fieldName;
 }
 
+function getModuleSimilarityMatchedFieldLabel(fieldName: string): string {
+  const labels: Record<string, string> = {
+    work_text: "作業内容",
+    expected_result: "確認事項",
+    command: "コマンド",
+    name: "モジュール名",
+    structure: "行構造",
+    device_header: "対象装置",
+  };
+  return labels[fieldName] ?? fieldName;
+}
+
 function getModuleDiffRowNumber(row: ModuleDetailRowData | null): string {
   if (row === null) {
     return "-";
@@ -2686,6 +2739,177 @@ function ModuleDiffRowSnapshot({
       <small>{getModuleDiffDeviceSummary(row)}</small>
       <small>{getModuleDiffImageSummary(row)}</small>
     </div>
+  );
+}
+
+function ModuleSimilarityReview({
+  state,
+  registrationConfirmed,
+  diffState,
+  diffCandidate,
+  onShowDiff,
+  onContinue,
+  onCancel,
+}: {
+  state: ModuleSimilarityCheckState;
+  registrationConfirmed: boolean;
+  diffState: ModuleDiffState;
+  diffCandidate: ModuleSimilarityCandidateData | null;
+  onShowDiff: (candidate: ModuleSimilarityCandidateData) => void;
+  onContinue: () => void;
+  onCancel: () => void;
+}) {
+  const item = state.item;
+  const hasCandidates = (item?.candidate_count ?? 0) > 0;
+  const changedRows = diffState.item?.rows.filter((row) => row.status !== "unchanged") ?? [];
+
+  return (
+    <section className="register-step-card module-similarity-review">
+      <div className="register-step-header">
+        <div>
+          <h2>類似モジュール確認</h2>
+          <p className="register-section-copy">
+            承認済みモジュールと比較し、類似度が {Math.round((item?.threshold ?? 0.7) * 100)}% 以上の候補を表示します。
+          </p>
+        </div>
+        {state.status === "success" ? (
+          <span className={hasCandidates ? "module-similarity-count warning" : "module-similarity-count clear"}>
+            {hasCandidates ? `${item?.candidate_count ?? 0}件の候補` : "候補なし"}
+          </span>
+        ) : null}
+      </div>
+
+      <section
+        className={`register-status ${
+          state.status === "success"
+            ? hasCandidates
+              ? "register-status-submitting"
+              : "register-status-success"
+            : state.status === "error"
+              ? "register-status-error"
+              : state.status === "submitting"
+                ? "register-status-submitting"
+                : ""
+        }`}
+        aria-live="polite"
+      >
+        <span>確認状態</span>
+        <strong>
+          {state.status === "success"
+            ? hasCandidates
+              ? "確認が必要"
+              : "確認完了"
+            : state.status === "error"
+              ? "確認失敗"
+              : state.status === "submitting"
+                ? "確認中"
+                : "未確認"}
+        </strong>
+        <p>{state.message}</p>
+        {item ? (
+          <div className="register-result-meta">
+            <span>{`比較対象 ${item.checked_count}件`}</span>
+            <span>{`判定基準 ${Math.round(item.threshold * 100)}%`}</span>
+            {item.exact_match ? <span>完全一致あり</span> : null}
+          </div>
+        ) : null}
+      </section>
+
+      {item && item.candidates.length > 0 ? (
+        <>
+          <div className="module-similarity-table" role="table" aria-label="類似モジュール候補">
+            <div className="module-similarity-table-header" role="row">
+              <span role="columnheader">類似度</span>
+              <span role="columnheader">候補モジュール</span>
+              <span role="columnheader">一致傾向</span>
+              <span role="columnheader">操作</span>
+            </div>
+            {item.candidates.map((candidate) => (
+              <div className="module-similarity-table-row" role="row" key={candidate.module_version_id}>
+                <div role="cell">
+                  <strong className="module-similarity-score">{`${Math.round(candidate.similarity * 100)}%`}</strong>
+                  {candidate.exact_match ? <span className="module-similarity-exact">完全一致</span> : null}
+                </div>
+                <div role="cell">
+                  <strong>{`${candidate.module_key} / ${candidate.module_name}`}</strong>
+                  <small>{`${candidate.version_label} / 承認済み`}</small>
+                </div>
+                <div role="cell">
+                  <span>
+                    {candidate.matched_fields.length > 0
+                      ? candidate.matched_fields.map(getModuleSimilarityMatchedFieldLabel).join(" / ")
+                      : "一致項目なし"}
+                  </span>
+                </div>
+                <div role="cell">
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => onShowDiff(candidate)}
+                    disabled={
+                      diffState.status === "loading"
+                      && diffCandidate?.module_version_id === candidate.module_version_id
+                    }
+                  >
+                    差分を見る
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="module-similarity-actions">
+            <button className="danger" type="button" onClick={onCancel}>
+              登録を中止
+            </button>
+            <button
+              className="primary"
+              type="button"
+              onClick={onContinue}
+              disabled={registrationConfirmed || !item.confirmation_token}
+            >
+              {registrationConfirmed ? "登録続行を選択済み" : "登録を続ける"}
+            </button>
+          </div>
+          {registrationConfirmed ? (
+            <p className="module-similarity-confirmed">類似候補を確認したうえで、登録を続けます。</p>
+          ) : (
+            <p className="module-similarity-warning">差分を確認し、登録を続けるか中止するか選択してください。</p>
+          )}
+        </>
+      ) : null}
+
+      {diffCandidate ? (
+        <section className="module-similarity-diff" aria-live="polite">
+          <div className="section-heading-row">
+            <div>
+              <h3>{`${diffCandidate.module_key} との行差分`}</h3>
+              <p>{diffState.message}</p>
+            </div>
+            {diffState.item ? (
+              <div className="module-similarity-diff-summary">
+                <span>{`追加 ${diffState.item.summary.added_count}`}</span>
+                <span>{`削除 ${diffState.item.summary.removed_count}`}</span>
+                <span>{`変更 ${diffState.item.summary.changed_count}`}</span>
+              </div>
+            ) : null}
+          </div>
+          {diffState.status === "loading" ? <p>差分を読み込んでいます...</p> : null}
+          {diffState.item && changedRows.length > 0 ? (
+            <div className="module-diff-list" aria-label="類似候補との差分">
+              {changedRows.map((row, index) => (
+                <ModuleDiffRowCard row={row} key={`${row.status}-${row.row_key}-${index}`} />
+              ))}
+            </div>
+          ) : diffState.item ? (
+            <div className="module-diff-empty">
+              <strong>行差分はありません</strong>
+              <span>取込内容と候補モジュールの手順行は一致しています。</span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </section>
   );
 }
 
@@ -3685,9 +3909,26 @@ function ModuleRegisterPageV2() {
     item: null,
     message: "Excel取込プレビューはまだ実行していません。",
   });
+  const [similarityState, setSimilarityState] = useState<ModuleSimilarityCheckState>({
+    status: "idle",
+    item: null,
+    message: "Excel取込後に類似モジュールを確認します。",
+  });
+  const [similarityRegistrationConfirmed, setSimilarityRegistrationConfirmed] = useState(false);
+  const [similarityDiffState, setSimilarityDiffState] = useState<ModuleDiffState>({
+    status: "idle",
+    item: null,
+    message: "候補を選ぶと取込内容との差分を確認できます。",
+  });
+  const [similarityDiffCandidate, setSimilarityDiffCandidate] = useState<ModuleSimilarityCandidateData | null>(null);
+  const [importFileInputKey, setImportFileInputKey] = useState(0);
   const [isWorkbookImportApplied, setIsWorkbookImportApplied] = useState(false);
   const [isImportPreviewFullscreenOpen, setIsImportPreviewFullscreenOpen] = useState(false);
-  const canSaveImportedModule = isWorkbookImportApplied || importPreviewState.status === "success";
+  const hasSimilarityCandidates = (similarityState.item?.candidate_count ?? 0) > 0;
+  const canSaveImportedModule =
+    (isWorkbookImportApplied || importPreviewState.status === "success")
+    && similarityState.status === "success"
+    && (!hasSimilarityCandidates || similarityRegistrationConfirmed);
 
   useEffect(() => {
     if (!isNewVersionMode || versionSourceModuleKey === null) {
@@ -3833,6 +4074,182 @@ function ModuleRegisterPageV2() {
     setRows((currentRows) => (currentRows.length > 1 ? currentRows.filter((row) => row.rowId !== rowId) : currentRows));
   }
 
+  function buildCurrentModulePayload(): ModuleImportPreviewData {
+    const firstHeader = deviceHeaders[0] ?? null;
+    return {
+      module_key: moduleKeyInput.trim() || null,
+      module_name: moduleNameInput.trim(),
+      description: descriptionInput.trim() || null,
+      change_note: importPreviewState.item?.change_note ?? null,
+      source_xlsx_path: sourcePathInput.trim() || null,
+      source_sha256: importPreviewState.item?.source_sha256 ?? null,
+      created_by: createdByInput.trim() || null,
+      header_time_text: firstHeader?.headerTimeText.trim() || null,
+      target_text: firstHeader?.targetText.trim() || null,
+      common_p_text: firstHeader?.pText.trim() || null,
+      target_device_text: firstHeader?.targetDeviceText.trim() || null,
+      device_headers: deviceHeaders.map((header) => ({
+        slot_no: header.slotNo,
+        header_time_text: header.headerTimeText.trim() || null,
+        target_text: header.targetText.trim() || null,
+        p_text: header.pText.trim() || null,
+        target_device_text: header.targetDeviceText.trim() || null,
+      })),
+      rows: rows.map((row, index) => {
+        const firstEntry = row.deviceEntries[0] ?? null;
+        return {
+          row_order: index + 1,
+          row_type: row.rowType,
+          major_no: row.majorNo.trim() || null,
+          middle_no: row.middleNo.trim() || null,
+          minor_no: row.minorNo.trim() || null,
+          tech_doc_text: row.techDocText.trim() || null,
+          work_text: row.workText.trim() || null,
+          indent_level: row.indentLevel,
+          expected_result: row.expectedResult.trim() || null,
+          time_text: firstEntry?.timeText.trim() || null,
+          window_text: firstEntry?.windowText.trim() || null,
+          p_text: firstEntry?.pText.trim() || null,
+          command_text: firstEntry?.commandText.trim() || null,
+          note: null,
+          images: row.images ?? [],
+          device_entries: row.deviceEntries.map((entry) => ({
+            slot_no: entry.slotNo,
+            time_text: entry.timeText.trim() || null,
+            window_text: entry.windowText.trim() || null,
+            p_text: entry.pText.trim() || null,
+            command_text: entry.commandText.trim() || null,
+          })),
+        };
+      }),
+    };
+  }
+
+  function resetSimilarityReview(message = "Excel取込後に類似モジュールを確認します。"): void {
+    setSimilarityState({
+      status: "idle",
+      item: null,
+      message,
+    });
+    setSimilarityRegistrationConfirmed(false);
+    setSimilarityDiffCandidate(null);
+    setSimilarityDiffState({
+      status: "idle",
+      item: null,
+      message: "候補を選ぶと取込内容との差分を確認できます。",
+    });
+  }
+
+  async function runSimilarityCheck(payload: ModuleImportPreviewData): Promise<void> {
+    setSimilarityState({
+      status: "submitting",
+      item: null,
+      message: "承認済みモジュールとの類似度を確認しています...",
+    });
+    setSimilarityRegistrationConfirmed(false);
+    setSimilarityDiffCandidate(null);
+    setSimilarityDiffState({
+      status: "idle",
+      item: null,
+      message: "候補を選ぶと取込内容との差分を確認できます。",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/similarity-check"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const responseBody = await readApiResponse<ModuleSimilarityCheckData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setSimilarityState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `類似モジュール確認に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setSimilarityState({
+        status: "success",
+        item: responseBody.data,
+        message:
+          responseBody.data.candidate_count > 0
+            ? `${responseBody.data.candidate_count} 件の類似候補が見つかりました。差分を確認して登録可否を判断してください。`
+            : "類似候補は見つかりませんでした。登録へ進めます。",
+      });
+    } catch (error) {
+      setSimilarityState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "類似モジュール確認に失敗しました。",
+      });
+    }
+  }
+
+  async function handleSimilarityDiff(candidate: ModuleSimilarityCandidateData): Promise<void> {
+    setSimilarityDiffCandidate(candidate);
+    setSimilarityDiffState({
+      status: "loading",
+      item: null,
+      message: `${candidate.module_key} との差分を取得しています...`,
+    });
+
+    try {
+      const query = new URLSearchParams({ version_no: String(candidate.version_no) });
+      const response = await fetch(
+        buildApiUrl(`/api/v1/modules/${candidate.module_id}/diff-preview?${query.toString()}`),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildCurrentModulePayload()),
+        },
+      );
+      const responseBody = await readApiResponse<ModuleDiffData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setSimilarityDiffState({
+          status: "unavailable",
+          item: null,
+          message: responseBody.message || `差分取得に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setSimilarityDiffState({
+        status: "available",
+        item: responseBody.data,
+        message: responseBody.message || "取込内容との差分を取得しました。",
+      });
+    } catch (error) {
+      setSimilarityDiffState({
+        status: "unavailable",
+        item: null,
+        message: error instanceof Error ? error.message : "差分取得に失敗しました。",
+      });
+    }
+  }
+
+  function handleCancelSimilarityRegistration(): void {
+    setSelectedImportFile(null);
+    setImportFileInputKey((current) => current + 1);
+    setIsWorkbookImportApplied(false);
+    setImportPreviewState({
+      status: "idle",
+      item: null,
+      message: "登録を中止しました。別のExcelファイルを選択できます。",
+    });
+    resetSimilarityReview("登録を中止しました。Excel取込後に再度確認します。");
+    setCreateState({
+      status: "idle",
+      item: null,
+      message: "登録を中止しました。",
+    });
+  }
+
   function applyImportedDraft(item: ModuleImportPreviewData): void {
     const nextHeaders =
       item.device_headers.length > 0
@@ -3897,6 +4314,37 @@ function ModuleRegisterPageV2() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
 
+    if (similarityState.status !== "success") {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "類似モジュール確認が完了していません。Excelファイルを取り込み直してください。",
+      });
+      return;
+    }
+
+    if (hasSimilarityCandidates && !similarityRegistrationConfirmed) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "類似候補を確認し、「登録を続ける」を選択してください。",
+      });
+      return;
+    }
+
+    if (
+      hasSimilarityCandidates
+      && similarityRegistrationConfirmed
+      && !similarityState.item?.confirmation_token
+    ) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "確認情報を取得できませんでした。Excelファイルを取り込み直してください。",
+      });
+      return;
+    }
+
     if (!canSaveImportedModule) {
       setCreateState({
         status: "error",
@@ -3913,48 +4361,62 @@ function ModuleRegisterPageV2() {
     });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules"), {
+      const query = new URLSearchParams();
+      if (hasSimilarityCandidates && similarityState.item?.confirmation_token) {
+        query.set(
+          "similarity_confirmation_token",
+          similarityState.item.confirmation_token,
+        );
+      }
+      const createPath = query.size > 0
+        ? `/api/v1/modules?${query.toString()}`
+        : "/api/v1/modules";
+      const response = await fetch(buildApiUrl(createPath), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          module_key: moduleKeyInput.trim() || undefined,
-          module_name: moduleNameInput.trim(),
-          description: descriptionInput.trim() || undefined,
-          source_xlsx_path: sourcePathInput.trim() || undefined,
-          created_by: createdByInput.trim() || undefined,
-          device_headers: deviceHeaders.map((header) => ({
-            slot_no: header.slotNo,
-            header_time_text: header.headerTimeText.trim() || undefined,
-            target_text: header.targetText.trim() || undefined,
-            p_text: header.pText.trim() || undefined,
-            target_device_text: header.targetDeviceText.trim() || undefined,
-          })),
-          rows: rows.map((row, index) => ({
-            row_order: index + 1,
-            row_type: row.rowType,
-            major_no: row.majorNo.trim() || undefined,
-            middle_no: row.middleNo.trim() || undefined,
-            minor_no: row.minorNo.trim() || undefined,
-            tech_doc_text: row.techDocText.trim() || undefined,
-            work_text: row.workText.trim() || undefined,
-            indent_level: row.indentLevel,
-            expected_result: row.expectedResult.trim() || undefined,
-            images: row.images ?? [],
-            device_entries: row.deviceEntries.map((entry) => ({
-              slot_no: entry.slotNo,
-              time_text: entry.timeText.trim() || undefined,
-              window_text: entry.windowText.trim() || undefined,
-              p_text: entry.pText.trim() || undefined,
-              command_text: entry.commandText.trim() || undefined,
-            })),
-          })),
-        }),
+        body: JSON.stringify(buildCurrentModulePayload()),
       });
 
-      const responseBody = await readApiResponse<ModuleDetailData>(response);
-      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+      const responseBody = await readApiResponse<
+        ModuleDetailData | ModuleSimilarityCheckData
+      >(response);
+      if (
+        response.status === 409
+        && responseBody.data !== null
+        && "candidate_count" in responseBody.data
+      ) {
+        setSimilarityState({
+          status: "success",
+          item: responseBody.data,
+          message:
+            responseBody.message
+            || "類似候補が更新されました。内容を再確認してください。",
+        });
+        setSimilarityRegistrationConfirmed(false);
+        setSimilarityDiffCandidate(null);
+        setSimilarityDiffState({
+          status: "idle",
+          item: null,
+          message: "候補を選ぶと行単位の差分を確認できます。",
+        });
+        setCreateState({
+          status: "error",
+          item: null,
+          message:
+            responseBody.message
+            || "類似候補が更新されました。内容を再確認してください。",
+        });
+        return;
+      }
+
+      if (
+        !response.ok
+        || responseBody.result !== "success"
+        || responseBody.data === null
+        || !("module_id" in responseBody.data)
+      ) {
         setCreateState({
           status: "error",
           item: null,
@@ -4029,6 +4491,7 @@ function ModuleRegisterPageV2() {
         item: importedDraft,
         message: responseBody.message || "ワークブック取込結果を画面へ反映しました。",
       });
+      await runSimilarityCheck(importedDraft);
     } catch (error) {
       setImportPreviewState({
         status: "error",
@@ -4101,6 +4564,7 @@ function ModuleRegisterPageV2() {
         item: responseBody.data,
         message: responseBody.message || "Excel取込プレビューを正規化しました。",
       });
+      await runSimilarityCheck(responseBody.data);
     } catch (error) {
       setImportPreviewState({
         status: "error",
@@ -4404,11 +4868,13 @@ function ModuleRegisterPageV2() {
             <label className="wide">
               Excelファイル
               <input
+                key={importFileInputKey}
                 type="file"
                 accept=".xlsx,.xlsm"
                 onChange={(event) => {
                   setSelectedImportFile(event.target.files?.[0] ?? null);
                   setIsWorkbookImportApplied(false);
+                  resetSimilarityReview();
                   setCreateState({
                     status: "idle",
                     item: null,
@@ -4509,6 +4975,16 @@ function ModuleRegisterPageV2() {
             </div>
           ) : null}
         </section>
+
+        <ModuleSimilarityReview
+          state={similarityState}
+          registrationConfirmed={similarityRegistrationConfirmed}
+          diffState={similarityDiffState}
+          diffCandidate={similarityDiffCandidate}
+          onShowDiff={(candidate) => void handleSimilarityDiff(candidate)}
+          onContinue={() => setSimilarityRegistrationConfirmed(true)}
+          onCancel={handleCancelSimilarityRegistration}
+        />
 
         <Toolbar>
           {createdItem ? (

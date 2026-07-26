@@ -14,6 +14,12 @@ DEFAULT_CORS_ALLOW_ORIGINS = (
     "http://127.0.0.1:5173",
 )
 
+DEFAULT_MODULE_SIMILARITY_THRESHOLD = 0.70
+DEFAULT_MODULE_SIMILARITY_CANDIDATE_LIMIT = 50
+DEFAULT_MODULE_SIMILARITY_RESULT_LIMIT = 10
+DEFAULT_MODULE_SIMILARITY_CONFIRMATION_SECRET = "lab-similarity-confirmation-secret"
+DEFAULT_MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS = 900
+
 
 class AppSettings(BaseModel):
     """Runtime settings loaded from environment variables.
@@ -51,6 +57,17 @@ class AppSettings(BaseModel):
     case_doc_import_strict: bool = Field(default=True)
     case_doc_placeholder_mapping_path: str = Field(default="app/config/placeholder_mapping.yml")
     module_image_storage_dir: str = Field(default="/app/storage/module_images")
+    module_similarity_threshold: float = Field(default=DEFAULT_MODULE_SIMILARITY_THRESHOLD, ge=0, le=1)
+    module_similarity_candidate_limit: int = Field(default=DEFAULT_MODULE_SIMILARITY_CANDIDATE_LIMIT, ge=1)
+    module_similarity_result_limit: int = Field(default=DEFAULT_MODULE_SIMILARITY_RESULT_LIMIT, ge=1)
+    module_similarity_confirmation_secret: str = Field(
+        default=DEFAULT_MODULE_SIMILARITY_CONFIRMATION_SECRET,
+        min_length=16,
+    )
+    module_similarity_confirmation_ttl_seconds: int = Field(
+        default=DEFAULT_MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS,
+        ge=60,
+    )
 
     @property
     def database_url(self) -> str:
@@ -85,6 +102,27 @@ def _get_int_from_env(name: str, default_value: int) -> int:
         return default_value
 
     return int(raw_value)
+
+
+def _get_float_from_env(name: str, default_value: float) -> float:
+    """Read a floating-point environment variable.
+
+    Args:
+        name: Environment variable name.
+        default_value: Value used when the variable is unset.
+
+    Returns:
+        Parsed floating-point value.
+
+    Raises:
+        ValueError: If the environment value cannot be parsed as a float.
+    """
+
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default_value
+
+    return float(raw_value)
 
 
 def _get_csv_from_env(name: str, default_value: tuple[str, ...]) -> tuple[str, ...]:
@@ -145,4 +183,24 @@ def get_settings() -> AppSettings:
             "app/config/placeholder_mapping.yml",
         ),
         module_image_storage_dir=os.environ.get("MODULE_IMAGE_STORAGE_DIR", "/app/storage/module_images"),
+        module_similarity_threshold=_get_float_from_env(
+            "MODULE_SIMILARITY_THRESHOLD",
+            DEFAULT_MODULE_SIMILARITY_THRESHOLD,
+        ),
+        module_similarity_candidate_limit=_get_int_from_env(
+            "MODULE_SIMILARITY_CANDIDATE_LIMIT",
+            DEFAULT_MODULE_SIMILARITY_CANDIDATE_LIMIT,
+        ),
+        module_similarity_result_limit=_get_int_from_env(
+            "MODULE_SIMILARITY_RESULT_LIMIT",
+            DEFAULT_MODULE_SIMILARITY_RESULT_LIMIT,
+        ),
+        module_similarity_confirmation_secret=os.environ.get(
+            "MODULE_SIMILARITY_CONFIRMATION_SECRET",
+            DEFAULT_MODULE_SIMILARITY_CONFIRMATION_SECRET,
+        ),
+        module_similarity_confirmation_ttl_seconds=_get_int_from_env(
+            "MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS",
+            DEFAULT_MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS,
+        ),
     )

@@ -40,6 +40,33 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
 CREATE INDEX IF NOT EXISTS idx_module_versions_status
     ON proc.module_versions (status);
 
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE TABLE IF NOT EXISTS proc.module_similarity_signatures (
+    module_version_id bigint PRIMARY KEY
+        REFERENCES proc.module_versions (module_version_id)
+        ON DELETE CASCADE,
+    normalized_name text NOT NULL,
+    normalized_work_text text NOT NULL,
+    normalized_expected_text text NOT NULL,
+    normalized_command_text text NOT NULL,
+    normalized_structure_text text NOT NULL,
+    normalized_device_header_text text NOT NULL,
+    normalized_image_text text NOT NULL,
+    combined_text text NOT NULL,
+    exact_sha256 varchar(64) NOT NULL,
+    row_count integer NOT NULL,
+    image_count integer NOT NULL,
+    generated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_module_similarity_signatures_exact_sha256
+    ON proc.module_similarity_signatures (exact_sha256);
+
+CREATE INDEX IF NOT EXISTS idx_module_similarity_signatures_combined_text_trgm
+    ON proc.module_similarity_signatures
+    USING gin (combined_text gin_trgm_ops);
+
 ALTER TABLE proc.modules
     ADD COLUMN IF NOT EXISTS folder_path text NOT NULL DEFAULT '未分類';
 

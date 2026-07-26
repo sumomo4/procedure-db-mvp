@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.core.config import AppSettings
 from app.core.excel_import import (
@@ -25,6 +25,7 @@ from app.core.responses import (
     ModuleFolderMoveRequest,
     ModuleFolderRenameRequest,
     ModuleListData,
+    ModuleSimilarityCheckData,
     ModuleVersionListData,
     RouterEndpointData,
     RouterFoundationData,
@@ -36,6 +37,7 @@ from app.db.modules import (
     delete_module_folder,
     get_module_detail,
     get_module_diff,
+    get_module_diff_preview,
     get_module_row_image,
     get_module_version_status,
     list_module_versions,
@@ -45,6 +47,10 @@ from app.db.modules import (
     update_module_version_status,
 )
 from app.routers.health import get_app_settings
+from app.services.module_similarity import (
+    check_similar_modules,
+    validate_similarity_confirmation_token,
+)
 
 
 router = APIRouter(prefix="/modules", tags=["modules"])
@@ -251,6 +257,37 @@ def read_module_diff(
     return success_response(data, "モジュール差分を取得しました。")
 
 
+@router.post("/{module_id}/diff-preview", response_model=ApiResponse[ModuleDiffData])
+def read_module_diff_preview(
+    module_id: int,
+    payload: ModuleCreateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    version_no: Annotated[int, Query(ge=1)],
+) -> ApiResponse[ModuleDiffData]:
+    """Compare a persisted module version with unsaved import content."""
+
+    try:
+        data = get_module_diff_preview(settings, module_id, version_no, payload)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="比較対象のモジュール版が見つかりませんでした。",
+        )
+
+    return success_response(data, "取込内容との差分を取得しました。")
+
+
 @router.get("/{module_id}/versions", response_model=ApiResponse[ModuleVersionListData])
 def read_module_versions(
     module_id: int,
@@ -410,14 +447,54 @@ def read_module_row_image(
     )
 
 
+@router.post(
+    "/similarity-check",
+    response_model=ApiResponse[ModuleSimilarityCheckData],
+)
+def check_module_similarity_resource(
+    payload: ModuleCreateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleSimilarityCheckData]:
+    """Return similar published modules before registration."""
+
+    try:
+        data = check_similar_modules(settings, payload)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    return success_response(data, "類似モジュールを確認しました。")
+
+
 @router.post("", response_model=ApiResponse[ModuleDetailData], status_code=status.HTTP_201_CREATED)
 def create_module_resource(
     payload: ModuleCreateRequest,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
-) -> ApiResponse[ModuleDetailData]:
+    similarity_confirmation_token: Annotated[str | None, Query(max_length=4096)] = None,
+) -> ApiResponse[ModuleDetailData] | JSONResponse:
     """Create a module, its first version, and module rows."""
 
     try:
+        similarity_result = check_similar_modules(settings, payload)
+        if not validate_similarity_confirmation_token(
+            settings,
+            similarity_result,
+            similarity_confirmation_token,
+        ):
+            response = ApiResponse[ModuleSimilarityCheckData](
+                result="error",
+                data=similarity_result,
+                message=(
+                    "類似候補の確認が必要です。"
+                    "最新の候補を確認してから登録を続けてください。"
+                ),
+            )
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content=response.model_dump(mode="json"),
+            )
         data = create_module(settings, payload)
     except ValueError as exception:
         raise HTTPException(

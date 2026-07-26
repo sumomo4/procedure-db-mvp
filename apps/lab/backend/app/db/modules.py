@@ -1041,6 +1041,114 @@ def build_module_diff_data(before: ModuleDetailData, after: ModuleDetailData) ->
     )
 
 
+def _build_unsaved_module_detail(
+    reference: ModuleDetailData,
+    payload: ModuleCreateRequest,
+) -> ModuleDetailData:
+    """Convert an unsaved create payload into data accepted by the diff engine."""
+
+    input_headers = _normalize_device_headers(payload)
+    device_slot_nos = {header.slot_no for header in input_headers}
+    rows: list[ModuleRowData] = []
+    for row_index, row in enumerate(payload.rows, start=1):
+        input_entries = _normalize_row_device_entries(row, device_slot_nos)
+        rows.append(
+            ModuleRowData(
+                module_row_id=-row_index,
+                row_order=row.row_order,
+                row_type=row.row_type,
+                major_no=row.major_no,
+                middle_no=row.middle_no,
+                minor_no=row.minor_no,
+                tech_doc_text=row.tech_doc_text,
+                work_text=row.work_text,
+                indent_level=row.indent_level,
+                expected_result=row.expected_result,
+                time_text=input_entries[0].time_text if input_entries else row.time_text,
+                window_text=input_entries[0].window_text if input_entries else row.window_text,
+                p_text=input_entries[0].p_text if input_entries else row.p_text,
+                command_text=input_entries[0].command_text if input_entries else row.command_text,
+                note=row.note,
+                device_entries=[
+                    ModuleRowDeviceEntryData(
+                        slot_no=entry.slot_no,
+                        time_text=entry.time_text,
+                        window_text=entry.window_text,
+                        p_text=entry.p_text,
+                        command_text=entry.command_text,
+                    )
+                    for entry in input_entries
+                ],
+                images=[
+                    ModuleRowImageData(
+                        module_row_image_id=-(row_index * 100 + image_index),
+                        image_key=image.image_key,
+                        image_path=image.image_path,
+                        anchor_cell=image.anchor_cell,
+                        offset_x_px=image.offset_x_px,
+                        offset_y_px=image.offset_y_px,
+                        width_px=image.width_px,
+                        height_px=image.height_px,
+                        image_order=image.image_order,
+                    )
+                    for image_index, image in enumerate(row.images, start=1)
+                ],
+            )
+        )
+
+    next_version_no = reference.version_no + 1
+    return ModuleDetailData(
+        module_id=reference.module_id,
+        module_key=reference.module_key,
+        module_name=reference.module_name,
+        description=payload.description,
+        module_version_id=-1,
+        version_no=next_version_no,
+        version_major=reference.version_major,
+        version_minor=reference.version_minor,
+        version_label=f"取込内容（仮ver.{next_version_no}）",
+        status="draft",
+        status_label=MODULE_STATUS_LABELS["draft"],
+        row_count=len(rows),
+        source_xlsx_path=payload.source_xlsx_path,
+        created_by=payload.created_by,
+        header_time_text=input_headers[0].header_time_text if input_headers else payload.header_time_text,
+        target_text=input_headers[0].target_text if input_headers else payload.target_text,
+        common_p_text=input_headers[0].p_text if input_headers else payload.common_p_text,
+        target_device_text=input_headers[0].target_device_text if input_headers else payload.target_device_text,
+        device_headers=[
+            ModuleDeviceHeaderData(
+                slot_no=header.slot_no,
+                header_time_text=header.header_time_text,
+                target_text=header.target_text,
+                p_text=header.p_text,
+                target_device_text=header.target_device_text,
+            )
+            for header in input_headers
+        ],
+        created_at="",
+        updated_at="",
+        rows=rows,
+    )
+
+
+def get_module_diff_preview(
+    settings: AppSettings,
+    module_id: int,
+    version_no: int,
+    payload: ModuleCreateRequest,
+) -> ModuleDiffData | None:
+    """Compare a persisted module version with an unsaved import payload."""
+
+    reference = get_module_detail(settings, module_id, version_no)
+    if reference is None:
+        return None
+
+    _validate_module_create_request(payload)
+    unsaved = _build_unsaved_module_detail(reference, payload)
+    return build_module_diff_data(reference, unsaved)
+
+
 def _normalize_module_key(module_key: str | None) -> str | None:
     """Normalize module key text."""
 

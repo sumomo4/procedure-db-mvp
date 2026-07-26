@@ -327,6 +327,57 @@ class ModuleCreateRequest(BaseModel):
     rows: list[ModuleCreateRowInput] = Field(min_length=1)
 
 
+class ModuleSimilarityScoreBreakdownData(BaseModel):
+    """Component scores used to explain one module similarity result."""
+
+    work_text: float | None = Field(default=None, ge=0, le=1)
+    expected_result: float | None = Field(default=None, ge=0, le=1)
+    command: float | None = Field(default=None, ge=0, le=1)
+    name: float | None = Field(default=None, ge=0, le=1)
+    structure: float | None = Field(default=None, ge=0, le=1)
+    device_header: float | None = Field(default=None, ge=0, le=1)
+
+
+class ModuleSimilarityCalculationData(BaseModel):
+    """Calculated similarity between two normalized module signatures."""
+
+    similarity: float = Field(ge=0, le=1)
+    exact_match: bool
+    image_metadata_match: bool
+    applied_weight: float = Field(ge=0, le=1)
+    score_breakdown: ModuleSimilarityScoreBreakdownData
+
+
+class ModuleSimilarityCandidateData(BaseModel):
+    """One persisted module version that resembles an imported module."""
+
+    module_id: int
+    module_key: str
+    module_name: str
+    module_version_id: int
+    version_no: int
+    version_label: str
+    status: Literal["published"]
+    similarity: float = Field(ge=0, le=1)
+    exact_match: bool
+    image_metadata_match: bool
+    score_breakdown: ModuleSimilarityScoreBreakdownData
+    matched_fields: list[str] = Field(default_factory=list)
+
+
+class ModuleSimilarityCheckData(BaseModel):
+    """Similarity-check response returned before module registration."""
+
+    threshold: float = Field(ge=0, le=1)
+    checked_count: int = Field(ge=0)
+    candidate_count: int = Field(ge=0)
+    exact_match: bool
+    input_sha256: str
+    candidate_set_sha256: str = ""
+    confirmation_token: str | None = None
+    candidates: list[ModuleSimilarityCandidateData] = Field(default_factory=list)
+
+
 class ExcelImportSheetDeviceHeaderInput(BaseModel):
     """Normalized device header cells extracted from one Excel sheet."""
 

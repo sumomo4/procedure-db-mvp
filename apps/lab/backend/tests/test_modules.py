@@ -19,6 +19,9 @@ from app.core.responses import (
     ModuleRowData,
     ModuleRowDeviceEntryData,
     ModuleRowImageData,
+    ModuleSimilarityCandidateData,
+    ModuleSimilarityCheckData,
+    ModuleSimilarityScoreBreakdownData,
     ModuleVersionListData,
     ModuleVersionListItemData,
 )
@@ -26,6 +29,70 @@ from app.routers import modules
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+
+
+def build_similarity_check_result(
+    *,
+    with_candidate: bool,
+) -> ModuleSimilarityCheckData:
+    """Build a deterministic similarity result for create-route tests."""
+
+    candidate = ModuleSimilarityCandidateData(
+        module_id=1,
+        module_key="MOD-001",
+        module_name="Existing module",
+        module_version_id=10,
+        version_no=1,
+        version_label="ver.1.0",
+        status="published",
+        similarity=0.92,
+        exact_match=False,
+        image_metadata_match=True,
+        score_breakdown=ModuleSimilarityScoreBreakdownData(
+            work_text=0.95,
+            expected_result=0.90,
+            command=0.91,
+            name=0.88,
+            structure=1.0,
+            device_header=1.0,
+        ),
+        matched_fields=["作業内容", "確認事項", "コマンド"],
+    )
+    return ModuleSimilarityCheckData(
+        threshold=0.70,
+        checked_count=1,
+        candidate_count=1 if with_candidate else 0,
+        exact_match=False,
+        input_sha256="a" * 64,
+        candidate_set_sha256="b" * 64,
+        confirmation_token="signed-token" if with_candidate else None,
+        candidates=[candidate] if with_candidate else [],
+    )
+
+
+def build_created_module_detail() -> ModuleDetailData:
+    """Build a compact successful module-create response."""
+
+    return ModuleDetailData(
+        module_id=4,
+        module_key="MOD-004",
+        module_name="Created module",
+        description=None,
+        module_version_id=40,
+        version_no=1,
+        status="draft",
+        status_label="作成中",
+        row_count=0,
+        source_xlsx_path=None,
+        created_by="codex",
+        header_time_text=None,
+        target_text=None,
+        common_p_text=None,
+        target_device_text=None,
+        created_at="2026-07-26",
+        updated_at="2026-07-26",
+        rows=[],
+    )
 
 
 def build_module_status_detail(status_value: str = "draft") -> ApprovalStatusDetailData:
@@ -551,6 +618,83 @@ def test_read_module_diff_returns_not_found_response(
     }
 
 
+def test_read_module_diff_preview_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsaved import diff API should return structured diff data."""
+
+    diff_data = ModuleDiffData(
+        module_id=1,
+        module_key="MOD-001",
+        module_name="Initial check procedure",
+        from_version=1,
+        to_version=2,
+        summary=ModuleDiffSummaryData(added_count=1, removed_count=0, changed_count=0, unchanged_count=1),
+        rows=[],
+    )
+
+    def fake_get_module_diff_preview(
+        settings: AppSettings,
+        module_id: int,
+        version_no: int,
+        payload: object,
+    ) -> ModuleDiffData | None:
+        assert settings.app_env == "test"
+        assert module_id == 1
+        assert version_no == 1
+        assert getattr(payload, "module_name") == "Imported module"
+        return diff_data
+
+    monkeypatch.setattr(modules, "get_module_diff_preview", fake_get_module_diff_preview)
+
+    response = client.post(
+        "/api/v1/modules/1/diff-preview?version_no=1",
+        json={
+            "module_name": "Imported module",
+            "rows": [
+                {
+                    "row_order": 1,
+                    "row_type": "step",
+                    "work_text": "Check system status",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()
+    assert payload["result"] == "success"
+    assert payload["message"] == "取込内容との差分を取得しました。"
+    assert payload["data"]["summary"]["added_count"] == 1
+
+
+def test_read_module_diff_preview_returns_not_found_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsaved import diff API should return 404 when candidate version is missing."""
+
+    monkeypatch.setattr(modules, "get_module_diff_preview", lambda *args, **kwargs: None)
+
+    response = client.post(
+        "/api/v1/modules/999/diff-preview?version_no=1",
+        json={
+            "module_name": "Imported module",
+            "rows": [
+                {
+                    "row_order": 1,
+                    "row_type": "step",
+                    "work_text": "Check system status",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["message"] == "比較対象のモジュール版が見つかりませんでした。"
+
+
 def test_read_module_versions_returns_success_response(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -922,6 +1066,13 @@ def test_create_module_returns_success_response(
         )
 
     monkeypatch.setattr(modules, "create_module", fake_create_module)
+    monkeypatch.setattr(
+        modules,
+        "check_similar_modules",
+        lambda _settings, _payload: build_similarity_check_result(
+            with_candidate=False
+        ),
+    )
 
     response = client.post(
         "/api/v1/modules",
@@ -998,6 +1149,13 @@ def test_create_module_rejects_business_validation_error(
         raise ValueError("row_order must be unique within rows.")
 
     monkeypatch.setattr(modules, "create_module", fake_create_module)
+    monkeypatch.setattr(
+        modules,
+        "check_similar_modules",
+        lambda _settings, _payload: build_similarity_check_result(
+            with_candidate=False
+        ),
+    )
 
     response = client.post(
         "/api/v1/modules",
@@ -1029,6 +1187,13 @@ def test_create_module_returns_error_response(
         raise DatabaseConnectionError("Module create failed.")
 
     monkeypatch.setattr(modules, "create_module", fake_create_module)
+    monkeypatch.setattr(
+        modules,
+        "check_similar_modules",
+        lambda _settings, _payload: build_similarity_check_result(
+            with_candidate=False
+        ),
+    )
 
     response = client.post(
         "/api/v1/modules",
@@ -1043,6 +1208,95 @@ def test_create_module_returns_error_response(
         "result": "error",
         "data": None,
         "message": "Module create failed.",
+    }
+
+
+def test_create_module_requires_confirmation_for_similarity_candidates(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A candidate-bearing request should return 409 before database writes."""
+
+    monkeypatch.setattr(
+        modules,
+        "check_similar_modules",
+        lambda _settings, _payload: build_similarity_check_result(
+            with_candidate=True
+        ),
+    )
+    monkeypatch.setattr(
+        modules,
+        "validate_similarity_confirmation_token",
+        lambda _settings, _result, _token: False,
+    )
+
+    def fail_if_created(_settings: AppSettings, _payload: object) -> ModuleDetailData:
+        raise AssertionError("create_module must not run before confirmation")
+
+    monkeypatch.setattr(modules, "create_module", fail_if_created)
+
+    response = client.post(
+        "/api/v1/modules",
+        json={
+            "module_name": "Created module",
+            "rows": [{"row_order": 1, "row_type": "step"}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["result"] == "error"
+    assert response.json()["data"]["candidate_count"] == 1
+    assert response.json()["data"]["confirmation_token"] == "signed-token"
+
+
+def test_create_module_accepts_latest_similarity_confirmation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid confirmation token should allow the create operation."""
+
+    similarity_result = build_similarity_check_result(with_candidate=True)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        modules,
+        "check_similar_modules",
+        lambda _settings, _payload: similarity_result,
+    )
+
+    def fake_validate(
+        _settings: AppSettings,
+        result: ModuleSimilarityCheckData,
+        token: str | None,
+    ) -> bool:
+        captured["result"] = result
+        captured["token"] = token
+        return token == "signed-token"
+
+    monkeypatch.setattr(
+        modules,
+        "validate_similarity_confirmation_token",
+        fake_validate,
+    )
+    monkeypatch.setattr(
+        modules,
+        "create_module",
+        lambda _settings, _payload: build_created_module_detail(),
+    )
+
+    response = client.post(
+        "/api/v1/modules?similarity_confirmation_token=signed-token",
+        json={
+            "module_name": "Created module",
+            "rows": [{"row_order": 1, "row_type": "step"}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json()["result"] == "success"
+    assert response.json()["data"]["module_key"] == "MOD-004"
+    assert captured == {
+        "result": similarity_result,
+        "token": "signed-token",
     }
 
 

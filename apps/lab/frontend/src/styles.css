@@ -1913,6 +1913,139 @@ th {
   border-left-color: #b84d3a;
 }
 
+.module-similarity-review {
+  align-content: start;
+}
+
+.module-similarity-count {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #b8c7ca;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.module-similarity-count.warning {
+  border-color: #d7a84f;
+  background: #fff4d8;
+  color: #76520e;
+}
+
+.module-similarity-count.clear {
+  border-color: #8bc4a5;
+  background: #e7f4ec;
+  color: #1f6844;
+}
+
+.module-similarity-table {
+  overflow: hidden;
+  border: 1px solid #c7d2d5;
+  border-radius: 6px;
+}
+
+.module-similarity-table-header,
+.module-similarity-table-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.7fr) minmax(260px, 2fr) minmax(180px, 1.3fr) minmax(110px, 0.7fr);
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+}
+
+.module-similarity-table-header {
+  background: #eef3f4;
+  color: #40505a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.module-similarity-table-row {
+  border-top: 1px solid #dce3e5;
+  background: #ffffff;
+}
+
+.module-similarity-table-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.module-similarity-table-row strong,
+.module-similarity-table-row span,
+.module-similarity-table-row small {
+  overflow-wrap: anywhere;
+}
+
+.module-similarity-table-row small {
+  color: #63717a;
+}
+
+.module-similarity-score {
+  color: #a3492f;
+  font-size: 22px;
+}
+
+.module-similarity-exact {
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f7ded7;
+  color: #923b28;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.module-similarity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.module-similarity-warning,
+.module-similarity-confirmed {
+  margin: 0;
+  font-weight: 800;
+}
+
+.module-similarity-warning {
+  color: #a33b2b;
+}
+
+.module-similarity-confirmed {
+  color: #237249;
+}
+
+.module-similarity-diff {
+  display: grid;
+  gap: 14px;
+  padding-top: 18px;
+  border-top: 1px solid #d6cdbc;
+}
+
+.module-similarity-diff h3,
+.module-similarity-diff p {
+  margin: 0;
+}
+
+.module-similarity-diff-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.module-similarity-diff-summary span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #edf2f3;
+  color: #40505a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .register-result-meta {
   display: flex;
   flex-wrap: wrap;
@@ -3012,6 +3145,22 @@ th {
   .module-diff-status,
   .module-diff-row-badge {
     width: fit-content;
+  }
+
+  .module-similarity-table-header {
+    display: none;
+  }
+
+  .module-similarity-table-row {
+    grid-template-columns: 1fr;
+  }
+
+  .module-similarity-actions {
+    justify-content: stretch;
+  }
+
+  .module-similarity-actions button {
+    flex: 1 1 180px;
   }
 
   .device-pager-tabs {
