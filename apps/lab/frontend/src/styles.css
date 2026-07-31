@@ -883,6 +883,140 @@ nav {
   grid-template-columns: minmax(220px, 1.2fr) minmax(180px, 0.8fr) auto;
 }
 
+.module-tag-filter-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.module-tag-filter-field legend {
+  margin: 0;
+  padding: 0;
+  color: #344652;
+  font-weight: 900;
+}
+
+.module-tag-filter-select {
+  position: relative;
+  min-width: 0;
+}
+
+.module-tag-filter-select > summary {
+  min-height: 46px;
+  border: 1px solid #c9d1d3;
+  border-radius: 8px;
+  padding: 7px 38px 7px 12px;
+  background: #ffffff;
+  color: #10202a;
+  cursor: pointer;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  list-style: none;
+}
+
+.module-tag-filter-select > summary::-webkit-details-marker {
+  display: none;
+}
+
+.module-tag-filter-select > summary::after {
+  content: "▾";
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  color: #41505a;
+}
+
+.module-tag-filter-select[open] > summary {
+  border-color: #1f7a83;
+  box-shadow: 0 0 0 2px rgba(31, 122, 131, 0.13);
+}
+
+.module-tag-filter-select > summary span,
+.module-tag-filter-select > summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-tag-filter-select > summary span {
+  font-weight: 900;
+}
+
+.module-tag-filter-select > summary small {
+  color: #65727a;
+}
+
+.module-tag-filter-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  width: max(100%, 320px);
+  max-width: min(520px, calc(100vw - 48px));
+  max-height: 330px;
+  overflow: auto;
+  border: 1px solid #b9c8cb;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+  box-shadow: 0 16px 34px rgba(42, 55, 62, 0.18);
+}
+
+.module-tag-filter-options {
+  display: grid;
+  gap: 4px;
+}
+
+.module-tag-filter-options label {
+  min-height: 40px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  color: #243641;
+  cursor: pointer;
+}
+
+.module-tag-filter-options label:hover {
+  border-color: #9bc9d1;
+  background: #edf8fa;
+}
+
+.module-tag-filter-options input {
+  width: 18px;
+  height: 18px;
+}
+
+.module-tag-filter-options span {
+  overflow-wrap: anywhere;
+}
+
+.module-tag-filter-footer {
+  margin-top: 8px;
+  padding-top: 9px;
+  border-top: 1px solid #e6ded1;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.module-tag-filter-footer small {
+  color: #65727a;
+  line-height: 1.45;
+}
+
+.module-tag-filter-footer .text-button {
+  flex: 0 0 auto;
+}
+
 
 
 .module-explorer-layout {
@@ -952,47 +1086,6 @@ nav {
   color: #1f7a83;
 }
 
-.module-folder-rename-form {
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid #e6ded1;
-  display: grid;
-  gap: 8px;
-}
-
-.module-folder-rename-form label {
-  display: grid;
-  gap: 6px;
-  color: #43545f;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.module-folder-rename-form input {
-  min-width: 0;
-}
-
-.module-folder-rename-form button {
-  width: 100%;
-}
-
-.module-folder-rename-message {
-  margin: 0;
-  color: #53636d;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.module-folder-rename-message.success {
-  color: #207a4f;
-  font-weight: 800;
-}
-
-.module-folder-rename-message.error {
-  color: #ba3c2f;
-  font-weight: 800;
-}
-
 .module-folder-delete-panel {
   margin-top: 8px;
   padding-top: 12px;
@@ -1010,7 +1103,7 @@ nav {
   background: rgba(255, 255, 255, 0.72);
   padding: 12px 14px;
   display: grid;
-  grid-template-columns: auto minmax(280px, 1fr) minmax(280px, 1fr);
+  grid-template-columns: auto repeat(3, minmax(240px, 1fr));
   gap: 12px;
   align-items: stretch;
 }
@@ -1046,6 +1139,7 @@ nav {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .module-folder-action-card h2 {
@@ -1056,9 +1150,9 @@ nav {
 
 .module-folder-action-card form {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
-  align-items: end;
+  align-items: stretch;
 }
 
 .module-folder-action-card label {
@@ -1068,7 +1162,12 @@ nav {
 
 .module-folder-action-card input,
 .module-folder-action-card select {
+  width: 100%;
   min-width: 0;
+}
+
+.module-folder-action-card form > button {
+  width: 100%;
 }
 
 .module-folder-action-buttons {
@@ -1092,6 +1191,24 @@ nav {
 .module-folder-action-message.error {
   color: #ba3c2f;
   font-weight: 800;
+}
+
+.module-folder-membership-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 160px;
+}
+
+.module-folder-membership-list span {
+  border: 1px solid #a7cbd0;
+  border-radius: 4px;
+  background: #edf7f8;
+  color: #285d64;
+  padding: 3px 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 @media (max-width: 1180px) {
@@ -1949,7 +2066,7 @@ th {
 .module-similarity-table-header,
 .module-similarity-table-row {
   display: grid;
-  grid-template-columns: minmax(90px, 0.7fr) minmax(260px, 2fr) minmax(180px, 1.3fr) minmax(110px, 0.7fr);
+  grid-template-columns: minmax(90px, 0.7fr) minmax(260px, 2fr) minmax(180px, 1.3fr) minmax(220px, 1.1fr);
   gap: 14px;
   align-items: center;
   padding: 12px 14px;
@@ -1981,6 +2098,27 @@ th {
 
 .module-similarity-table-row small {
   color: #63717a;
+}
+
+.module-similarity-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.module-similarity-download-status {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 4px solid #7c689d;
+  background: #f3eef9;
+  color: #4f4167;
+  font-weight: 700;
+}
+
+.module-similarity-download-status.error {
+  border-left-color: #b84d3a;
+  background: #fce9e5;
+  color: #8b3528;
 }
 
 .module-similarity-score {

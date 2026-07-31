@@ -73,6 +73,23 @@ ALTER TABLE proc.modules
 CREATE INDEX IF NOT EXISTS idx_modules_folder_path
     ON proc.modules (folder_path);
 
+CREATE TABLE IF NOT EXISTS proc.module_folder_memberships (
+    module_id bigint NOT NULL REFERENCES proc.modules (module_id) ON DELETE CASCADE,
+    folder_path text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (module_id, folder_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_module_folder_memberships_folder_path
+    ON proc.module_folder_memberships (folder_path);
+
+INSERT INTO proc.module_folder_memberships (module_id, folder_path)
+SELECT
+    module_id,
+    COALESCE(NULLIF(folder_path, ''), '未分類')
+FROM proc.modules
+ON CONFLICT (module_id, folder_path) DO NOTHING;
+
 ALTER TABLE proc.module_versions
     ADD COLUMN IF NOT EXISTS version_major integer NOT NULL DEFAULT 0;
 

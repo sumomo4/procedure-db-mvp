@@ -205,7 +205,7 @@ def _normalize_module_folder_path(folder_path: str | None) -> str:
 
 
 def _ensure_module_folder_column(cursor: Any) -> None:
-    """Ensure virtual folder metadata exists on existing DB volumes."""
+    """Ensure virtual folder metadata exists and migrate legacy assignments."""
 
     cursor.execute(
         """
@@ -218,6 +218,28 @@ def _ensure_module_folder_column(cursor: Any) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_modules_folder_path
             ON proc.modules (folder_path);
+
+        CREATE TABLE IF NOT EXISTS proc.module_folder_memberships (
+            module_id bigint NOT NULL REFERENCES proc.modules (module_id) ON DELETE CASCADE,
+            folder_path text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (module_id, folder_path)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_module_folder_memberships_folder_path
+            ON proc.module_folder_memberships (folder_path);
+
+        INSERT INTO proc.module_folder_memberships (module_id, folder_path)
+        SELECT
+            m.module_id,
+            COALESCE(NULLIF(m.folder_path, ''), '未分類')
+        FROM proc.modules m
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM proc.module_folder_memberships membership
+            WHERE membership.module_id = m.module_id
+        )
+        ON CONFLICT (module_id, folder_path) DO NOTHING;
         """,
         {},
     )
@@ -258,17 +280,17 @@ def _build_module_history_items(rows: list[Any]) -> list[ApprovalStatusHistoryIt
 def _build_module_list_query(
     keyword: str | None,
     status_filter: str | None,
-    folder_path: str | None,
+    folder_paths: list[str] | None,
     created_by: str | None,
     updated_from: str | None,
     updated_to: str | None,
     has_images: str | None,
     sort: str | None,
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, dict[str, object]]:
     """Build the module list query and parameters."""
 
     conditions: list[str] = []
-    parameters: dict[str, str] = {}
+    parameters: dict[str, object] = {}
 
     if keyword:
         conditions.append(
@@ -297,9 +319,26 @@ def _build_module_list_query(
         conditions.append("mv.status = %(status_filter)s")
         parameters["status_filter"] = status_filter
 
-    if folder_path:
-        conditions.append("COALESCE(NULLIF(m.folder_path, ''), '未分類') = %(folder_path)s")
-        parameters["folder_path"] = _normalize_module_folder_path(folder_path)
+    normalized_folder_paths = list(
+        dict.fromkeys(
+            _normalize_module_folder_path(folder_path)
+            for folder_path in (folder_paths or [])
+            if folder_path.strip()
+        )
+    )
+    for index, folder_path in enumerate(normalized_folder_paths):
+        parameter_name = f"folder_path_{index}"
+        conditions.append(
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM proc.module_folder_memberships folder_filter_{index}
+                WHERE folder_filter_{index}.module_id = m.module_id
+                  AND folder_filter_{index}.folder_path = %({parameter_name})s
+            )
+            """
+        )
+        parameters[parameter_name] = folder_path
 
     if created_by:
         conditions.append("COALESCE(mv.created_by, '') ILIKE %(created_by)s")
@@ -357,7 +396,14 @@ def _build_module_list_query(
             m.module_key,
             m.name AS module_name,
             m.description,
-            COALESCE(NULLIF(m.folder_path, ''), '未分類') AS folder_path,
+            COALESCE(
+                (
+                    SELECT array_agg(folder_membership.folder_path ORDER BY folder_membership.folder_path)
+                    FROM proc.module_folder_memberships folder_membership
+                    WHERE folder_membership.module_id = m.module_id
+                ),
+                ARRAY['未分類']::text[]
+            ) AS folder_paths,
             mv.module_version_id,
             mv.version_no,
             mv.version_major,
@@ -390,7 +436,6 @@ def _build_module_list_query(
             m.module_key,
             m.name,
             m.description,
-            m.folder_path,
             mv.module_version_id,
             mv.version_no,
             mv.version_major,
@@ -409,8 +454,8 @@ def _fetch_module_folder_paths(cursor: Any) -> list[str]:
 
     cursor.execute(
         """
-        SELECT DISTINCT COALESCE(NULLIF(folder_path, ''), '未分類') AS folder_path
-        FROM proc.modules
+        SELECT DISTINCT folder_path
+        FROM proc.module_folder_memberships
         ORDER BY folder_path ASC;
         """,
         {},
@@ -1298,7 +1343,7 @@ def list_modules(
     settings: AppSettings,
     keyword: str | None = None,
     status_filter: str | None = None,
-    folder_path: str | None = None,
+    folder_paths: list[str] | None = None,
     created_by: str | None = None,
     updated_from: str | None = None,
     updated_to: str | None = None,
@@ -1315,7 +1360,7 @@ def list_modules(
     query, parameters = _build_module_list_query(
         keyword,
         status_filter,
-        folder_path,
+        folder_paths,
         created_by,
         updated_from,
         updated_to,
@@ -1341,6 +1386,16 @@ def list_modules(
     for row in rows:
         has_folder_column = len(row) >= 15
         has_version_columns = len(row) >= 14
+        raw_folder_paths = row[4] if has_folder_column else ["未分類"]
+        if isinstance(raw_folder_paths, (list, tuple)):
+            folder_paths = [
+                _normalize_module_folder_path(str(folder_path))
+                for folder_path in raw_folder_paths
+                if str(folder_path).strip()
+            ]
+        else:
+            folder_paths = [_normalize_module_folder_path(str(raw_folder_paths or "未分類"))]
+        folder_paths = list(dict.fromkeys(folder_paths)) or ["未分類"]
         module_version_index = 5 if has_folder_column else 4
         version_no_index = 6 if has_folder_column else 5
         version_major_index = 7 if has_folder_column else 6
@@ -1363,7 +1418,8 @@ def list_modules(
                 module_key=row[1],
                 module_name=row[2],
                 description=row[3],
-                folder_path=(row[4] if has_folder_column else "未分類") or "未分類",
+                folder_path=folder_paths[0],
+                folder_paths=folder_paths,
                 module_version_id=row[module_version_index],
                 version_no=row[version_no_index],
                 version_major=version_major,
@@ -1387,7 +1443,7 @@ def rename_module_folder(
     current_folder_path: str,
     new_folder_path: str,
 ) -> ModuleListData:
-    """Rename a virtual folder path for all matching modules."""
+    """Rename a virtual folder path and its descendants."""
 
     try:
         import psycopg
@@ -1396,6 +1452,8 @@ def rename_module_folder(
 
     current_folder = _normalize_module_folder_path(current_folder_path)
     new_folder = _normalize_module_folder_path(new_folder_path)
+    if current_folder == new_folder:
+        return list_modules(settings, folder_paths=[new_folder])
 
     try:
         with psycopg.connect(
@@ -1406,9 +1464,54 @@ def rename_module_folder(
                 _ensure_module_folder_column(cursor)
                 cursor.execute(
                     """
+                    INSERT INTO proc.module_folder_memberships (module_id, folder_path)
+                    SELECT
+                        membership.module_id,
+                        CASE
+                            WHEN membership.folder_path = %(current_folder)s
+                                THEN %(new_folder)s
+                            ELSE %(new_folder)s || SUBSTRING(
+                                membership.folder_path
+                                FROM LENGTH(%(current_folder)s) + 1
+                            )
+                        END
+                    FROM proc.module_folder_memberships membership
+                    WHERE membership.folder_path = %(current_folder)s
+                       OR LEFT(
+                            membership.folder_path,
+                            LENGTH(%(current_folder)s) + 1
+                          ) = %(current_folder)s || '/'
+                    ON CONFLICT (module_id, folder_path) DO NOTHING;
+                    """,
+                    {"current_folder": current_folder, "new_folder": new_folder},
+                )
+                cursor.execute(
+                    """
+                    DELETE FROM proc.module_folder_memberships
+                    WHERE folder_path = %(current_folder)s
+                       OR LEFT(
+                            folder_path,
+                            LENGTH(%(current_folder)s) + 1
+                          ) = %(current_folder)s || '/';
+                    """,
+                    {"current_folder": current_folder},
+                )
+                cursor.execute(
+                    """
                     UPDATE proc.modules
-                    SET folder_path = %(new_folder)s
-                    WHERE COALESCE(NULLIF(folder_path, ''), '未分類') = %(current_folder)s;
+                    SET folder_path = CASE
+                        WHEN COALESCE(NULLIF(folder_path, ''), '未分類') = %(current_folder)s
+                            THEN %(new_folder)s
+                        ELSE %(new_folder)s || SUBSTRING(
+                            COALESCE(NULLIF(folder_path, ''), '未分類')
+                            FROM LENGTH(%(current_folder)s) + 1
+                        )
+                    END
+                    WHERE COALESCE(NULLIF(folder_path, ''), '未分類') = %(current_folder)s
+                       OR LEFT(
+                            COALESCE(NULLIF(folder_path, ''), '未分類'),
+                            LENGTH(%(current_folder)s) + 1
+                          ) = %(current_folder)s || '/';
                     """,
                     {"current_folder": current_folder, "new_folder": new_folder},
                 )
@@ -1416,14 +1519,14 @@ def rename_module_folder(
     except Exception as exception:
         raise DatabaseConnectionError("Module folder rename failed.") from exception
 
-    return list_modules(settings, folder_path=new_folder)
+    return list_modules(settings, folder_paths=[new_folder])
 
 
 def delete_module_folder(
     settings: AppSettings,
     folder_path: str,
 ) -> ModuleListData:
-    """Delete a virtual folder subtree by moving contained modules to uncategorized."""
+    """Delete folder memberships and uncategorize modules with no remaining folder."""
 
     try:
         import psycopg
@@ -1453,6 +1556,31 @@ def delete_module_folder(
                     """,
                     {"current_folder": current_folder},
                 )
+                cursor.execute(
+                    """
+                    DELETE FROM proc.module_folder_memberships
+                    WHERE folder_path = %(current_folder)s
+                       OR LEFT(
+                            folder_path,
+                            LENGTH(%(current_folder)s) + 1
+                          ) = %(current_folder)s || '/';
+                    """,
+                    {"current_folder": current_folder},
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO proc.module_folder_memberships (module_id, folder_path)
+                    SELECT m.module_id, '未分類'
+                    FROM proc.modules m
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM proc.module_folder_memberships membership
+                        WHERE membership.module_id = m.module_id
+                    )
+                    ON CONFLICT (module_id, folder_path) DO NOTHING;
+                    """,
+                    {},
+                )
                 connection.commit()
     except Exception as exception:
         raise DatabaseConnectionError("Module folder deletion failed.") from exception
@@ -1465,7 +1593,7 @@ def move_modules_to_folder(
     module_ids: list[int],
     folder_path: str,
 ) -> ModuleListData:
-    """Move selected modules to a virtual folder path."""
+    """Add selected modules to a folder without removing other memberships."""
 
     try:
         import psycopg
@@ -1485,6 +1613,43 @@ def move_modules_to_folder(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_module_folder_column(cursor)
+                if new_folder == "未分類":
+                    cursor.execute(
+                        """
+                        DELETE FROM proc.module_folder_memberships
+                        WHERE module_id = ANY(%(module_ids)s);
+                        """,
+                        {"module_ids": unique_module_ids},
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.module_folder_memberships (module_id, folder_path)
+                        SELECT module_id, '未分類'
+                        FROM proc.modules
+                        WHERE module_id = ANY(%(module_ids)s)
+                        ON CONFLICT (module_id, folder_path) DO NOTHING;
+                        """,
+                        {"module_ids": unique_module_ids},
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.module_folder_memberships (module_id, folder_path)
+                        SELECT module_id, %(new_folder)s
+                        FROM proc.modules
+                        WHERE module_id = ANY(%(module_ids)s)
+                        ON CONFLICT (module_id, folder_path) DO NOTHING;
+                        """,
+                        {"new_folder": new_folder, "module_ids": unique_module_ids},
+                    )
+                    cursor.execute(
+                        """
+                        DELETE FROM proc.module_folder_memberships
+                        WHERE module_id = ANY(%(module_ids)s)
+                          AND folder_path = '未分類';
+                        """,
+                        {"module_ids": unique_module_ids},
+                    )
                 cursor.execute(
                     """
                     UPDATE proc.modules
@@ -1497,7 +1662,7 @@ def move_modules_to_folder(
     except Exception as exception:
         raise DatabaseConnectionError("Module folder move failed.") from exception
 
-    return list_modules(settings, folder_path=new_folder)
+    return list_modules(settings, folder_paths=[new_folder])
 
 
 def get_module_detail(settings: AppSettings, module_id: int, version_no: int | None = None) -> ModuleDetailData | None:

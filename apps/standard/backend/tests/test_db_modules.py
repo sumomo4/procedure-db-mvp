@@ -6,6 +6,7 @@ from types import ModuleType
 
 import pytest
 
+from app.db import modules as module_db
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import ModuleCreateRequest, ModuleCreateRowImageInput, ModuleCreateRowInput, ModuleDetailData, ModuleRowData
@@ -13,6 +14,7 @@ from app.db.modules import (
     build_module_diff_data,
     create_module,
     get_module_detail,
+    get_module_diff_preview,
     list_module_versions,
     list_modules,
     update_module_version_status,
@@ -257,6 +259,64 @@ def test_build_module_diff_matches_nearby_similar_rows_as_changed() -> None:
     assert result.rows[0].similarity is not None
 
 
+def test_get_module_diff_preview_compares_unsaved_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsaved import rows should be converted and compared without persistence."""
+
+    reference = build_diff_module(3, [build_diff_row(101, 1, "TeraTermを起動する")])
+    monkeypatch.setattr(module_db, "get_module_detail", lambda settings, module_id, version_no: reference)
+    payload = ModuleCreateRequest.model_validate(
+        {
+            "module_name": "Imported module",
+            "device_headers": [
+                {
+                    "slot_no": 1,
+                    "target_device_text": "sbc-01",
+                }
+            ],
+            "rows": [
+                {
+                    "row_order": 1,
+                    "row_type": "step",
+                    "work_text": "TeraTermを起動し、接続する",
+                    "device_entries": [
+                        {
+                            "slot_no": 1,
+                            "p_text": ">",
+                            "command_text": "show status",
+                        }
+                    ],
+                    "images": [
+                        {
+                            "image_key": "row-1-image-1",
+                            "image_path": "MOD-NEW/row-1-image-1.png",
+                            "anchor_cell": "E7",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    result = get_module_diff_preview(
+        AppSettings(app_env="test"),
+        module_id=1,
+        version_no=3,
+        payload=payload,
+    )
+
+    assert result is not None
+    assert result.from_version == 3
+    assert result.to_version == 4
+    assert result.summary.added_count == 1
+    assert result.summary.removed_count == 1
+    added_row = next(row for row in result.rows if row.status == "added")
+    assert added_row.after is not None
+    assert added_row.after.device_entries[0].command_text == "show status"
+    assert added_row.after.images[0].anchor_cell == "E7"
+
+
 def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> None:
     """Module query rows should be converted to response data."""
 
@@ -269,8 +329,11 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
                     "MOD-001",
                     "初期点検手順",
                     "説明",
+                    ["ネットワーク", "SBC"],
                     10,
                     1,
+                    0,
+                    0,
                     "draft",
                     3,
                     "作業開始前の状態を確認する",
@@ -282,16 +345,35 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
         ),
     )
 
-    result = list_modules(AppSettings(), keyword="点検", status_filter="draft")
+    result = list_modules(
+        AppSettings(),
+        keyword="点検",
+        status_filter="draft",
+        folder_paths=["ネットワーク", "SBC"],
+    )
 
     assert any(
-        parameters == {"keyword": "%点検%", "status_filter": "draft"}
+        parameters
+        == {
+            "keyword": "%点検%",
+            "status_filter": "draft",
+            "folder_path_0": "ネットワーク",
+            "folder_path_1": "SBC",
+        }
         for _, parameters in fake_cursor.executions
     )
+    filtered_query = next(
+        query
+        for query, parameters in fake_cursor.executions
+        if parameters.get("folder_path_0") == "ネットワーク"
+    )
+    assert "folder_filter_0.folder_path = %(folder_path_0)s" in filtered_query
+    assert "folder_filter_1.folder_path = %(folder_path_1)s" in filtered_query
     assert result.items[0].module_id == 1
     assert result.items[0].module_key == "MOD-001"
     assert result.items[0].module_name == "初期点検手順"
-    assert result.items[0].folder_path == "未分類"
+    assert result.items[0].folder_path == "ネットワーク"
+    assert result.items[0].folder_paths == ["ネットワーク", "SBC"]
     assert result.items[0].status == "draft"
     assert result.items[0].status_label == "作成中"
     assert result.items[0].row_count == 3

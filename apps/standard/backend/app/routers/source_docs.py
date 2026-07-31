@@ -34,6 +34,11 @@ def read_source_docs(
     settings: Annotated[AppSettings, Depends(get_app_settings)],
     keyword: Annotated[str | None, Query(min_length=1)] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
+    created_by: Annotated[str | None, Query(min_length=1)] = None,
+    updated_from: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
+    updated_to: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
+    module_name: Annotated[str | None, Query(min_length=1)] = None,
+    sort: Annotated[str | None, Query(pattern=r"^(key_asc|key_desc|updated_desc|updated_asc|status_asc)$")] = None,
 ) -> ApiResponse[SourceDocListData]:
     """Return source document list from PostgreSQL."""
 
@@ -49,6 +54,11 @@ def read_source_docs(
             settings,
             keyword=keyword,
             status_filter=normalized_status,
+            created_by=created_by,
+            updated_from=updated_from,
+            updated_to=updated_to,
+            module_name=module_name,
+            sort=sort,
         )
     except DatabaseConnectionError as exception:
         raise HTTPException(

@@ -162,7 +162,7 @@ def test_read_modules_returns_success_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
-        folder_path: str | None = None,
+        folder_paths: list[str] | None = None,
         created_by: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
@@ -174,6 +174,7 @@ def test_read_modules_returns_success_response(
         assert settings.app_env == "test"
         assert keyword == "点検"
         assert status_filter == "draft"
+        assert folder_paths == ["ネットワーク", "SBC"]
         return ModuleListData(
             items=[
                 ModuleListItemData(
@@ -182,6 +183,7 @@ def test_read_modules_returns_success_response(
                     module_name="初期点検手順",
                     description="説明",
                     folder_path="未分類",
+                    folder_paths=["未分類"],
                     module_version_id=10,
                     version_no=1,
                     status="draft",
@@ -198,7 +200,10 @@ def test_read_modules_returns_success_response(
 
     monkeypatch.setattr(modules, "list_modules", fake_list_modules)
 
-    response = client.get("/api/v1/modules?keyword=点検&status=draft")
+    response = client.get(
+        "/api/v1/modules?keyword=点検&status=draft"
+        "&folder_path=ネットワーク&folder_path=SBC"
+    )
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {
@@ -211,6 +216,7 @@ def test_read_modules_returns_success_response(
                     "module_name": "初期点検手順",
                     "description": "説明",
                     "folder_path": "未分類",
+                    "folder_paths": ["未分類"],
                         "module_version_id": 10,
                         "version_no": 1,
                         "version_major": 0,
@@ -254,7 +260,7 @@ def test_read_modules_returns_error_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
-        folder_path: str | None = None,
+        folder_paths: list[str] | None = None,
         created_by: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
@@ -297,7 +303,7 @@ def test_delete_module_folder_returns_modules_to_uncategorized(
     assert response.json() == {
         "result": "success",
         "data": {"items": [], "folders": ["未分類", "test"]},
-        "message": "フォルダを削除し、格納されていたモジュールを未分類へ移動しました。",
+        "message": "タグを削除しました。タグがなくなったモジュールは未分類へ移動しました。",
     }
 
 
@@ -311,6 +317,37 @@ def test_delete_module_folder_rejects_uncategorized(client: TestClient) -> None:
         "result": "error",
         "data": None,
         "message": "The uncategorized folder cannot be deleted.",
+    }
+
+
+def test_add_modules_to_folder_keeps_existing_memberships(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Folder assignment should call the additive database helper."""
+
+    def fake_move_modules_to_folder(
+        settings: AppSettings,
+        module_ids: list[int],
+        folder_path: str,
+    ) -> ModuleListData:
+        assert settings.app_env == "test"
+        assert module_ids == [1, 2]
+        assert folder_path == "ネットワーク/SBC"
+        return ModuleListData(items=[], folders=["既存", "ネットワーク/SBC"])
+
+    monkeypatch.setattr(modules, "move_modules_to_folder", fake_move_modules_to_folder)
+
+    response = client.patch(
+        "/api/v1/modules/folders/modules",
+        json={"module_ids": [1, 2], "folder_path": "ネットワーク/SBC"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {
+        "result": "success",
+        "data": {"items": [], "folders": ["既存", "ネットワーク/SBC"]},
+        "message": "選択したモジュールへタグを追加しました。",
     }
 
 

@@ -122,6 +122,11 @@ def _format_updated_at(value: Any) -> str:
 def _build_source_doc_list_query(
     keyword: str | None,
     status_filter: str | None,
+    created_by: str | None,
+    updated_from: str | None,
+    updated_to: str | None,
+    module_name: str | None,
+    sort: str | None,
 ) -> tuple[str, dict[str, str]]:
     """Build the source document list query and parameters."""
 
@@ -157,9 +162,50 @@ def _build_source_doc_list_query(
         conditions.append("bv.status = %(status_filter)s")
         parameters["status_filter"] = status_filter
 
+    if created_by:
+        conditions.append("COALESCE(bv.created_by, '') ILIKE %(created_by)s")
+        parameters["created_by"] = f"%{created_by}%"
+
+    if updated_from:
+        conditions.append("bv.updated_at::date >= %(updated_from)s::date")
+        parameters["updated_from"] = updated_from
+
+    if updated_to:
+        conditions.append("bv.updated_at::date <= %(updated_to)s::date")
+        parameters["updated_to"] = updated_to
+
+    if module_name:
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM proc.blueprint_items bim
+                JOIN proc.module_versions mvm
+                    ON mvm.module_version_id = bim.module_version_id
+                JOIN proc.modules mm
+                    ON mm.module_id = mvm.module_id
+                WHERE bim.blueprint_version_id = bv.blueprint_version_id
+                  AND (
+                      mm.module_key ILIKE %(module_name)s
+                      OR mm.name ILIKE %(module_name)s
+                  )
+            )
+            """
+        )
+        parameters["module_name"] = f"%{module_name}%"
+
     where_clause = ""
     if conditions:
         where_clause = "WHERE " + " AND ".join(conditions)
+
+    order_by_map = {
+        "key_asc": "b.blueprint_key ASC, bv.version_no ASC",
+        "key_desc": "b.blueprint_key DESC, bv.version_no DESC",
+        "updated_desc": "bv.updated_at DESC, b.blueprint_key ASC, bv.version_no DESC",
+        "updated_asc": "bv.updated_at ASC, b.blueprint_key ASC, bv.version_no ASC",
+        "status_asc": "bv.status ASC, b.blueprint_key ASC, bv.version_no ASC",
+    }
+    order_by = order_by_map.get(sort or "key_asc", order_by_map["key_asc"])
 
     query = f"""
         SELECT
@@ -203,7 +249,7 @@ def _build_source_doc_list_query(
             bv.status,
             bv.created_by,
             bv.updated_at
-        ORDER BY b.blueprint_key, bv.version_no;
+        ORDER BY {order_by};
     """
     return query, parameters
 
@@ -546,6 +592,11 @@ def list_source_docs(
     settings: AppSettings,
     keyword: str | None = None,
     status_filter: str | None = None,
+    created_by: str | None = None,
+    updated_from: str | None = None,
+    updated_to: str | None = None,
+    module_name: str | None = None,
+    sort: str | None = None,
 ) -> SourceDocListData:
     """Read source document list from PostgreSQL."""
 
@@ -554,7 +605,15 @@ def list_source_docs(
     except ModuleNotFoundError as exception:
         raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
 
-    query, parameters = _build_source_doc_list_query(keyword, status_filter)
+    query, parameters = _build_source_doc_list_query(
+        keyword,
+        status_filter,
+        created_by,
+        updated_from,
+        updated_to,
+        module_name,
+        sort,
+    )
 
     try:
         with psycopg.connect(

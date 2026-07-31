@@ -1,11 +1,14 @@
 """Module resource routes for Sprint 2 implementation."""
 
+from io import BytesIO
 import mimetypes
 from pathlib import Path
+import re
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.core.config import AppSettings
 from app.core.excel_import import (
@@ -13,6 +16,7 @@ from app.core.excel_import import (
     build_module_create_request_from_workbook_bytes,
 )
 from app.core.exceptions import DatabaseConnectionError
+from app.core.module_diff_workbook import build_module_diff_workbook
 from app.core.responses import (
     ApiResponse,
     ApprovalStatusDetailData,
@@ -79,7 +83,7 @@ def read_modules(
     settings: Annotated[AppSettings, Depends(get_app_settings)],
     keyword: Annotated[str | None, Query(min_length=1)] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
-    folder_path: Annotated[str | None, Query(min_length=1)] = None,
+    folder_paths: Annotated[list[str] | None, Query(alias="folder_path", min_length=1)] = None,
     created_by: Annotated[str | None, Query(min_length=1)] = None,
     updated_from: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
     updated_to: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
@@ -112,7 +116,7 @@ def read_modules(
             settings,
             keyword=keyword,
             status_filter=normalized_status,
-            folder_path=folder_path,
+            folder_paths=folder_paths,
             created_by=created_by,
             updated_from=updated_from,
             updated_to=updated_to,
@@ -151,7 +155,7 @@ def rename_module_folder_path(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "フォルダ名を変更しました。")
+    return success_response(data, "タグ名を変更しました。")
 
 
 @router.delete("/folders", response_model=ApiResponse[ModuleListData])
@@ -159,7 +163,7 @@ def delete_module_folder_path(
     request: ModuleFolderDeleteRequest,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ModuleListData]:
-    """Delete a virtual folder subtree and return its modules to uncategorized."""
+    """Delete folder memberships and uncategorize modules with no other folder."""
 
     target_folder = request.folder_path.strip()
     if not target_folder:
@@ -181,7 +185,7 @@ def delete_module_folder_path(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "フォルダを削除し、格納されていたモジュールを未分類へ移動しました。")
+    return success_response(data, "タグを削除しました。タグがなくなったモジュールは未分類へ移動しました。")
 
 
 @router.patch("/folders/modules", response_model=ApiResponse[ModuleListData])
@@ -189,7 +193,7 @@ def move_selected_modules_to_folder(
     request: ModuleFolderMoveRequest,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ModuleListData]:
-    """Move selected modules to a virtual folder path."""
+    """Add selected modules to a virtual folder path."""
 
     target_folder = request.folder_path.strip()
     if not request.module_ids or not target_folder:
@@ -206,7 +210,7 @@ def move_selected_modules_to_folder(
             detail=str(exception),
         ) from exception
 
-    return success_response(data, "選択したモジュールをフォルダへ移動しました。")
+    return success_response(data, "選択したモジュールへタグを追加しました。")
 
 
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
@@ -286,6 +290,61 @@ def read_module_diff_preview(
         )
 
     return success_response(data, "取込内容との差分を取得しました。")
+
+
+@router.post("/{module_id}/diff-preview/download", response_class=StreamingResponse)
+def download_module_diff_preview(
+    module_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    version_no: Annotated[int, Query(ge=1)],
+    payload: bytes = Body(),
+    filename: Annotated[str, Query(min_length=1)] = "",
+    created_by: Annotated[str | None, Query()] = None,
+    sheet_name: Annotated[str | None, Query()] = None,
+) -> StreamingResponse:
+    """Download a two-sheet diff based on the imported workbook layout."""
+
+    try:
+        imported = build_module_create_request_from_workbook_bytes(
+            workbook_bytes=payload,
+            filename=filename,
+            created_by=created_by,
+            sheet_name=sheet_name,
+            image_storage_dir=settings.module_image_storage_dir,
+        )
+        data = get_module_diff_preview(settings, module_id, version_no, imported)
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="比較対象のモジュール版が見つかりませんでした。",
+        )
+
+    workbook_bytes = build_module_diff_workbook(data, payload, imported)
+    safe_module_key = re.sub(r"[^A-Za-z0-9._-]+", "-", data.module_key).strip("-") or "module"
+    filename = f"module-diff-{safe_module_key}-v{data.from_version}-import.xlsx"
+    content_disposition = (
+        f'attachment; filename="{filename}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return StreamingResponse(
+        BytesIO(workbook_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": content_disposition,
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
 
 
 @router.get("/{module_id}/versions", response_model=ApiResponse[ModuleVersionListData])

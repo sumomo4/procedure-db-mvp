@@ -40,11 +40,55 @@ CREATE TABLE IF NOT EXISTS proc.module_versions (
 CREATE INDEX IF NOT EXISTS idx_module_versions_status
     ON proc.module_versions (status);
 
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE TABLE IF NOT EXISTS proc.module_similarity_signatures (
+    module_version_id bigint PRIMARY KEY
+        REFERENCES proc.module_versions (module_version_id)
+        ON DELETE CASCADE,
+    normalized_name text NOT NULL,
+    normalized_work_text text NOT NULL,
+    normalized_expected_text text NOT NULL,
+    normalized_command_text text NOT NULL,
+    normalized_structure_text text NOT NULL,
+    normalized_device_header_text text NOT NULL,
+    normalized_image_text text NOT NULL,
+    combined_text text NOT NULL,
+    exact_sha256 varchar(64) NOT NULL,
+    row_count integer NOT NULL,
+    image_count integer NOT NULL,
+    generated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_module_similarity_signatures_exact_sha256
+    ON proc.module_similarity_signatures (exact_sha256);
+
+CREATE INDEX IF NOT EXISTS idx_module_similarity_signatures_combined_text_trgm
+    ON proc.module_similarity_signatures
+    USING gin (combined_text gin_trgm_ops);
+
 ALTER TABLE proc.modules
     ADD COLUMN IF NOT EXISTS folder_path text NOT NULL DEFAULT '未分類';
 
 CREATE INDEX IF NOT EXISTS idx_modules_folder_path
     ON proc.modules (folder_path);
+
+CREATE TABLE IF NOT EXISTS proc.module_folder_memberships (
+    module_id bigint NOT NULL REFERENCES proc.modules (module_id) ON DELETE CASCADE,
+    folder_path text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (module_id, folder_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_module_folder_memberships_folder_path
+    ON proc.module_folder_memberships (folder_path);
+
+INSERT INTO proc.module_folder_memberships (module_id, folder_path)
+SELECT
+    module_id,
+    COALESCE(NULLIF(folder_path, ''), '未分類')
+FROM proc.modules
+ON CONFLICT (module_id, folder_path) DO NOTHING;
 
 ALTER TABLE proc.module_versions
     ADD COLUMN IF NOT EXISTS version_major integer NOT NULL DEFAULT 0;

@@ -120,6 +120,7 @@ type ModuleListItemData = {
   module_name: string;
   description: string | null;
   folder_path: string;
+  folder_paths?: string[];
   module_version_id: number;
   version_no: number;
   version_major: number;
@@ -312,6 +313,53 @@ type ModuleDiffData = {
 type ModuleDiffState = {
   status: "idle" | "loading" | "available" | "unavailable";
   item: ModuleDiffData | null;
+  message: string;
+};
+
+type ModuleSimilarityScoreBreakdownData = {
+  work_text: number | null;
+  expected_result: number | null;
+  command: number | null;
+  name: number | null;
+  structure: number | null;
+  device_header: number | null;
+};
+
+type ModuleSimilarityCandidateData = {
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  module_version_id: number;
+  version_no: number;
+  version_label: string;
+  status: "published";
+  similarity: number;
+  exact_match: boolean;
+  image_metadata_match: boolean;
+  score_breakdown: ModuleSimilarityScoreBreakdownData;
+  matched_fields: string[];
+};
+
+type ModuleSimilarityCheckData = {
+  threshold: number;
+  checked_count: number;
+  candidate_count: number;
+  exact_match: boolean;
+  input_sha256: string;
+  candidate_set_sha256: string;
+  confirmation_token: string | null;
+  candidates: ModuleSimilarityCandidateData[];
+};
+
+type ModuleSimilarityCheckState = {
+  status: "idle" | "submitting" | "success" | "error";
+  item: ModuleSimilarityCheckData | null;
+  message: string;
+};
+
+type ModuleSimilarityDiffDownloadState = {
+  status: "idle" | "loading" | "success" | "error";
+  candidateId: number | null;
   message: string;
 };
 
@@ -589,6 +637,22 @@ type CaseDocGenerateState = {
   message: string;
 };
 
+type CaseDocSavePickerOptions = {
+  suggestedName?: string;
+  types?: Array<{
+    description?: string;
+    accept: Record<string, string[]>;
+  }>;
+  excludeAcceptAllOption?: boolean;
+};
+
+type WindowWithSaveFilePicker = Window & {
+  showSaveFilePicker?: (options?: CaseDocSavePickerOptions) => Promise<FileSystemFileHandle>;
+};
+
+type CaseDocSaveSelection =
+  | { mode: "file-picker"; handle: FileSystemFileHandle }
+  | { mode: "browser-download" };
 
 type CaseDocPlaceholderMappingItemData = {
   name: string;
@@ -739,6 +803,21 @@ function normalizeModuleFolderPath(folderPath: string): string {
   return normalized || "未分類";
 }
 
+function getModuleFolderPaths(item: ModuleListItemData): string[] {
+  const folderPaths = item.folder_paths?.length ? item.folder_paths : [item.folder_path || "未分類"];
+  return Array.from(new Set(folderPaths.map(normalizeModuleFolderPath)));
+}
+
+function ModuleFolderMembershipList({ item }: { item: ModuleListItemData }) {
+  return (
+    <div className="module-folder-membership-list">
+      {getModuleFolderPaths(item).map((folderPath) => (
+        <span key={folderPath}>{folderPath}</span>
+      ))}
+    </div>
+  );
+}
+
 function buildModuleFolderTreeItems(folders: string[]): ModuleFolderTreeItem[] {
   const directFolders = new Set(folders.map((folder) => normalizeModuleFolderPath(folder)));
   const itemMap = new Map<string, ModuleFolderTreeItem>();
@@ -759,7 +838,6 @@ function buildModuleFolderTreeItems(folders: string[]): ModuleFolderTreeItem[] {
 
   return Array.from(itemMap.values()).sort((left, right) => left.path.localeCompare(right.path, "ja"));
 }
-
 
 function formatVersionLabel(item: { version_no: number; version_label?: string | null }): string {
   return item.version_label ?? `ver.${item.version_no}.0`;
@@ -813,6 +891,62 @@ function buildApiUrl(path: string): string {
   }
 
   return path;
+}
+
+async function selectCaseDocSaveDestination(suggestedName: string): Promise<CaseDocSaveSelection | null> {
+  const showSaveFilePicker = (window as WindowWithSaveFilePicker).showSaveFilePicker;
+  if (typeof showSaveFilePicker !== "function") {
+    return { mode: "browser-download" };
+  }
+
+  try {
+    const handle = await showSaveFilePicker({
+      suggestedName,
+      excludeAcceptAllOption: true,
+      types: [
+        {
+          description: "マクロ有効Excelブック",
+          accept: {
+            "application/vnd.ms-excel.sheet.macroEnabled.12": [".xlsm"],
+          },
+        },
+      ],
+    });
+    return { mode: "file-picker", handle };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function saveCaseDocBlob(
+  blob: Blob,
+  filename: string,
+  selection: CaseDocSaveSelection,
+): Promise<string> {
+  if (selection.mode === "file-picker") {
+    const writable = await selection.handle.createWritable();
+    try {
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      await writable.abort().catch(() => undefined);
+      throw error;
+    }
+    return selection.handle.name;
+  }
+
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+  return filename;
 }
 
 function buildModuleImageUrl(moduleRowImageId: number): string {
@@ -917,7 +1051,7 @@ function Shell() {
           <NavItem to="/modules/search" label="モジュール検索" icon="⌕" />
           <NavItem to="/modules/approval" label="モジュール承認状態確認" icon="✓" />
           <NavItem to="/documents/create" label="原本作成 / 更新" icon="✎" />
-          <NavItem to="/documents/search" label="原本参照" icon="▤" />
+          <NavItem to="/documents/search" label={"原本検索"} icon={"▤"} />
           <NavItem to="/approval" label="原本承認状態確認" icon="✓" />
           <NavItem to="/case-docs" label={caseDocText.title} icon="CS" end />
           {currentUser.role === "admin" ? (
@@ -1314,21 +1448,31 @@ function ModuleSearchPage() {
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
   const initialCreatedBy = searchParams.get("created_by") ?? "";
-  const initialFolderPath = searchParams.get("folder_path") ?? "";
+  const initialFolderPaths = Array.from(
+    new Set(
+      searchParams
+        .getAll("folder_path")
+        .map(normalizeModuleFolderPath)
+        .filter((folderPath) => folderPath.length > 0),
+    ),
+  );
+  const initialFolderPathKey = initialFolderPaths.join("\u001f");
+  const initialFolderPath = initialFolderPaths[0] ?? "";
   const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
   const initialUpdatedTo = searchParams.get("updated_to") ?? "";
   const initialSort = searchParams.get("sort") ?? "key_asc";
   const [keywordInput, setKeywordInput] = useState(initialKeyword);
   const [statusInput, setStatusInput] = useState(initialStatus);
   const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
-  const [folderPathInput, setFolderPathInput] = useState(initialFolderPath);
+  const [folderPathInputs, setFolderPathInputs] = useState<string[]>(initialFolderPaths);
   const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
   const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
   const [sortInput, setSortInput] = useState(initialSort);
   const keyword = initialKeyword;
   const statusFilter = initialStatus;
   const createdByFilter = initialCreatedBy;
-  const folderPathFilter = initialFolderPath;
+  const folderPathFilters = initialFolderPaths;
+  const folderPathFilter = folderPathFilters[0] ?? "";
   const updatedFromFilter = initialUpdatedFrom;
   const updatedToFilter = initialUpdatedTo;
   const sortFilter = initialSort;
@@ -1341,11 +1485,11 @@ function ModuleSearchPage() {
   const [folderRenameInput, setFolderRenameInput] = useState(initialFolderPath || "未分類");
   const [folderRenameState, setFolderRenameState] = useState<ModuleFolderRenameState>({
     status: "idle",
-    message: "選択中のフォルダ名を変更できます。",
+    message: "操作対象のタグ名を変更できます。",
   });
   const [folderDeleteState, setFolderDeleteState] = useState<ModuleFolderRenameState>({
     status: "idle",
-    message: "選択中のフォルダを削除できます。",
+    message: "操作対象のタグを削除できます。",
   });
   const [isFolderDeleteConfirmOpen, setIsFolderDeleteConfirmOpen] = useState(false);
   const [selectedModuleIds, setSelectedModuleIds] = useState<number[]>([]);
@@ -1353,30 +1497,30 @@ function ModuleSearchPage() {
   const [folderCreateInput, setFolderCreateInput] = useState("");
   const [folderCreateState, setFolderCreateState] = useState<ModuleFolderMoveState>({
     status: "idle",
-    message: "新規フォルダには最低1つのモジュールを格納します。",
+    message: "新規タグには最低1つのモジュールを関連付けます。",
   });
   const [folderMoveTarget, setFolderMoveTarget] = useState(initialFolderPath || "未分類");
   const [folderMoveState, setFolderMoveState] = useState<ModuleFolderMoveState>({
     status: "idle",
-    message: "選択したモジュールを既存フォルダへ移動できます。",
+    message: "既存タグを残したまま追加します。未分類を選ぶと他のタグを解除します。",
   });
 
   useEffect(() => {
     setKeywordInput(initialKeyword);
     setStatusInput(initialStatus);
     setCreatedByInput(initialCreatedBy);
-    setFolderPathInput(initialFolderPath);
+    setFolderPathInputs(initialFolderPaths);
     setFolderRenameInput(initialFolderPath || "未分類");
     setFolderMoveTarget(initialFolderPath || "未分類");
-    setFolderRenameState({ status: "idle", message: "選択中のフォルダ名を変更できます。" });
-    setFolderDeleteState({ status: "idle", message: "選択中のフォルダを削除できます。" });
+    setFolderRenameState({ status: "idle", message: "操作対象のタグ名を変更できます。" });
+    setFolderDeleteState({ status: "idle", message: "操作対象のタグを削除できます。" });
     setIsFolderDeleteConfirmOpen(false);
-    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
-    setFolderMoveState({ status: "idle", message: "選択したモジュールを既存フォルダへ移動できます。" });
+    setFolderCreateState({ status: "idle", message: "新規タグには最低1つのモジュールを関連付けます。" });
+    setFolderMoveState({ status: "idle", message: "選択したモジュールに既存タグを追加できます。" });
     setUpdatedFromInput(initialUpdatedFrom);
     setUpdatedToInput(initialUpdatedTo);
     setSortInput(initialSort);
-  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPath, initialUpdatedFrom, initialUpdatedTo, initialSort]);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPathKey, initialUpdatedFrom, initialUpdatedTo, initialSort]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1395,7 +1539,7 @@ function ModuleSearchPage() {
         if (keyword) endpoint.searchParams.set("keyword", keyword);
         if (statusFilter !== "all") endpoint.searchParams.set("status", statusFilter);
         if (createdByFilter) endpoint.searchParams.set("created_by", createdByFilter);
-        if (folderPathFilter) endpoint.searchParams.set("folder_path", folderPathFilter);
+        folderPathFilters.forEach((folderPath) => endpoint.searchParams.append("folder_path", folderPath));
         if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
         if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
         if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
@@ -1428,7 +1572,7 @@ function ModuleSearchPage() {
     void fetchModules();
 
     return () => abortController.abort();
-  }, [keyword, statusFilter, createdByFilter, folderPathFilter, updatedFromFilter, updatedToFilter, sortFilter]);
+  }, [keyword, statusFilter, createdByFilter, initialFolderPathKey, updatedFromFilter, updatedToFilter, sortFilter]);
 
   useEffect(() => {
     setSelectedModuleIds((current) =>
@@ -1440,7 +1584,7 @@ function ModuleSearchPage() {
     keyword: string;
     status: (typeof moduleStatusOptions)[number]["value"];
     createdBy: string;
-    folderPath: string;
+    folderPaths: string[];
     updatedFrom: string;
     updatedTo: string;
     sort: string;
@@ -1448,12 +1592,18 @@ function ModuleSearchPage() {
     const params = new URLSearchParams();
     const normalizedKeyword = filters.keyword.trim();
     const normalizedCreatedBy = filters.createdBy.trim();
-    const normalizedFolderPath = filters.folderPath.trim();
+    const normalizedFolderPaths = Array.from(
+      new Set(
+        filters.folderPaths
+          .map(normalizeModuleFolderPath)
+          .filter((folderPath) => folderPath.length > 0),
+      ),
+    );
 
     if (normalizedKeyword) params.set("keyword", normalizedKeyword);
     if (filters.status !== "all") params.set("status", filters.status);
     if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
-    if (normalizedFolderPath) params.set("folder_path", normalizedFolderPath);
+    normalizedFolderPaths.forEach((folderPath) => params.append("folder_path", folderPath));
     if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
     if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
     if (filters.sort !== "key_asc") params.set("sort", filters.sort);
@@ -1467,7 +1617,7 @@ function ModuleSearchPage() {
       keyword: keywordInput,
       status: statusInput,
       createdBy: createdByInput,
-      folderPath: folderPathInput,
+      folderPaths: folderPathInputs,
       updatedFrom: updatedFromInput,
       updatedTo: updatedToInput,
       sort: sortInput,
@@ -1480,24 +1630,50 @@ function ModuleSearchPage() {
       keyword,
       status: nextStatus,
       createdBy: createdByFilter,
-      folderPath: folderPathFilter,
+      folderPaths: folderPathFilters,
       updatedFrom: updatedFromFilter,
       updatedTo: updatedToFilter,
       sort: sortFilter,
     });
   }
 
-  function handleFolderFilterChange(nextFolderPath: string): void {
-    setFolderPathInput(nextFolderPath);
+  function handleTagFilterToggle(nextFolderPath: string): void {
+    const normalizedFolderPath = normalizeModuleFolderPath(nextFolderPath);
+    const nextFolderPaths = folderPathFilters.includes(normalizedFolderPath)
+      ? folderPathFilters.filter((folderPath) => folderPath !== normalizedFolderPath)
+      : [normalizedFolderPath, ...folderPathFilters];
+    setFolderPathInputs(nextFolderPaths);
     navigateWithFilters({
       keyword,
       status: statusFilter,
       createdBy: createdByFilter,
-      folderPath: nextFolderPath,
+      folderPaths: nextFolderPaths,
       updatedFrom: updatedFromFilter,
       updatedTo: updatedToFilter,
       sort: sortFilter,
     });
+  }
+
+  function handleTagFilterClear(): void {
+    setFolderPathInputs([]);
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      createdBy: createdByFilter,
+      folderPaths: [],
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      sort: sortFilter,
+    });
+  }
+
+  function toggleTagInput(nextFolderPath: string): void {
+    const normalizedFolderPath = normalizeModuleFolderPath(nextFolderPath);
+    setFolderPathInputs((current) =>
+      current.includes(normalizedFolderPath)
+        ? current.filter((folderPath) => folderPath !== normalizedFolderPath)
+        : [...current, normalizedFolderPath],
+    );
   }
 
   async function handleFolderRenameSubmit(): Promise<void> {
@@ -1505,16 +1681,16 @@ function ModuleSearchPage() {
     const nextFolder = normalizeModuleFolderPath(folderRenameInput);
 
     if (folderPathFilter === "") {
-      setFolderRenameState({ status: "error", message: "先に変更対象のフォルダを選択してください。" });
+      setFolderRenameState({ status: "error", message: "先に変更対象のタグを選択してください。" });
       return;
     }
 
     if (currentFolder === nextFolder) {
-      setFolderRenameState({ status: "error", message: "変更前と変更後のフォルダ名が同じです。" });
+      setFolderRenameState({ status: "error", message: "変更前と変更後のタグ名が同じです。" });
       return;
     }
 
-    setFolderRenameState({ status: "submitting", message: "フォルダ名を変更しています。" });
+    setFolderRenameState({ status: "submitting", message: "タグ名を変更しています。" });
 
     try {
       const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
@@ -1527,30 +1703,34 @@ function ModuleSearchPage() {
       if (!response.ok || responseBody.result !== "success") {
         setFolderRenameState({
           status: "error",
-          message: responseBody.message || `フォルダ名の変更に失敗しました。HTTP ${response.status}`,
+          message: responseBody.message || `タグ名の変更に失敗しました。HTTP ${response.status}`,
         });
         return;
       }
 
-      setFolderRenameState({ status: "success", message: responseBody.message || "フォルダ名を変更しました。" });
-      setFolderPathInput(nextFolder);
+      setFolderRenameState({ status: "success", message: responseBody.message || "タグ名を変更しました。" });
+      const nextFolderPaths = [
+        nextFolder,
+        ...folderPathFilters.filter((folderPath) => folderPath !== currentFolder && folderPath !== nextFolder),
+      ];
+      setFolderPathInputs(nextFolderPaths);
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: nextFolder,
+        folderPaths: nextFolderPaths,
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderRenameState({ status: "error", message: "フォルダ名の変更中にAPI接続で失敗しました。" });
+      setFolderRenameState({ status: "error", message: "タグ名の変更中にAPI接続で失敗しました。" });
     }
   }
 
   async function handleFolderDeleteConfirm(): Promise<void> {
     const targetFolder = normalizeModuleFolderPath(folderPathFilter);
-    setFolderDeleteState({ status: "submitting", message: "フォルダを削除しています。" });
+    setFolderDeleteState({ status: "submitting", message: "タグを削除しています。" });
 
     try {
       const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
@@ -1563,26 +1743,27 @@ function ModuleSearchPage() {
       if (!response.ok || responseBody.result !== "success") {
         setFolderDeleteState({
           status: "error",
-          message: responseBody.message || `フォルダの削除に失敗しました。HTTP ${response.status}`,
+          message: responseBody.message || `タグの削除に失敗しました。HTTP ${response.status}`,
         });
         setIsFolderDeleteConfirmOpen(false);
         return;
       }
 
       setIsFolderDeleteConfirmOpen(false);
-      setFolderDeleteState({ status: "success", message: responseBody.message || "フォルダを削除しました。" });
-      setFolderPathInput("");
+      setFolderDeleteState({ status: "success", message: responseBody.message || "タグを削除しました。" });
+      const nextFolderPaths = folderPathFilters.filter((folderPath) => folderPath !== targetFolder);
+      setFolderPathInputs(nextFolderPaths);
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: "",
+        folderPaths: nextFolderPaths,
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderDeleteState({ status: "error", message: "フォルダ削除中にAPI接続で失敗しました。" });
+      setFolderDeleteState({ status: "error", message: "タグ削除中にAPI接続で失敗しました。" });
       setIsFolderDeleteConfirmOpen(false);
     }
   }
@@ -1617,75 +1798,75 @@ function ModuleSearchPage() {
     }
 
     if (folderOptions.some((folder) => normalizeModuleFolderPath(folder) === targetFolder)) {
-      setFolderCreateState({ status: "error", message: "同じ名前のフォルダが既にあります。既存フォルダへの移動を使ってください。" });
+      setFolderCreateState({ status: "error", message: "同じ名前のタグが既にあります。既存タグへの追加を使ってください。" });
       return;
     }
 
-    setFolderCreateState({ status: "submitting", message: "フォルダを作成し、選択モジュールを格納しています。" });
+    setFolderCreateState({ status: "submitting", message: "タグを作成し、選択モジュールへ関連付けています。" });
 
     try {
       const responseBody = await moveSelectedModulesToFolder(targetFolder);
 
       if (responseBody.result !== "success") {
-        setFolderCreateState({ status: "error", message: responseBody.message || "フォルダ追加に失敗しました。" });
+        setFolderCreateState({ status: "error", message: responseBody.message || "タグ追加に失敗しました。" });
         return;
       }
 
       setSelectedModuleIds([]);
       setFolderCreateInput("");
       setIsFolderCreateOpen(false);
-      setFolderCreateState({ status: "success", message: responseBody.message || "フォルダを追加しました。" });
+      setFolderCreateState({ status: "success", message: responseBody.message || "タグを追加しました。" });
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: targetFolder,
+        folderPaths: [targetFolder],
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderCreateState({ status: "error", message: "フォルダ追加中にAPI接続で失敗しました。" });
+      setFolderCreateState({ status: "error", message: "タグ追加中にAPI接続で失敗しました。" });
     }
   }
 
   function handleFolderCreateCancel(): void {
     setIsFolderCreateOpen(false);
     setFolderCreateInput("");
-    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
+    setFolderCreateState({ status: "idle", message: "新規タグには最低1つのモジュールを関連付けます。" });
   }
 
   async function handleFolderMoveSubmit(): Promise<void> {
     const targetFolder = normalizeModuleFolderPath(folderMoveTarget);
 
     if (selectedModuleIds.length === 0) {
-      setFolderMoveState({ status: "error", message: "移動するモジュールを選択してください。" });
+      setFolderMoveState({ status: "error", message: "タグを追加するモジュールを選択してください。" });
       return;
     }
 
-    setFolderMoveState({ status: "submitting", message: "選択したモジュールを移動しています。" });
+    setFolderMoveState({ status: "submitting", message: "選択したモジュールへタグを追加しています。" });
 
     try {
       const responseBody = await moveSelectedModulesToFolder(targetFolder);
 
       if (responseBody.result !== "success") {
-        setFolderMoveState({ status: "error", message: responseBody.message || "モジュール移動に失敗しました。" });
+        setFolderMoveState({ status: "error", message: responseBody.message || "タグの追加に失敗しました。" });
         return;
       }
 
       setSelectedModuleIds([]);
-      setFolderMoveState({ status: "success", message: responseBody.message || "選択したモジュールを移動しました。" });
+      setFolderMoveState({ status: "success", message: responseBody.message || "選択したモジュールへタグを追加しました。" });
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: targetFolder,
+        folderPaths: [targetFolder],
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderMoveState({ status: "error", message: "モジュール移動中にAPI接続で失敗しました。" });
+      setFolderMoveState({ status: "error", message: "タグ追加中にAPI接続で失敗しました。" });
     }
   }
 
@@ -1693,7 +1874,8 @@ function ModuleSearchPage() {
   const moduleFolderOptions = moduleListState.folders ?? [];
   const folderOptions = moduleFolderOptions.length > 0 ? moduleFolderOptions : ["未分類"];
   const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
-  const selectedFolderLabel = folderPathFilter || "すべて";
+  const selectedTagFilterLabel = folderPathFilters.length > 0 ? folderPathFilters.join("、") : "すべて";
+  const selectedFolderLabel = folderPathFilter || "未選択";
   const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
   const canDeleteFolder = folderPathFilter !== "" && folderPathFilter !== "未分類" && folderDeleteState.status !== "submitting";
   const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
@@ -1718,20 +1900,35 @@ function ModuleSearchPage() {
           {"作成者"}
           <input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
         </label>
-        <label>
-          {"フォルダ"}
-          <input
-            list="module-folder-search-options"
-            placeholder="未分類 / ネットワーク"
-            value={folderPathInput}
-            onChange={(event) => setFolderPathInput(event.target.value)}
-          />
-          <datalist id="module-folder-search-options">
-            {folderOptions.map((folder) => (
-              <option key={folder} value={folder} />
-            ))}
-          </datalist>
-        </label>
+        <fieldset className="module-tag-filter-field">
+          <legend>タグ</legend>
+          <details className="module-tag-filter-select">
+            <summary>
+              <span>{folderPathInputs.length > 0 ? `${folderPathInputs.length}件選択` : "すべて"}</span>
+              <small>{folderPathInputs.length > 0 ? folderPathInputs.join("、") : "タグを選択"}</small>
+            </summary>
+            <div className="module-tag-filter-menu">
+              <div className="module-tag-filter-options">
+                {folderOptions.map((folder) => (
+                  <label key={folder}>
+                    <input
+                      type="checkbox"
+                      checked={folderPathInputs.includes(folder)}
+                      onChange={() => toggleTagInput(folder)}
+                    />
+                    <span>{folder}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="module-tag-filter-footer">
+                <small>複数選択時は、すべてのタグを持つモジュールを表示します。</small>
+                <button className="text-button" type="button" onClick={() => setFolderPathInputs([])}>
+                  選択解除
+                </button>
+              </div>
+            </div>
+          </details>
+        </fieldset>
         <label>
           {"更新日"}
           <input
@@ -1761,61 +1958,41 @@ function ModuleSearchPage() {
         <div><span>{"検索キーワード"}</span><strong>{keyword || "指定なし"}</strong></div>
         <div><span>{"承認状態"}</span><strong>{statusFilterLabel}</strong></div>
         <div><span>{"作成者"}</span><strong>{createdByFilter || "指定なし"}</strong></div>
-        <div><span>{"フォルダ"}</span><strong>{folderPathFilter || "すべて"}</strong></div>
+        <div><span>タグ</span><strong>{selectedTagFilterLabel}</strong></div>
         <p>{moduleListState.message}</p>
       </section>
 
       <div className="module-explorer-layout">
-        <aside className="module-folder-pane" aria-label="モジュールフォルダ">
+        <aside className="module-folder-pane" aria-label="モジュールタグ">
           <div className="module-folder-pane-header">
-            <span>フォルダ</span>
-            <strong>{selectedFolderLabel}</strong>
+            <span>タグ</span>
+            <strong>{selectedTagFilterLabel}</strong>
           </div>
           <button
             type="button"
-            className={folderPathFilter === "" ? "module-folder-button active" : "module-folder-button"}
-            onClick={() => handleFolderFilterChange("")}
+            className={folderPathFilters.length === 0 ? "module-folder-button active" : "module-folder-button"}
+            onClick={handleTagFilterClear}
           >
             <span aria-hidden="true">▦</span>
             <span>すべて</span>
           </button>
-          <div className="module-folder-tree" role="tree" aria-label="フォルダ一覧">
+          <div className="module-folder-tree" role="tree" aria-label="タグ一覧">
             {folderTreeItems.map((folder) => (
               <button
                 key={folder.path}
                 type="button"
                 role="treeitem"
                 aria-level={folder.depth + 1}
-                className={folderPathFilter === folder.path ? "module-folder-button active" : "module-folder-button"}
+                aria-pressed={folderPathFilters.includes(folder.path)}
+                className={folderPathFilters.includes(folder.path) ? "module-folder-button active" : "module-folder-button"}
                 style={{ "--folder-depth": folder.depth } as CSSProperties}
-                onClick={() => handleFolderFilterChange(folder.path)}
+                onClick={() => handleTagFilterToggle(folder.path)}
               >
-                <span aria-hidden="true">{folder.hasDirectModule ? "▤" : "▸"}</span>
+                <span aria-hidden="true">{folderPathFilters.includes(folder.path) ? "✓" : folder.hasDirectModule ? "◇" : "▸"}</span>
                 <span>{folder.label}</span>
               </button>
             ))}
           </div>
-          <form
-            className="module-folder-rename-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleFolderRenameSubmit();
-            }}
-          >
-            <label>
-              フォルダ名変更
-              <input
-                value={folderRenameInput}
-                disabled={folderPathFilter === ""}
-                placeholder="例: ネットワーク/SBC"
-                onChange={(event) => setFolderRenameInput(event.target.value)}
-              />
-            </label>
-            <button type="submit" className="secondary" disabled={!canRenameFolder}>
-              変更
-            </button>
-            <p className={"module-folder-rename-message " + folderRenameState.status}>{folderRenameState.message}</p>
-          </form>
           <div className="module-folder-delete-panel">
             <button
               type="button"
@@ -1823,10 +2000,10 @@ function ModuleSearchPage() {
               disabled={!canDeleteFolder}
               onClick={() => setIsFolderDeleteConfirmOpen(true)}
             >
-              フォルダを削除
+              タグを削除
             </button>
-            <p className={"module-folder-rename-message " + folderDeleteState.status}>
-              {folderPathFilter === "未分類" ? "未分類フォルダは削除できません。" : folderDeleteState.message}
+            <p className={"module-folder-action-message " + folderDeleteState.status}>
+              {folderPathFilter === "未分類" ? "未分類タグは削除できません。" : folderDeleteState.message}
             </p>
           </div>
         </aside>
@@ -1838,7 +2015,7 @@ function ModuleSearchPage() {
             ))}
           </section>
 
-          <section className="module-folder-action-panel" aria-label="モジュールフォルダ操作">
+          <section className="module-folder-action-panel" aria-label="モジュールタグ操作">
             <div className="module-folder-action-summary">
               <span>選択中</span>
               <strong>{selectedModuleIds.length} 件</strong>
@@ -1846,7 +2023,7 @@ function ModuleSearchPage() {
 
             <div className="module-folder-action-card">
               <header>
-                <h2>フォルダ新規追加</h2>
+                <h2>タグ新規追加</h2>
                 {!isFolderCreateOpen ? (
                   <button className="secondary" type="button" onClick={() => setIsFolderCreateOpen(true)}>
                     + 追加
@@ -1861,7 +2038,7 @@ function ModuleSearchPage() {
                   }}
                 >
                   <label>
-                    新規フォルダ名
+                    新規タグ名
                     <input
                       value={folderCreateInput}
                       placeholder="例: ネットワーク/SBC"
@@ -1870,7 +2047,7 @@ function ModuleSearchPage() {
                   </label>
                   <div className="module-folder-action-buttons">
                     <button className="primary" type="submit" disabled={!canCreateFolder}>
-                      作成して格納
+                      作成して関連付け
                     </button>
                     <button className="secondary" type="button" onClick={handleFolderCreateCancel}>
                       キャンセル
@@ -1883,7 +2060,36 @@ function ModuleSearchPage() {
 
             <div className="module-folder-action-card">
               <header>
-                <h2>選択済みモジュールのフォルダ移動</h2>
+                <h2>タグ名変更</h2>
+                <span>操作対象: {selectedFolderLabel}</span>
+              </header>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleFolderRenameSubmit();
+                }}
+              >
+                <label>
+                  新しいタグ名
+                  <input
+                    value={folderRenameInput}
+                    disabled={folderPathFilter === ""}
+                    placeholder="例: ネットワーク/SBC"
+                    onChange={(event) => setFolderRenameInput(event.target.value)}
+                  />
+                </label>
+                <button type="submit" className="primary" disabled={!canRenameFolder}>
+                  名前を変更
+                </button>
+              </form>
+              <p className={"module-folder-action-message " + folderRenameState.status}>
+                {folderPathFilter === "" ? "左のタグ一覧から変更対象を選択してください。" : folderRenameState.message}
+              </p>
+            </div>
+
+            <div className="module-folder-action-card">
+              <header>
+                <h2>選択済みモジュールへタグ追加</h2>
               </header>
               <form
                 onSubmit={(event) => {
@@ -1892,17 +2098,17 @@ function ModuleSearchPage() {
                 }}
               >
                 <label>
-                  既存の移動先フォルダ
+                  追加するタグ
                   <select value={folderMoveTarget} onChange={(event) => setFolderMoveTarget(event.target.value)}>
                     {folderOptions.map((folder) => (
                       <option key={folder} value={folder}>
-                        {folder}
+                        {folder === "未分類" ? "未分類（他の所属を解除）" : folder}
                       </option>
                     ))}
                   </select>
                 </label>
                 <button className="secondary" type="submit" disabled={!canMoveSelectedModules}>
-                  選択モジュールを移動
+                  タグを追加
                 </button>
               </form>
               <p className={"module-folder-action-message " + folderMoveState.status}>{folderMoveState.message}</p>
@@ -1929,7 +2135,7 @@ function ModuleSearchPage() {
                 </label>,
                 "モジュールID",
                 "モジュール名",
-                "フォルダ",
+                "タグ",
                 "版",
                 "承認状態",
                 "行数",
@@ -1947,7 +2153,7 @@ function ModuleSearchPage() {
                 />,
                 item.module_key,
                 item.module_name,
-                item.folder_path || "未分類",
+                <ModuleFolderMembershipList item={item} />,
                 formatVersionLabel(item),
                 <ModuleStatusPill status={item.status} label={item.status_label} />,
                 item.row_count,
@@ -1970,8 +2176,8 @@ function ModuleSearchPage() {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <span className="modal-icon" aria-hidden="true">-</span>
-            <h2 id="folder-delete-dialog-title">フォルダを削除しますか？</h2>
-            <p>「{folderPathFilter}」と配下のフォルダを削除し、格納されているモジュールを「未分類」へ移動します。</p>
+            <h2 id="folder-delete-dialog-title">タグを削除しますか？</h2>
+            <p>「{folderPathFilter}」を削除します。他にタグがないモジュールだけ「未分類」へ移動します。</p>
             <div className="modal-actions">
               <button className="secondary" type="button" onClick={() => setIsFolderDeleteConfirmOpen(false)}>
                 キャンセル
@@ -2348,7 +2554,6 @@ function ModuleDetailPage() {
             onToVersionChange={setDiffToVersionNo}
             onFetchDiff={handleFetchModuleDiff}
           />
-          <ExcelModulePreview item={item} />
         </>
       ) : (
         <section className="empty-state">
@@ -2573,6 +2778,18 @@ function getModuleDiffChangedFieldLabel(fieldName: string): string {
   return labels[fieldName] ?? fieldName;
 }
 
+function getModuleSimilarityMatchedFieldLabel(fieldName: string): string {
+  const labels: Record<string, string> = {
+    work_text: "作業内容",
+    expected_result: "確認事項",
+    command: "コマンド",
+    name: "モジュール名",
+    structure: "行構造",
+    device_header: "対象装置",
+  };
+  return labels[fieldName] ?? fieldName;
+}
+
 function getModuleDiffRowNumber(row: ModuleDetailRowData | null): string {
   if (row === null) {
     return "-";
@@ -2691,6 +2908,206 @@ function ModuleDiffRowSnapshot({
   );
 }
 
+function ModuleSimilarityReview({
+  state,
+  registrationConfirmed,
+  diffState,
+  diffCandidate,
+  downloadState,
+  onShowDiff,
+  onDownloadDiff,
+  onContinue,
+  onCancel,
+}: {
+  state: ModuleSimilarityCheckState;
+  registrationConfirmed: boolean;
+  diffState: ModuleDiffState;
+  diffCandidate: ModuleSimilarityCandidateData | null;
+  downloadState: ModuleSimilarityDiffDownloadState;
+  onShowDiff: (candidate: ModuleSimilarityCandidateData) => void;
+  onDownloadDiff: (candidate: ModuleSimilarityCandidateData) => void;
+  onContinue: () => void;
+  onCancel: () => void;
+}) {
+  const item = state.item;
+  const hasCandidates = (item?.candidate_count ?? 0) > 0;
+  const changedRows = diffState.item?.rows.filter((row) => row.status !== "unchanged") ?? [];
+
+  return (
+    <section className="register-step-card module-similarity-review">
+      <div className="register-step-header">
+        <div>
+          <h2>類似モジュール確認</h2>
+          <p className="register-section-copy">
+            承認済みモジュールと比較し、類似度が {Math.round((item?.threshold ?? 0.7) * 100)}% 以上の候補を表示します。
+          </p>
+        </div>
+        {state.status === "success" ? (
+          <span className={hasCandidates ? "module-similarity-count warning" : "module-similarity-count clear"}>
+            {hasCandidates ? `${item?.candidate_count ?? 0}件の候補` : "候補なし"}
+          </span>
+        ) : null}
+      </div>
+
+      <section
+        className={`register-status ${
+          state.status === "success"
+            ? hasCandidates
+              ? "register-status-submitting"
+              : "register-status-success"
+            : state.status === "error"
+              ? "register-status-error"
+              : state.status === "submitting"
+                ? "register-status-submitting"
+                : ""
+        }`}
+        aria-live="polite"
+      >
+        <span>確認状態</span>
+        <strong>
+          {state.status === "success"
+            ? hasCandidates
+              ? "確認が必要"
+              : "確認完了"
+            : state.status === "error"
+              ? "確認失敗"
+              : state.status === "submitting"
+                ? "確認中"
+                : "未確認"}
+        </strong>
+        <p>{state.message}</p>
+        {item ? (
+          <div className="register-result-meta">
+            <span>{`比較対象 ${item.checked_count}件`}</span>
+            <span>{`判定基準 ${Math.round(item.threshold * 100)}%`}</span>
+            {item.exact_match ? <span>完全一致あり</span> : null}
+          </div>
+        ) : null}
+      </section>
+
+      {item && item.candidates.length > 0 ? (
+        <>
+          <div className="module-similarity-table" role="table" aria-label="類似モジュール候補">
+            <div className="module-similarity-table-header" role="row">
+              <span role="columnheader">類似度</span>
+              <span role="columnheader">候補モジュール</span>
+              <span role="columnheader">一致傾向</span>
+              <span role="columnheader">操作</span>
+            </div>
+            {item.candidates.map((candidate) => (
+              <div className="module-similarity-table-row" role="row" key={candidate.module_version_id}>
+                <div role="cell">
+                  <strong className="module-similarity-score">{`${Math.round(candidate.similarity * 100)}%`}</strong>
+                  {candidate.exact_match ? <span className="module-similarity-exact">完全一致</span> : null}
+                </div>
+                <div role="cell">
+                  <strong>{`${candidate.module_key} / ${candidate.module_name}`}</strong>
+                  <small>{`${candidate.version_label} / 承認済み`}</small>
+                </div>
+                <div role="cell">
+                  <span>
+                    {candidate.matched_fields.length > 0
+                      ? candidate.matched_fields.map(getModuleSimilarityMatchedFieldLabel).join(" / ")
+                      : "一致項目なし"}
+                  </span>
+                </div>
+                <div role="cell">
+                  <div className="module-similarity-row-actions">
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => onShowDiff(candidate)}
+                      disabled={
+                        diffState.status === "loading"
+                        && diffCandidate?.module_version_id === candidate.module_version_id
+                      }
+                    >
+                      差分を見る
+                    </button>
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => onDownloadDiff(candidate)}
+                      disabled={
+                        downloadState.status === "loading"
+                        && downloadState.candidateId === candidate.module_version_id
+                      }
+                    >
+                      {downloadState.status === "loading"
+                      && downloadState.candidateId === candidate.module_version_id
+                        ? "作成中..."
+                        : "差分Excel"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {downloadState.status !== "idle" ? (
+            <p
+              className={`module-similarity-download-status ${downloadState.status}`}
+              aria-live="polite"
+            >
+              {downloadState.message}
+            </p>
+          ) : null}
+
+          <div className="module-similarity-actions">
+            <button className="danger" type="button" onClick={onCancel}>
+              登録を中止
+            </button>
+            <button
+              className="primary"
+              type="button"
+              onClick={onContinue}
+              disabled={registrationConfirmed || !item.confirmation_token}
+            >
+              {registrationConfirmed ? "登録続行を選択済み" : "登録を続ける"}
+            </button>
+          </div>
+          {registrationConfirmed ? (
+            <p className="module-similarity-confirmed">類似候補を確認したうえで、登録を続けます。</p>
+          ) : (
+            <p className="module-similarity-warning">差分を確認し、登録を続けるか中止するか選択してください。</p>
+          )}
+        </>
+      ) : null}
+
+      {diffCandidate ? (
+        <section className="module-similarity-diff" aria-live="polite">
+          <div className="section-heading-row">
+            <div>
+              <h3>{`${diffCandidate.module_key} との行差分`}</h3>
+              <p>{diffState.message}</p>
+            </div>
+            {diffState.item ? (
+              <div className="module-similarity-diff-summary">
+                <span>{`追加 ${diffState.item.summary.added_count}`}</span>
+                <span>{`削除 ${diffState.item.summary.removed_count}`}</span>
+                <span>{`変更 ${diffState.item.summary.changed_count}`}</span>
+              </div>
+            ) : null}
+          </div>
+          {diffState.status === "loading" ? <p>差分を読み込んでいます...</p> : null}
+          {diffState.item && changedRows.length > 0 ? (
+            <div className="module-diff-list" aria-label="類似候補との差分">
+              {changedRows.map((row, index) => (
+                <ModuleDiffRowCard row={row} key={`${row.status}-${row.row_key}-${index}`} />
+              ))}
+            </div>
+          ) : diffState.item ? (
+            <div className="module-diff-empty">
+              <strong>行差分はありません</strong>
+              <span>取込内容と候補モジュールの手順行は一致しています。</span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </section>
+  );
+}
+
 function ExcelModulePreview({
   item,
   mode = "embedded",
@@ -2804,8 +3221,8 @@ function ExcelModuleCaseSheet({
 
   return (
     <section className="excel-preview excel-preview-fullscreen" aria-label="案件CSプレビュー">
-      <div className="excel-sheet-wrap excel-sheet-wrap-case">
-        <table className="excel-sheet excel-sheet-case excel-sheet-multi-device">
+      <div className="excel-sheet-wrap excel-sheet-wrap-case excel-sheet-scroll-with-sticky-left excel-sheet-scroll-case">
+        <table className="excel-sheet excel-sheet-case excel-sheet-multi-device excel-sheet-sticky-left excel-sheet-case-sticky">
           <colgroup>
             <col className="excel-col-small" />
             <col className="excel-col-small" />
@@ -2830,25 +3247,31 @@ function ExcelModuleCaseSheet({
               <td colSpan={9} className="excel-case-title-cell">
                 {caseTitle}
               </td>
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`top-label-${header.slot_no}`}>
-                  <td className="excel-case-top-label">時刻</td>
-                  <td className="excel-case-top-label">terget</td>
-                  <td className="excel-case-top-label">P</td>
-                  <td className="excel-case-top-label">対象装置</td>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`top-label-${header.slot_no}`}>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>時刻</td>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>terget</td>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>P</td>
+                    <td className={`excel-case-top-label ${deviceToneClass}`}>対象装置</td>
+                  </Fragment>
+                );
+              })}
             </tr>
             <tr className="excel-case-device-meta-row">
               <td colSpan={9} className="excel-case-left-blank" />
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`top-value-${header.slot_no}`}>
-                  <td className="excel-center">{header.header_time_text ?? ""}</td>
-                  <td>{header.target_text ?? String(header.slot_no)}</td>
-                  <td className="excel-center">{header.p_text ?? ""}</td>
-                  <td>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</td>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`top-value-${header.slot_no}`}>
+                    <td className={`excel-center ${deviceToneClass}`}>{header.header_time_text ?? ""}</td>
+                    <td className={deviceToneClass}>{header.target_text ?? String(header.slot_no)}</td>
+                    <td className={`excel-center ${deviceToneClass}`}>{header.p_text ?? ""}</td>
+                    <td className={deviceToneClass}>{header.target_device_text ?? `device-${String(header.slot_no).padStart(2, "0")}`}</td>
+                  </Fragment>
+                );
+              })}
             </tr>
             <tr className="excel-case-spacer-row">
               <td colSpan={totalColumnSpan} />
@@ -2858,14 +3281,17 @@ function ExcelModuleCaseSheet({
               <td className="excel-case-group-cell" />
               <td colSpan={4} className="excel-case-group-cell">作業内容</td>
               <td className="excel-case-group-cell" />
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`group-${header.slot_no}`}>
-                  <td className="excel-case-group-cell" />
-                  <td className="excel-case-group-cell" />
-                  <td className="excel-case-group-cell" />
-                  <td className="excel-case-device-name">{header.target_device_text ?? `{{DEVICE_${header.slot_no}}}`}</td>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`group-${header.slot_no}`}>
+                    <td className={`excel-case-group-cell ${deviceToneClass}`} />
+                    <td className={`excel-case-group-cell ${deviceToneClass}`} />
+                    <td className={`excel-case-group-cell ${deviceToneClass}`} />
+                    <td className={`excel-case-device-name ${deviceToneClass}`}>{header.target_device_text ?? `{{DEVICE_${header.slot_no}}}`}</td>
+                  </Fragment>
+                );
+              })}
             </tr>
             <tr>
               <th>大</th>
@@ -2874,14 +3300,17 @@ function ExcelModuleCaseSheet({
               <th>技術資料名</th>
               <th colSpan={4}>作業内容</th>
               <th>確認事項 or 項目</th>
-              {caseDeviceHeaders.map((header) => (
-                <Fragment key={`header-${header.slot_no}`}>
-                  <th>時刻</th>
-                  <th>window</th>
-                  <th>P</th>
-                  <th>コマンド</th>
-                </Fragment>
-              ))}
+              {caseDeviceHeaders.map((header, deviceIndex) => {
+                const deviceToneClass = deviceIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
+                return (
+                  <Fragment key={`header-${header.slot_no}`}>
+                    <th className={deviceToneClass}>時刻</th>
+                    <th className={deviceToneClass}>window</th>
+                    <th className={deviceToneClass}>P</th>
+                    <th className={deviceToneClass}>コマンド</th>
+                  </Fragment>
+                );
+              })}
             </tr>
             {rowsWithIndent.map(({ row, indentLevel }) => (
               <tr key={row.module_row_id} className={`excel-row excel-row-${row.row_type}`}>
@@ -3620,6 +4049,8 @@ function ModuleRegisterPageV2() {
   };
 
   const navigate = useNavigate();
+  const currentUser = getStoredAuthUser();
+  const isAdmin = currentUser?.role === "admin";
   const [searchParams] = useSearchParams();
   const versionSourceModuleId = searchParams.get("module_id");
   const versionSourceModuleKey = searchParams.get("module_key");
@@ -3673,11 +4104,35 @@ function ModuleRegisterPageV2() {
   const [importPreviewState, setImportPreviewState] = useState<ModuleImportPreviewState>({
     status: "idle",
     item: null,
-    message: "Excel取込プレビューはまだ実行していません。",
+    message: isAdmin
+      ? "Excel取込プレビューはまだ実行していません。"
+      : "Excelファイルはまだ取り込まれていません。",
   });
+  const [similarityState, setSimilarityState] = useState<ModuleSimilarityCheckState>({
+    status: "idle",
+    item: null,
+    message: "Excel取込後に類似モジュールを確認します。",
+  });
+  const [similarityRegistrationConfirmed, setSimilarityRegistrationConfirmed] = useState(false);
+  const [similarityDiffState, setSimilarityDiffState] = useState<ModuleDiffState>({
+    status: "idle",
+    item: null,
+    message: "候補を選ぶと取込内容との差分を確認できます。",
+  });
+  const [similarityDiffCandidate, setSimilarityDiffCandidate] = useState<ModuleSimilarityCandidateData | null>(null);
+  const [similarityDiffDownloadState, setSimilarityDiffDownloadState] = useState<ModuleSimilarityDiffDownloadState>({
+    status: "idle",
+    candidateId: null,
+    message: "",
+  });
+  const [importFileInputKey, setImportFileInputKey] = useState(0);
   const [isWorkbookImportApplied, setIsWorkbookImportApplied] = useState(false);
   const [isImportPreviewFullscreenOpen, setIsImportPreviewFullscreenOpen] = useState(false);
-  const canSaveImportedModule = isWorkbookImportApplied || importPreviewState.status === "success";
+  const hasSimilarityCandidates = (similarityState.item?.candidate_count ?? 0) > 0;
+  const canSaveImportedModule =
+    (isWorkbookImportApplied || importPreviewState.status === "success")
+    && similarityState.status === "success"
+    && (!hasSimilarityCandidates || similarityRegistrationConfirmed);
 
   useEffect(() => {
     if (!isNewVersionMode || versionSourceModuleKey === null) {
@@ -3823,6 +4278,268 @@ function ModuleRegisterPageV2() {
     setRows((currentRows) => (currentRows.length > 1 ? currentRows.filter((row) => row.rowId !== rowId) : currentRows));
   }
 
+  function buildCurrentModulePayload(): ModuleImportPreviewData {
+    const firstHeader = deviceHeaders[0] ?? null;
+    return {
+      module_key: moduleKeyInput.trim() || null,
+      module_name: moduleNameInput.trim(),
+      description: descriptionInput.trim() || null,
+      change_note: importPreviewState.item?.change_note ?? null,
+      source_xlsx_path: sourcePathInput.trim() || null,
+      source_sha256: importPreviewState.item?.source_sha256 ?? null,
+      created_by: createdByInput.trim() || null,
+      header_time_text: firstHeader?.headerTimeText.trim() || null,
+      target_text: firstHeader?.targetText.trim() || null,
+      common_p_text: firstHeader?.pText.trim() || null,
+      target_device_text: firstHeader?.targetDeviceText.trim() || null,
+      device_headers: deviceHeaders.map((header) => ({
+        slot_no: header.slotNo,
+        header_time_text: header.headerTimeText.trim() || null,
+        target_text: header.targetText.trim() || null,
+        p_text: header.pText.trim() || null,
+        target_device_text: header.targetDeviceText.trim() || null,
+      })),
+      rows: rows.map((row, index) => {
+        const firstEntry = row.deviceEntries[0] ?? null;
+        return {
+          row_order: index + 1,
+          row_type: row.rowType,
+          major_no: row.majorNo.trim() || null,
+          middle_no: row.middleNo.trim() || null,
+          minor_no: row.minorNo.trim() || null,
+          tech_doc_text: row.techDocText.trim() || null,
+          work_text: row.workText.trim() || null,
+          indent_level: row.indentLevel,
+          expected_result: row.expectedResult.trim() || null,
+          time_text: firstEntry?.timeText.trim() || null,
+          window_text: firstEntry?.windowText.trim() || null,
+          p_text: firstEntry?.pText.trim() || null,
+          command_text: firstEntry?.commandText.trim() || null,
+          note: null,
+          images: row.images ?? [],
+          device_entries: row.deviceEntries.map((entry) => ({
+            slot_no: entry.slotNo,
+            time_text: entry.timeText.trim() || null,
+            window_text: entry.windowText.trim() || null,
+            p_text: entry.pText.trim() || null,
+            command_text: entry.commandText.trim() || null,
+          })),
+        };
+      }),
+    };
+  }
+
+  function resetSimilarityReview(message = "Excel取込後に類似モジュールを確認します。"): void {
+    setSimilarityState({
+      status: "idle",
+      item: null,
+      message,
+    });
+    setSimilarityRegistrationConfirmed(false);
+    setSimilarityDiffCandidate(null);
+    setSimilarityDiffState({
+      status: "idle",
+      item: null,
+      message: "候補を選ぶと取込内容との差分を確認できます。",
+    });
+    setSimilarityDiffDownloadState({
+      status: "idle",
+      candidateId: null,
+      message: "",
+    });
+  }
+
+  async function runSimilarityCheck(payload: ModuleImportPreviewData): Promise<void> {
+    setSimilarityState({
+      status: "submitting",
+      item: null,
+      message: "承認済みモジュールとの類似度を確認しています...",
+    });
+    setSimilarityRegistrationConfirmed(false);
+    setSimilarityDiffCandidate(null);
+    setSimilarityDiffState({
+      status: "idle",
+      item: null,
+      message: "候補を選ぶと取込内容との差分を確認できます。",
+    });
+    setSimilarityDiffDownloadState({
+      status: "idle",
+      candidateId: null,
+      message: "",
+    });
+
+    try {
+      const response = await fetch(buildApiUrl("/api/v1/modules/similarity-check"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const responseBody = await readApiResponse<ModuleSimilarityCheckData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setSimilarityState({
+          status: "error",
+          item: null,
+          message: responseBody.message || `類似モジュール確認に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setSimilarityState({
+        status: "success",
+        item: responseBody.data,
+        message:
+          responseBody.data.candidate_count > 0
+            ? `${responseBody.data.candidate_count} 件の類似候補が見つかりました。差分を確認して登録可否を判断してください。`
+            : "類似候補は見つかりませんでした。登録へ進めます。",
+      });
+    } catch (error) {
+      setSimilarityState({
+        status: "error",
+        item: null,
+        message: error instanceof Error ? error.message : "類似モジュール確認に失敗しました。",
+      });
+    }
+  }
+
+  async function handleSimilarityDiff(candidate: ModuleSimilarityCandidateData): Promise<void> {
+    setSimilarityDiffCandidate(candidate);
+    setSimilarityDiffState({
+      status: "loading",
+      item: null,
+      message: `${candidate.module_key} との差分を取得しています...`,
+    });
+
+    try {
+      const query = new URLSearchParams({ version_no: String(candidate.version_no) });
+      const response = await fetch(
+        buildApiUrl(`/api/v1/modules/${candidate.module_id}/diff-preview?${query.toString()}`),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildCurrentModulePayload()),
+        },
+      );
+      const responseBody = await readApiResponse<ModuleDiffData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setSimilarityDiffState({
+          status: "unavailable",
+          item: null,
+          message: responseBody.message || `差分取得に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setSimilarityDiffState({
+        status: "available",
+        item: responseBody.data,
+        message: responseBody.message || "取込内容との差分を取得しました。",
+      });
+    } catch (error) {
+      setSimilarityDiffState({
+        status: "unavailable",
+        item: null,
+        message: error instanceof Error ? error.message : "差分取得に失敗しました。",
+      });
+    }
+  }
+
+  async function handleSimilarityDiffDownload(
+    candidate: ModuleSimilarityCandidateData,
+  ): Promise<void> {
+    if (!selectedImportFile) {
+      setSimilarityDiffDownloadState({
+        status: "error",
+        candidateId: candidate.module_version_id,
+        message: "比較対象のExcelファイルを選択してください。",
+      });
+      return;
+    }
+
+    setSimilarityDiffDownloadState({
+      status: "loading",
+      candidateId: candidate.module_version_id,
+      message: `${candidate.module_key} との差分Excelを作成しています...`,
+    });
+
+    try {
+      const query = new URLSearchParams({
+        version_no: String(candidate.version_no),
+        filename: selectedImportFile.name,
+      });
+      if (createdByInput.trim()) {
+        query.set("created_by", createdByInput.trim());
+      }
+      const response = await fetch(
+        buildApiUrl(`/api/v1/modules/${candidate.module_id}/diff-preview/download?${query.toString()}`),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+          },
+          body: await selectedImportFile.arrayBuffer(),
+        },
+      );
+
+      if (!response.ok) {
+        const responseBody = await readApiResponse<unknown>(response);
+        setSimilarityDiffDownloadState({
+          status: "error",
+          candidateId: candidate.module_version_id,
+          message: responseBody.message || `差分Excelの作成に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition") ?? "";
+      const encodedFilename = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+      const plainFilename = contentDisposition.match(/filename="?([^";]+)"?/i)?.[1];
+      const filename = encodedFilename
+        ? decodeURIComponent(encodedFilename)
+        : plainFilename ?? `module-diff-${candidate.module_key}-v${candidate.version_no}-import.xlsx`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+      setSimilarityDiffDownloadState({
+        status: "success",
+        candidateId: candidate.module_version_id,
+        message: `${filename} をダウンロードしました。比較元・比較先の淡い紫色のセルが差分です。`,
+      });
+    } catch (error) {
+      setSimilarityDiffDownloadState({
+        status: "error",
+        candidateId: candidate.module_version_id,
+        message: error instanceof Error ? error.message : "差分Excelの作成に失敗しました。",
+      });
+    }
+  }
+
+  function handleCancelSimilarityRegistration(): void {
+    setSelectedImportFile(null);
+    setImportFileInputKey((current) => current + 1);
+    setIsWorkbookImportApplied(false);
+    setImportPreviewState({
+      status: "idle",
+      item: null,
+      message: "登録を中止しました。別のExcelファイルを選択できます。",
+    });
+    resetSimilarityReview("登録を中止しました。Excel取込後に再度確認します。");
+    setCreateState({
+      status: "idle",
+      item: null,
+      message: "登録を中止しました。",
+    });
+  }
+
   function applyImportedDraft(item: ModuleImportPreviewData): void {
     const nextHeaders =
       item.device_headers.length > 0
@@ -3887,6 +4604,37 @@ function ModuleRegisterPageV2() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
 
+    if (similarityState.status !== "success") {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "類似モジュール確認が完了していません。Excelファイルを取り込み直してください。",
+      });
+      return;
+    }
+
+    if (hasSimilarityCandidates && !similarityRegistrationConfirmed) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "類似候補を確認し、「登録を続ける」を選択してください。",
+      });
+      return;
+    }
+
+    if (
+      hasSimilarityCandidates
+      && similarityRegistrationConfirmed
+      && !similarityState.item?.confirmation_token
+    ) {
+      setCreateState({
+        status: "error",
+        item: null,
+        message: "確認情報を取得できませんでした。Excelファイルを取り込み直してください。",
+      });
+      return;
+    }
+
     if (!canSaveImportedModule) {
       setCreateState({
         status: "error",
@@ -3903,48 +4651,67 @@ function ModuleRegisterPageV2() {
     });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules"), {
+      const query = new URLSearchParams();
+      if (hasSimilarityCandidates && similarityState.item?.confirmation_token) {
+        query.set(
+          "similarity_confirmation_token",
+          similarityState.item.confirmation_token,
+        );
+      }
+      const createPath = query.size > 0
+        ? `/api/v1/modules?${query.toString()}`
+        : "/api/v1/modules";
+      const response = await fetch(buildApiUrl(createPath), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          module_key: moduleKeyInput.trim() || undefined,
-          module_name: moduleNameInput.trim(),
-          description: descriptionInput.trim() || undefined,
-          source_xlsx_path: sourcePathInput.trim() || undefined,
-          created_by: createdByInput.trim() || undefined,
-          device_headers: deviceHeaders.map((header) => ({
-            slot_no: header.slotNo,
-            header_time_text: header.headerTimeText.trim() || undefined,
-            target_text: header.targetText.trim() || undefined,
-            p_text: header.pText.trim() || undefined,
-            target_device_text: header.targetDeviceText.trim() || undefined,
-          })),
-          rows: rows.map((row, index) => ({
-            row_order: index + 1,
-            row_type: row.rowType,
-            major_no: row.majorNo.trim() || undefined,
-            middle_no: row.middleNo.trim() || undefined,
-            minor_no: row.minorNo.trim() || undefined,
-            tech_doc_text: row.techDocText.trim() || undefined,
-            work_text: row.workText.trim() || undefined,
-            indent_level: row.indentLevel,
-            expected_result: row.expectedResult.trim() || undefined,
-            images: row.images ?? [],
-            device_entries: row.deviceEntries.map((entry) => ({
-              slot_no: entry.slotNo,
-              time_text: entry.timeText.trim() || undefined,
-              window_text: entry.windowText.trim() || undefined,
-              p_text: entry.pText.trim() || undefined,
-              command_text: entry.commandText.trim() || undefined,
-            })),
-          })),
-        }),
+        body: JSON.stringify(buildCurrentModulePayload()),
       });
 
-      const responseBody = await readApiResponse<ModuleDetailData>(response);
-      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+      const responseBody = await readApiResponse<
+        ModuleDetailData | ModuleSimilarityCheckData
+      >(response);
+      if (
+        response.status === 409
+        && responseBody.data !== null
+        && "candidate_count" in responseBody.data
+      ) {
+        setSimilarityState({
+          status: "success",
+          item: responseBody.data,
+          message:
+            responseBody.message
+            || "類似候補が更新されました。内容を再確認してください。",
+        });
+        setSimilarityRegistrationConfirmed(false);
+        setSimilarityDiffCandidate(null);
+        setSimilarityDiffState({
+          status: "idle",
+          item: null,
+          message: "候補を選ぶと行単位の差分を確認できます。",
+        });
+        setSimilarityDiffDownloadState({
+          status: "idle",
+          candidateId: null,
+          message: "",
+        });
+        setCreateState({
+          status: "error",
+          item: null,
+          message:
+            responseBody.message
+            || "類似候補が更新されました。内容を再確認してください。",
+        });
+        return;
+      }
+
+      if (
+        !response.ok
+        || responseBody.result !== "success"
+        || responseBody.data === null
+        || !("module_id" in responseBody.data)
+      ) {
         setCreateState({
           status: "error",
           item: null,
@@ -4019,6 +4786,7 @@ function ModuleRegisterPageV2() {
         item: importedDraft,
         message: responseBody.message || "ワークブック取込結果を画面へ反映しました。",
       });
+      await runSimilarityCheck(importedDraft);
     } catch (error) {
       setImportPreviewState({
         status: "error",
@@ -4091,6 +4859,7 @@ function ModuleRegisterPageV2() {
         item: responseBody.data,
         message: responseBody.message || "Excel取込プレビューを正規化しました。",
       });
+      await runSimilarityCheck(responseBody.data);
     } catch (error) {
       setImportPreviewState({
         status: "error",
@@ -4394,11 +5163,21 @@ function ModuleRegisterPageV2() {
             <label className="wide">
               Excelファイル
               <input
+                key={importFileInputKey}
                 type="file"
                 accept=".xlsx,.xlsm"
                 onChange={(event) => {
-                  setSelectedImportFile(event.target.files?.[0] ?? null);
+                  const nextFile = event.target.files?.[0] ?? null;
+                  setSelectedImportFile(nextFile);
                   setIsWorkbookImportApplied(false);
+                  setImportPreviewState({
+                    status: "idle",
+                    item: null,
+                    message: nextFile
+                      ? "ファイル取込を実行してください。"
+                      : "先に xlsx / xlsm ファイルを選択してください。",
+                  });
+                  resetSimilarityReview();
                   setCreateState({
                     status: "idle",
                     item: null,
@@ -4413,60 +5192,98 @@ function ModuleRegisterPageV2() {
             <strong>{selectedImportFile ? "選択済み" : "未選択"}</strong>
             <p>{selectedImportFile ? `${selectedImportFile.name} を選択しています。` : "先に xlsx / xlsm ファイルを選択してください。"}</p>
           </section>
-        </section>
-
-        <section className="register-step-card">
-          <div className="register-step-header">
-            <div>
-              <h2>Excel取込プレビュー</h2>
-              <p className="register-section-copy">
-                現在の入力を 1 シート相当の JSON として <code>POST /api/v1/modules/import-sheet</code> に送り、正規化内容を確認します。
-              </p>
-            </div>
-            <button className="secondary" type="button" onClick={() => void handleImportPreview()}>
-              <span aria-hidden="true">→</span>
-              プレビュー実行
-            </button>
-          </div>
-
-          <section
-            className={`register-status ${
-              importPreviewState.status === "success"
-                ? "register-status-success"
-                : importPreviewState.status === "error"
-                  ? "register-status-error"
-                  : importPreviewState.status === "submitting"
-                    ? "register-status-submitting"
-                    : ""
-            }`}
-          >
-            <span>プレビュー状態</span>
-            <strong>
-              {importPreviewState.status === "success"
-                ? "正規化完了"
-                : importPreviewState.status === "error"
-                  ? "変換失敗"
-                  : importPreviewState.status === "submitting"
-                    ? "変換中"
-                    : "未実行"}
-            </strong>
-            <p>{importPreviewState.message}</p>
-            {previewItem ? (
-              <>
+          {!isAdmin ? (
+            <section
+              aria-live="polite"
+              className={`register-status ${
+                importPreviewState.status === "success"
+                  ? "register-status-success"
+                  : importPreviewState.status === "error"
+                    ? "register-status-error"
+                    : importPreviewState.status === "submitting"
+                      ? "register-status-submitting"
+                      : ""
+              }`}
+            >
+              <span>取込状態</span>
+              <strong>
+                {importPreviewState.status === "success"
+                  ? "取込完了"
+                  : importPreviewState.status === "error"
+                    ? "取込失敗"
+                    : importPreviewState.status === "submitting"
+                      ? "取込中"
+                      : selectedImportFile
+                        ? "取込待ち"
+                        : "未選択"}
+              </strong>
+              <p>{importPreviewState.message}</p>
+              {importPreviewState.status === "success" && previewItem ? (
                 <div className="register-result-meta">
                   <span>{previewItem.module_key ?? "自動採番"}</span>
                   <span>{previewItem.module_name}</span>
                   <span>{`装置 ${previewItem.device_headers.length} 台`}</span>
                   <span>{`手順行 ${previewItem.rows.length} 行`}</span>
                 </div>
-                <details className="json-preview-wrap">
-                  <summary>正規化結果を表示</summary>
-                  <pre className="json-preview">{JSON.stringify(previewItem, null, 2)}</pre>
-                </details>
-              </>
-            ) : null}
-          </section>
+              ) : null}
+            </section>
+          ) : null}
         </section>
+
+        {isAdmin ? (
+          <section className="register-step-card">
+            <div className="register-step-header">
+              <div>
+                <h2>Excel取込プレビュー</h2>
+                <p className="register-section-copy">
+                  現在の入力を 1 シート相当の JSON として <code>POST /api/v1/modules/import-sheet</code> に送り、正規化内容を確認します。
+                </p>
+              </div>
+              <button className="secondary" type="button" onClick={() => void handleImportPreview()}>
+                <span aria-hidden="true">→</span>
+                プレビュー実行
+              </button>
+            </div>
+
+            <section
+              className={`register-status ${
+                importPreviewState.status === "success"
+                  ? "register-status-success"
+                  : importPreviewState.status === "error"
+                    ? "register-status-error"
+                    : importPreviewState.status === "submitting"
+                      ? "register-status-submitting"
+                      : ""
+              }`}
+            >
+              <span>プレビュー状態</span>
+              <strong>
+                {importPreviewState.status === "success"
+                  ? "正規化完了"
+                  : importPreviewState.status === "error"
+                    ? "変換失敗"
+                    : importPreviewState.status === "submitting"
+                      ? "変換中"
+                      : "未実行"}
+              </strong>
+              <p>{importPreviewState.message}</p>
+              {previewItem ? (
+                <>
+                  <div className="register-result-meta">
+                    <span>{previewItem.module_key ?? "自動採番"}</span>
+                    <span>{previewItem.module_name}</span>
+                    <span>{`装置 ${previewItem.device_headers.length} 台`}</span>
+                    <span>{`手順行 ${previewItem.rows.length} 行`}</span>
+                  </div>
+                  <details className="json-preview-wrap">
+                    <summary>正規化結果を表示</summary>
+                    <pre className="json-preview">{JSON.stringify(previewItem, null, 2)}</pre>
+                  </details>
+                </>
+              ) : null}
+            </section>
+          </section>
+        ) : null}
 
         <section
           className={`register-status ${
@@ -4500,6 +5317,18 @@ function ModuleRegisterPageV2() {
           ) : null}
         </section>
 
+        <ModuleSimilarityReview
+          state={similarityState}
+          registrationConfirmed={similarityRegistrationConfirmed}
+          diffState={similarityDiffState}
+          diffCandidate={similarityDiffCandidate}
+          downloadState={similarityDiffDownloadState}
+          onShowDiff={(candidate) => void handleSimilarityDiff(candidate)}
+          onDownloadDiff={(candidate) => void handleSimilarityDiffDownload(candidate)}
+          onContinue={() => setSimilarityRegistrationConfirmed(true)}
+          onCancel={handleCancelSimilarityRegistration}
+        />
+
         <Toolbar>
           {createdItem ? (
             <button className="secondary" type="button" onClick={() => navigate(`/modules/${createdItem.module_id}?version_no=${createdItem.version_no}`)}>
@@ -4513,7 +5342,7 @@ function ModuleRegisterPageV2() {
           </button>
         </Toolbar>
       </form>
-            {isImportPreviewFullscreenOpen && previewItem && previewModuleItem ? (
+            {isAdmin && isImportPreviewFullscreenOpen && previewItem && previewModuleItem ? (
         <PreviewOverlay
           title="Excel取込プレビュー"
           description="現在の取込結果を保存前に全画面で確認します。Excel出力と同じ列構造で、装置が横に増えていく形で表示します。"
@@ -4567,10 +5396,25 @@ function DocumentSearchPage() {
   const [searchParams] = useSearchParams();
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
+  const initialCreatedBy = searchParams.get("created_by") ?? "";
+  const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
+  const initialUpdatedTo = searchParams.get("updated_to") ?? "";
+  const initialModuleName = searchParams.get("module_name") ?? "";
+  const initialSort = searchParams.get("sort") ?? "key_asc";
   const [keywordInput, setKeywordInput] = useState(initialKeyword);
   const [statusInput, setStatusInput] = useState(initialStatus);
+  const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
+  const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
+  const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
+  const [moduleNameInput, setModuleNameInput] = useState(initialModuleName);
+  const [sortInput, setSortInput] = useState(initialSort);
   const keyword = initialKeyword;
   const statusFilter = initialStatus;
+  const createdByFilter = initialCreatedBy;
+  const updatedFromFilter = initialUpdatedFrom;
+  const updatedToFilter = initialUpdatedTo;
+  const moduleNameFilter = initialModuleName;
+  const sortFilter = initialSort;
   const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
     status: "loading",
     items: [],
@@ -4580,173 +5424,131 @@ function DocumentSearchPage() {
   useEffect(() => {
     setKeywordInput(initialKeyword);
     setStatusInput(initialStatus);
-  }, [initialKeyword, initialStatus]);
+    setCreatedByInput(initialCreatedBy);
+    setUpdatedFromInput(initialUpdatedFrom);
+    setUpdatedToInput(initialUpdatedTo);
+    setModuleNameInput(initialModuleName);
+    setSortInput(initialSort);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialUpdatedFrom, initialUpdatedTo, initialModuleName, initialSort]);
 
   useEffect(() => {
     const abortController = new AbortController();
 
     async function fetchSourceDocs(): Promise<void> {
-      setSourceDocListState({
-        status: "loading",
-        items: [],
-        message: "原本一覧を取得しています。",
-      });
+      setSourceDocListState({ status: "loading", items: [], message: "原本一覧を取得しています。" });
 
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/source-docs"), window.location.origin);
 
-        if (keyword) {
-          endpoint.searchParams.set("keyword", keyword);
-        }
+        if (keyword) endpoint.searchParams.set("keyword", keyword);
+        if (statusFilter !== "all") endpoint.searchParams.set("status", statusFilter);
+        if (createdByFilter) endpoint.searchParams.set("created_by", createdByFilter);
+        if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
+        if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
+        if (moduleNameFilter) endpoint.searchParams.set("module_name", moduleNameFilter);
+        if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
 
-        if (statusFilter !== "all") {
-          endpoint.searchParams.set("status", statusFilter);
-        }
-
-        const response = await fetch(endpoint.toString(), {
-          signal: abortController.signal,
-        });
-
+        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<SourceDocListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
-          setSourceDocListState({
-            status: "unavailable",
-            items: [],
-            message: responseBody.message || `原本一覧の取得に失敗しました。HTTP ${response.status}`,
-          });
+          setSourceDocListState({ status: "unavailable", items: [], message: responseBody.message || "原本一覧の取得に失敗しました。HTTP " + response.status });
           return;
         }
 
-        setSourceDocListState({
-          status: "available",
-          items: responseBody.data.items,
-          message: responseBody.message || "原本一覧を取得しました。",
-        });
+        setSourceDocListState({ status: "available", items: responseBody.data.items, message: responseBody.message || "原本一覧を取得しました。" });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-
-        setSourceDocListState({
-          status: "unavailable",
-          items: [],
-          message: "APIに接続できませんでした。",
-        });
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSourceDocListState({ status: "unavailable", items: [], message: "APIに接続できませんでした。" });
       }
     }
 
     void fetchSourceDocs();
 
-    return () => {
-      abortController.abort();
-    };
-  }, [keyword, statusFilter]);
+    return () => abortController.abort();
+  }, [keyword, statusFilter, createdByFilter, updatedFromFilter, updatedToFilter, moduleNameFilter, sortFilter]);
 
-  function handleSubmit(): void {
-    const nextParams = new URLSearchParams();
+  function navigateWithFilters(filters: {
+    keyword: string;
+    status: (typeof moduleStatusOptions)[number]["value"];
+    createdBy: string;
+    updatedFrom: string;
+    updatedTo: string;
+    moduleName: string;
+    sort: string;
+  }): void {
+    const params = new URLSearchParams();
+    const normalizedKeyword = filters.keyword.trim();
+    const normalizedCreatedBy = filters.createdBy.trim();
+    const normalizedModuleName = filters.moduleName.trim();
 
-    if (keywordInput.trim()) {
-      nextParams.set("keyword", keywordInput.trim());
-    }
+    if (normalizedKeyword) params.set("keyword", normalizedKeyword);
+    if (filters.status !== "all") params.set("status", filters.status);
+    if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
+    if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
+    if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
+    if (normalizedModuleName) params.set("module_name", normalizedModuleName);
+    if (filters.sort !== "key_asc") params.set("sort", filters.sort);
 
-    if (statusInput !== "all") {
-      nextParams.set("status", statusInput);
-    }
-
-    const nextQuery = nextParams.toString();
-    navigate(nextQuery ? `/documents/search?${nextQuery}` : "/documents/search");
+    const nextQuery = params.toString();
+    navigate(nextQuery ? "/documents/search?" + nextQuery : "/documents/search");
   }
 
-  const statusFilterLabel =
-    moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  function handleSubmit(): void {
+    navigateWithFilters({ keyword: keywordInput, status: statusInput, createdBy: createdByInput, updatedFrom: updatedFromInput, updatedTo: updatedToInput, moduleName: moduleNameInput, sort: sortInput });
+  }
+
+  function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
+    setStatusInput(nextStatus);
+    navigateWithFilters({ keyword, status: nextStatus, createdBy: createdByFilter, updatedFrom: updatedFromFilter, updatedTo: updatedToFilter, moduleName: moduleNameFilter, sort: sortFilter });
+  }
+
+  const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
 
   return (
-    <Page title="原本参照" description="APIから取得した原本一覧を確認し、関連モジュールと詳細情報を追えます。">
-      <form
-        className="search-form module-search-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          handleSubmit();
-        }}
-      >
+    <Page title={"原本検索"} description={"APIから取得した原本一覧を検索し、関連モジュールと詳細情報を確認できます。"}>
+      <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
+        <label>{"キーワード"}<input placeholder="例: M1確認用 / MOD-001 / 原本A" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} /></label>
+        <label>{"承認状態"}<select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>{moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <label>{"作成者"}<input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} /></label>
         <label>
-          キーワード
+          {"更新日"}
           <input
-            placeholder="例: M1確認用 / MOD-001 / 原本A"
-            value={keywordInput}
-            onChange={(event) => setKeywordInput(event.target.value)}
+            type="date"
+            value={updatedFromInput}
+            onChange={(event) => {
+              setUpdatedFromInput(event.target.value);
+              setUpdatedToInput(event.target.value);
+            }}
           />
         </label>
-        <label>
-          状態
-          <select
-            value={statusInput}
-            onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}
-          >
-            {moduleStatusOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="primary" type="submit">
-          <span aria-hidden="true">⌕</span>
-          検索
-        </button>
+        <label>{"利用モジュール"}<input placeholder="MOD-001 / ボーレート" value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} /></label>
+        <label>{"並び替え"}<select value={sortInput} onChange={(event) => setSortInput(event.target.value)}><option value="key_asc">{"ID昇順"}</option><option value="key_desc">{"ID降順"}</option><option value="updated_desc">{"更新日が新しい順"}</option><option value="updated_asc">{"更新日が古い順"}</option><option value="status_asc">{"承認状態順"}</option></select></label>
+        <button className="primary" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
       </form>
 
-      <section className={`list-status list-status-${sourceDocListState.status}`} aria-live="polite">
-        <div>
-          <span>取得状態</span>
-          <strong>
-            {sourceDocListState.status === "loading"
-              ? "取得中"
-              : sourceDocListState.status === "available"
-                ? "取得成功"
-                : "取得失敗"}
-          </strong>
-        </div>
-        <div>
-          <span>検索キーワード</span>
-          <strong>{keyword || "指定なし"}</strong>
-        </div>
-        <div>
-          <span>状態</span>
-          <strong>{statusFilterLabel}</strong>
-        </div>
+      <section className={"list-status list-status-" + sourceDocListState.status} aria-live="polite">
+        <div><span>{"取得状態"}</span><strong>{sourceDocListState.status === "loading" ? "取得中" : sourceDocListState.status === "available" ? "取得完了" : "取得失敗"}</strong></div>
+        <div><span>{"検索キーワード"}</span><strong>{keyword || "指定なし"}</strong></div>
+        <div><span>{"承認状態"}</span><strong>{statusFilterLabel}</strong></div>
+        <div><span>{"利用モジュール"}</span><strong>{moduleNameFilter || "指定なし"}</strong></div>
         <p>{sourceDocListState.message}</p>
       </section>
+
+      <section className="approval-flow" aria-label="原本承認状態フィルター">
+        {moduleStatusOptions.map((option) => <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>)}
+      </section>
+
       <Toolbar>
-        <button className="secondary" onClick={() => navigate("/documents/search")}>
-          <span aria-hidden="true">↺</span>
-          条件をリセット
-        </button>
-        <button className="primary" onClick={() => navigate("/documents/create")}>
-          <span aria-hidden="true">＋</span>
-          原本を登録
-        </button>
+        <button className="secondary" onClick={() => navigate("/documents/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
+        <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">+</span>{"原本登録"}</button>
       </Toolbar>
       {sourceDocListState.status === "available" && sourceDocListState.items.length === 0 ? (
-        <section className="empty-state">
-          <h2>該当する原本はありません</h2>
-          <p>検索条件を変えて再度確認してください。</p>
-        </section>
+        <section className="empty-state"><h2>{"該当する原本はありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
       ) : (
         <DataTable
           columns={["原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "作成者", "更新日", "操作"]}
-          rows={sourceDocListState.items.map((item) => [
-            item.source_doc_key,
-            item.source_doc_name,
-            formatVersionLabel(item),
-            <ModuleStatusPill status={item.status} label={item.status_label} />,
-            item.module_names.join(", ") || "-",
-            `${item.enabled_module_count}/${item.module_count}`,
-            item.created_by ?? "-",
-            item.updated_at,
-            <button className="text-button" onClick={() => navigate(`/documents/${item.source_doc_id}`)}>詳細</button>,
-          ])}
+          rows={sourceDocListState.items.map((item) => [item.source_doc_key, item.source_doc_name, formatVersionLabel(item), <ModuleStatusPill status={item.status} label={item.status_label} />, item.module_names.join(", ") || "-", item.enabled_module_count + "/" + item.module_count, item.created_by ?? "-", item.updated_at, <button className="text-button" onClick={() => navigate("/documents/" + item.source_doc_id)}>{"詳細"}</button>])}
         />
       )}
     </Page>
@@ -5664,7 +6466,6 @@ function DocumentDetailPage() {
               <p>{item.change_note ?? "変更メモは未設定です。"}</p>
             </div>
           </section>
-          <ExcelSourceDocPreview item={item} onOpenModule={(moduleId) => navigate(`/modules/${moduleId}`)} />
         </>
       ) : (
         <section className="empty-state">
@@ -5737,8 +6538,8 @@ function ExcelSourceDocPreview({
             </div>
           </header>
 
-          <div className="excel-sheet-wrap">
-            <table className="excel-sheet">
+          <div className="excel-sheet-wrap excel-sheet-scroll-with-sticky-left excel-sheet-scroll-source">
+            <table className="excel-sheet excel-sheet-sticky-left excel-sheet-source-sticky">
               <colgroup>
                 <col className="excel-col-small" />
                 <col className="excel-col-small" />
@@ -6010,60 +6811,63 @@ function IndentedExcelText({
 
 
 const caseDocText = {
-  title: "\u6848\u4ef6\u5316",
-  description: "\u539f\u672c\u3068Access\u7531\u6765\u306e\u30de\u30b9\u30bf\u5024\u3092\u7d10\u3065\u3051\u3001\u6848\u4ef6CS\u751f\u6210\u306b\u4f7f\u3046\u5024\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002",
-  sourceDoc: "\u539f\u672c",
-  prefecture: "\u90fd\u9053\u5e9c\u770c",
-  building: "\u30d3\u30eb",
-  unitConfig: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210",
-  resolve: "\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d",
-  location: "\u8a2d\u7f6e\u5834\u6240",
-  unit: "\u30e6\u30cb\u30c3\u30c8",
-  targetDevice: "\u5bfe\u8c61\u88c5\u7f6e",
-  none: "\u672a\u9078\u629e",
-  targetDeviceSlots: "\u5bfe\u8c61\u88c5\u7f6e\u756a\u53f7\u5bfe\u5fdc\u8868",
-  excelNo: "Excel\u756a\u53f7",
-  hostAssignments: "\u30db\u30b9\u30c8\u5272\u5f53",
-  commonValues: "\u5171\u901a\u5024",
-  resolvedValues: "\u89e3\u6c7a\u6e08\u307f\u5024",
-  slot: "\u30b9\u30ed\u30c3\u30c8",
-  deviceType: "\u88c5\u7f6e\u7a2e\u5225",
-  system: "\u7cfb",
-  hostName: "\u30db\u30b9\u30c8\u540d",
-  key: "\u30ad\u30fc",
-  value: "\u5024",
-  source: "\u51fa\u5178",
-  valueName: "\u5024\u540d",
-  sourceTable: "\u51fa\u5178\u30c6\u30fc\u30d6\u30eb",
-  sourceColumn: "\u51fa\u5178\u30ab\u30e9\u30e0",
-  emptyTitle: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044",
-  loadingSourceDocs: "\u539f\u672c\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  loadingPrefectures: "\u90fd\u9053\u5e9c\u770c\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  loadingBuildings: "\u30d3\u30eb\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  loadingUnitConfigs: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u53d6\u5f97\u3057\u3066\u3044\u307e\u3059\u3002",
-  selectLocation: "\u90fd\u9053\u5e9c\u770c\u3068\u30d3\u30eb\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  ready: "\u6848\u4ef6CS\u751f\u6210\u306b\u4f7f\u3046\u5024\u3092\u78ba\u8a8d\u3067\u304d\u307e\u3059\u3002",
-  sourceDocFailed: "\u539f\u672c\u4e00\u89a7\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  sourceDocLoaded: "\u539f\u672c\u4e00\u89a7\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  prefectureFailed: "\u90fd\u9053\u5e9c\u770c\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  prefectureLoaded: "\u90fd\u9053\u5e9c\u770c\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  selectPrefecture: "\u90fd\u9053\u5e9c\u770c\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  buildingFailed: "\u30d3\u30eb\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  buildingLoaded: "\u30d3\u30eb\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  unitConfigFailed: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  unitConfigLoaded: "\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u53d6\u5f97\u3057\u307e\u3057\u305f\u3002",
-  apiFailed: "API\u306b\u63a5\u7d9a\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002",
-  selectRequired: "\u539f\u672c\u3001\u90fd\u9053\u5e9c\u770c\u3001\u30d3\u30eb\u3001\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  resolving: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u3066\u3044\u307e\u3059\u3002",
-  resolveFailed: "\u5024\u306e\u89e3\u6c7a\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
-  resolved: "\u6848\u4ef6CS\u751f\u6210\u7528\u306e\u5024\u3092\u89e3\u6c7a\u3057\u307e\u3057\u305f\u3002",
-  generate: "\u6848\u4ef6CS\u3092\u751f\u6210",
-  generateStatus: "\u751f\u6210\u72b6\u614b",
-  generateReady: "\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d\u5f8c\u3001\u6848\u4ef6CS\u3092\u751f\u6210\u3067\u304d\u307e\u3059\u3002",
-  generateFirst: "\u5148\u306b\u89e3\u6c7a\u5024\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-  generating: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u3066\u3044\u307e\u3059\u3002",
-  generated: "\u6848\u4ef6CS\u3092\u751f\u6210\u3057\u307e\u3057\u305f\u3002",
-  generateFailed: "\u6848\u4ef6CS\u306e\u751f\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
+  title: "案件化",
+  description: "原本とAccess由来のマスタ値を紐づけ、案件CS生成に使う値を確認します。",
+  sourceDoc: "原本",
+  prefecture: "都道府県",
+  building: "ビル",
+  unitConfig: "ユニット構成",
+  resolve: "解決値を確認",
+  location: "設置場所",
+  unit: "ユニット",
+  targetDevice: "対象装置",
+  none: "未選択",
+  targetDeviceSlots: "対象装置番号対応表",
+  excelNo: "Excel番号",
+  hostAssignments: "ホスト割当",
+  commonValues: "共通値",
+  resolvedValues: "解決済み値",
+  slot: "スロット",
+  deviceType: "装置種別",
+  system: "系",
+  hostName: "ホスト名",
+  key: "キー",
+  value: "値",
+  source: "出典",
+  valueName: "値名",
+  sourceTable: "出典テーブル",
+  sourceColumn: "出典カラム",
+  emptyTitle: "案件CS生成用の値を確認してください",
+  loadingSourceDocs: "原本一覧を取得しています。",
+  loadingPrefectures: "都道府県を取得しています。",
+  loadingBuildings: "ビルを取得しています。",
+  loadingUnitConfigs: "ユニット構成を取得しています。",
+  selectLocation: "都道府県とビルを選択してください。",
+  ready: "案件CS生成に使う値を確認できます。",
+  sourceDocFailed: "原本一覧の取得に失敗しました。",
+  sourceDocLoaded: "原本一覧を取得しました。",
+  prefectureFailed: "都道府県の取得に失敗しました。",
+  prefectureLoaded: "都道府県を取得しました。",
+  selectPrefecture: "都道府県を選択してください。",
+  buildingFailed: "ビルの取得に失敗しました。",
+  buildingLoaded: "ビルを取得しました。",
+  unitConfigFailed: "ユニット構成の取得に失敗しました。",
+  unitConfigLoaded: "ユニット構成を取得しました。",
+  apiFailed: "APIに接続できませんでした。",
+  selectRequired: "原本、都道府県、ビル、ユニット構成を選択してください。",
+  resolving: "案件CS生成用の値を解決しています。",
+  resolveFailed: "値の解決に失敗しました。",
+  resolved: "案件CS生成用の値を解決しました。",
+  generate: "保存先を選んで案件CSを生成",
+  generateStatus: "生成状態",
+  generateReady: "解決値を確認後、案件CSを生成できます。",
+  generateFirst: "先に解決値を確認してください。",
+  generating: "案件CSを生成しています。",
+  generated: "案件CSを生成しました。",
+  generateFailed: "案件CSの生成に失敗しました。",
+  saveDestinationCancelled: "保存先の選択をキャンセルしました。",
+  saveDestinationFailed: "保存先の選択に失敗しました。",
+  saveFailed: "案件CSの保存に失敗しました。",
   selectTargetRequired: "対象装置を1台以上選択してください。",
 };
 
@@ -6422,6 +7226,20 @@ function CaseDocsPage() {
       return;
     }
 
+    const suggestedFilename = `case-doc-${selectedSourceDocId}-${selectedUnitConfig.unit_config_id}.xlsm`;
+    let saveSelection: CaseDocSaveSelection | null;
+    try {
+      saveSelection = await selectCaseDocSaveDestination(suggestedFilename);
+    } catch {
+      setGenerateState({ status: "error", filename: null, message: caseDocText.saveDestinationFailed });
+      return;
+    }
+
+    if (saveSelection === null) {
+      setGenerateState({ status: "idle", filename: null, message: caseDocText.saveDestinationCancelled });
+      return;
+    }
+
     setGenerateState({ status: "submitting", filename: null, message: caseDocText.generating });
 
     try {
@@ -6454,16 +7272,13 @@ function CaseDocsPage() {
       const blob = await response.blob();
       const contentDisposition = response.headers.get("Content-Disposition") ?? "";
       const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/);
-      const filename = filenameMatch?.[1] ?? `case-doc-${selectedSourceDocId}-${selectedUnitConfig.unit_config_id}.xlsm`;
-      const downloadUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(downloadUrl);
-      setGenerateState({ status: "success", filename, message: `${caseDocText.generated} ${filename}` });
+      const filename = filenameMatch?.[1] ?? suggestedFilename;
+      try {
+        const savedFilename = await saveCaseDocBlob(blob, filename, saveSelection);
+        setGenerateState({ status: "success", filename: savedFilename, message: `${caseDocText.generated} ${savedFilename}` });
+      } catch {
+        setGenerateState({ status: "error", filename: null, message: caseDocText.saveFailed });
+      }
     } catch {
       setGenerateState({ status: "error", filename: null, message: caseDocText.apiFailed });
     }
@@ -6831,7 +7646,7 @@ function CaseDocPlaceholdersPage() {
     <Page title={caseDocPlaceholderText.title} description={caseDocPlaceholderText.description}>
       <Toolbar>
         <NavLink to="/case-docs" className="button-link">
-          <span aria-hidden="true">{"\u2190"}</span>
+          <span aria-hidden="true">{"←"}</span>
           {caseDocPlaceholderText.backToCaseDocs}
         </NavLink>
         <button className="primary" type="button" onClick={openCreateEditor}>
@@ -7354,10 +8169,11 @@ function ModuleApprovalStatusPage() {
         </section>
       ) : (
         <DataTable
-          columns={["モジュールID", "モジュール名", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択"]}
+          columns={["モジュールID", "モジュール名", "フォルダ", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択"]}
           rows={filteredModuleItems.map((item) => [
             item.module_key,
             item.module_name,
+            <ModuleFolderMembershipList item={item} />,
             formatVersionLabel(item),
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             selectedItem?.target_id === item.module_id && selectedItem.version_no === item.version_no
@@ -7717,7 +8533,7 @@ function ApprovalPage() {
   const canCommentOnSelectedApproval = selectedExecutableTransitions.length > 0;
   const selectedLatestReturnHistory = getLatestReturnHistory(selectedItem?.history);
   const approvalStatusFilterOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
-    { value: "all", label: "0. \u5168\u4ef6\u8868\u793a" },
+    { value: "all", label: "0. 全件表示" },
     { value: "draft", label: "1. 作成中" },
     { value: "review_requested", label: "2. 承認依頼中" },
     { value: "returned", label: "3. 差戻し" },
@@ -7831,7 +8647,7 @@ function ApprovalPage() {
       title="原本承認状態確認 / 変更"
       description="会議で整理した版管理・承認ルールに沿って、原本の状態確認と変更を行います。"
     >
-      <section className="approval-flow" aria-label="\u627f\u8a8d\u72b6\u614b\u30d5\u30a3\u30eb\u30bf\u30fc">
+      <section className="approval-flow" aria-label="承認状態フィルター">
         {approvalStatusFilterOptions.map((option) => (
           <button
             key={option.value}
@@ -8190,8 +9006,8 @@ function routeTitle(path: string) {
     "/modules/approval": "モジュール承認状態確認",
     "/documents/search": "原本検索",
     "/documents/create": "原本作成 / 更新",
-    "/case-docs": "\u6848\u4ef6\u5316",
-    "/case-docs/placeholders": "\u30d7\u30ec\u30fc\u30b9\u30db\u30eb\u30c0\u4e00\u89a7",
+    "/case-docs": "案件化",
+    "/case-docs/placeholders": "プレースホルダ一覧",
     "/approval": "原本承認状態確認",
   };
   if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list" && path !== "/modules/approval") {

@@ -120,6 +120,7 @@ type ModuleListItemData = {
   module_name: string;
   description: string | null;
   folder_path: string;
+  folder_paths?: string[];
   module_version_id: number;
   version_no: number;
   version_major: number;
@@ -353,6 +354,12 @@ type ModuleSimilarityCheckData = {
 type ModuleSimilarityCheckState = {
   status: "idle" | "submitting" | "success" | "error";
   item: ModuleSimilarityCheckData | null;
+  message: string;
+};
+
+type ModuleSimilarityDiffDownloadState = {
+  status: "idle" | "loading" | "success" | "error";
+  candidateId: number | null;
   message: string;
 };
 
@@ -630,6 +637,22 @@ type CaseDocGenerateState = {
   message: string;
 };
 
+type CaseDocSavePickerOptions = {
+  suggestedName?: string;
+  types?: Array<{
+    description?: string;
+    accept: Record<string, string[]>;
+  }>;
+  excludeAcceptAllOption?: boolean;
+};
+
+type WindowWithSaveFilePicker = Window & {
+  showSaveFilePicker?: (options?: CaseDocSavePickerOptions) => Promise<FileSystemFileHandle>;
+};
+
+type CaseDocSaveSelection =
+  | { mode: "file-picker"; handle: FileSystemFileHandle }
+  | { mode: "browser-download" };
 
 type CaseDocPlaceholderMappingItemData = {
   name: string;
@@ -780,6 +803,21 @@ function normalizeModuleFolderPath(folderPath: string): string {
   return normalized || "未分類";
 }
 
+function getModuleFolderPaths(item: ModuleListItemData): string[] {
+  const folderPaths = item.folder_paths?.length ? item.folder_paths : [item.folder_path || "未分類"];
+  return Array.from(new Set(folderPaths.map(normalizeModuleFolderPath)));
+}
+
+function ModuleFolderMembershipList({ item }: { item: ModuleListItemData }) {
+  return (
+    <div className="module-folder-membership-list">
+      {getModuleFolderPaths(item).map((folderPath) => (
+        <span key={folderPath}>{folderPath}</span>
+      ))}
+    </div>
+  );
+}
+
 function buildModuleFolderTreeItems(folders: string[]): ModuleFolderTreeItem[] {
   const directFolders = new Set(folders.map((folder) => normalizeModuleFolderPath(folder)));
   const itemMap = new Map<string, ModuleFolderTreeItem>();
@@ -853,6 +891,62 @@ function buildApiUrl(path: string): string {
   }
 
   return path;
+}
+
+async function selectCaseDocSaveDestination(suggestedName: string): Promise<CaseDocSaveSelection | null> {
+  const showSaveFilePicker = (window as WindowWithSaveFilePicker).showSaveFilePicker;
+  if (typeof showSaveFilePicker !== "function") {
+    return { mode: "browser-download" };
+  }
+
+  try {
+    const handle = await showSaveFilePicker({
+      suggestedName,
+      excludeAcceptAllOption: true,
+      types: [
+        {
+          description: "マクロ有効Excelブック",
+          accept: {
+            "application/vnd.ms-excel.sheet.macroEnabled.12": [".xlsm"],
+          },
+        },
+      ],
+    });
+    return { mode: "file-picker", handle };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function saveCaseDocBlob(
+  blob: Blob,
+  filename: string,
+  selection: CaseDocSaveSelection,
+): Promise<string> {
+  if (selection.mode === "file-picker") {
+    const writable = await selection.handle.createWritable();
+    try {
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      await writable.abort().catch(() => undefined);
+      throw error;
+    }
+    return selection.handle.name;
+  }
+
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+  return filename;
 }
 
 function buildModuleImageUrl(moduleRowImageId: number): string {
@@ -1354,21 +1448,31 @@ function ModuleSearchPage() {
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
   const initialCreatedBy = searchParams.get("created_by") ?? "";
-  const initialFolderPath = searchParams.get("folder_path") ?? "";
+  const initialFolderPaths = Array.from(
+    new Set(
+      searchParams
+        .getAll("folder_path")
+        .map(normalizeModuleFolderPath)
+        .filter((folderPath) => folderPath.length > 0),
+    ),
+  );
+  const initialFolderPathKey = initialFolderPaths.join("\u001f");
+  const initialFolderPath = initialFolderPaths[0] ?? "";
   const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
   const initialUpdatedTo = searchParams.get("updated_to") ?? "";
   const initialSort = searchParams.get("sort") ?? "key_asc";
   const [keywordInput, setKeywordInput] = useState(initialKeyword);
   const [statusInput, setStatusInput] = useState(initialStatus);
   const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
-  const [folderPathInput, setFolderPathInput] = useState(initialFolderPath);
+  const [folderPathInputs, setFolderPathInputs] = useState<string[]>(initialFolderPaths);
   const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
   const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
   const [sortInput, setSortInput] = useState(initialSort);
   const keyword = initialKeyword;
   const statusFilter = initialStatus;
   const createdByFilter = initialCreatedBy;
-  const folderPathFilter = initialFolderPath;
+  const folderPathFilters = initialFolderPaths;
+  const folderPathFilter = folderPathFilters[0] ?? "";
   const updatedFromFilter = initialUpdatedFrom;
   const updatedToFilter = initialUpdatedTo;
   const sortFilter = initialSort;
@@ -1381,11 +1485,11 @@ function ModuleSearchPage() {
   const [folderRenameInput, setFolderRenameInput] = useState(initialFolderPath || "未分類");
   const [folderRenameState, setFolderRenameState] = useState<ModuleFolderRenameState>({
     status: "idle",
-    message: "選択中のフォルダ名を変更できます。",
+    message: "操作対象のタグ名を変更できます。",
   });
   const [folderDeleteState, setFolderDeleteState] = useState<ModuleFolderRenameState>({
     status: "idle",
-    message: "選択中のフォルダを削除できます。",
+    message: "操作対象のタグを削除できます。",
   });
   const [isFolderDeleteConfirmOpen, setIsFolderDeleteConfirmOpen] = useState(false);
   const [selectedModuleIds, setSelectedModuleIds] = useState<number[]>([]);
@@ -1393,30 +1497,30 @@ function ModuleSearchPage() {
   const [folderCreateInput, setFolderCreateInput] = useState("");
   const [folderCreateState, setFolderCreateState] = useState<ModuleFolderMoveState>({
     status: "idle",
-    message: "新規フォルダには最低1つのモジュールを格納します。",
+    message: "新規タグには最低1つのモジュールを関連付けます。",
   });
   const [folderMoveTarget, setFolderMoveTarget] = useState(initialFolderPath || "未分類");
   const [folderMoveState, setFolderMoveState] = useState<ModuleFolderMoveState>({
     status: "idle",
-    message: "選択したモジュールを既存フォルダへ移動できます。",
+    message: "既存タグを残したまま追加します。未分類を選ぶと他のタグを解除します。",
   });
 
   useEffect(() => {
     setKeywordInput(initialKeyword);
     setStatusInput(initialStatus);
     setCreatedByInput(initialCreatedBy);
-    setFolderPathInput(initialFolderPath);
+    setFolderPathInputs(initialFolderPaths);
     setFolderRenameInput(initialFolderPath || "未分類");
     setFolderMoveTarget(initialFolderPath || "未分類");
-    setFolderRenameState({ status: "idle", message: "選択中のフォルダ名を変更できます。" });
-    setFolderDeleteState({ status: "idle", message: "選択中のフォルダを削除できます。" });
+    setFolderRenameState({ status: "idle", message: "操作対象のタグ名を変更できます。" });
+    setFolderDeleteState({ status: "idle", message: "操作対象のタグを削除できます。" });
     setIsFolderDeleteConfirmOpen(false);
-    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
-    setFolderMoveState({ status: "idle", message: "選択したモジュールを既存フォルダへ移動できます。" });
+    setFolderCreateState({ status: "idle", message: "新規タグには最低1つのモジュールを関連付けます。" });
+    setFolderMoveState({ status: "idle", message: "選択したモジュールに既存タグを追加できます。" });
     setUpdatedFromInput(initialUpdatedFrom);
     setUpdatedToInput(initialUpdatedTo);
     setSortInput(initialSort);
-  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPath, initialUpdatedFrom, initialUpdatedTo, initialSort]);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialFolderPathKey, initialUpdatedFrom, initialUpdatedTo, initialSort]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1435,7 +1539,7 @@ function ModuleSearchPage() {
         if (keyword) endpoint.searchParams.set("keyword", keyword);
         if (statusFilter !== "all") endpoint.searchParams.set("status", statusFilter);
         if (createdByFilter) endpoint.searchParams.set("created_by", createdByFilter);
-        if (folderPathFilter) endpoint.searchParams.set("folder_path", folderPathFilter);
+        folderPathFilters.forEach((folderPath) => endpoint.searchParams.append("folder_path", folderPath));
         if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
         if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
         if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
@@ -1468,7 +1572,7 @@ function ModuleSearchPage() {
     void fetchModules();
 
     return () => abortController.abort();
-  }, [keyword, statusFilter, createdByFilter, folderPathFilter, updatedFromFilter, updatedToFilter, sortFilter]);
+  }, [keyword, statusFilter, createdByFilter, initialFolderPathKey, updatedFromFilter, updatedToFilter, sortFilter]);
 
   useEffect(() => {
     setSelectedModuleIds((current) =>
@@ -1480,7 +1584,7 @@ function ModuleSearchPage() {
     keyword: string;
     status: (typeof moduleStatusOptions)[number]["value"];
     createdBy: string;
-    folderPath: string;
+    folderPaths: string[];
     updatedFrom: string;
     updatedTo: string;
     sort: string;
@@ -1488,12 +1592,18 @@ function ModuleSearchPage() {
     const params = new URLSearchParams();
     const normalizedKeyword = filters.keyword.trim();
     const normalizedCreatedBy = filters.createdBy.trim();
-    const normalizedFolderPath = filters.folderPath.trim();
+    const normalizedFolderPaths = Array.from(
+      new Set(
+        filters.folderPaths
+          .map(normalizeModuleFolderPath)
+          .filter((folderPath) => folderPath.length > 0),
+      ),
+    );
 
     if (normalizedKeyword) params.set("keyword", normalizedKeyword);
     if (filters.status !== "all") params.set("status", filters.status);
     if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
-    if (normalizedFolderPath) params.set("folder_path", normalizedFolderPath);
+    normalizedFolderPaths.forEach((folderPath) => params.append("folder_path", folderPath));
     if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
     if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
     if (filters.sort !== "key_asc") params.set("sort", filters.sort);
@@ -1507,7 +1617,7 @@ function ModuleSearchPage() {
       keyword: keywordInput,
       status: statusInput,
       createdBy: createdByInput,
-      folderPath: folderPathInput,
+      folderPaths: folderPathInputs,
       updatedFrom: updatedFromInput,
       updatedTo: updatedToInput,
       sort: sortInput,
@@ -1520,24 +1630,50 @@ function ModuleSearchPage() {
       keyword,
       status: nextStatus,
       createdBy: createdByFilter,
-      folderPath: folderPathFilter,
+      folderPaths: folderPathFilters,
       updatedFrom: updatedFromFilter,
       updatedTo: updatedToFilter,
       sort: sortFilter,
     });
   }
 
-  function handleFolderFilterChange(nextFolderPath: string): void {
-    setFolderPathInput(nextFolderPath);
+  function handleTagFilterToggle(nextFolderPath: string): void {
+    const normalizedFolderPath = normalizeModuleFolderPath(nextFolderPath);
+    const nextFolderPaths = folderPathFilters.includes(normalizedFolderPath)
+      ? folderPathFilters.filter((folderPath) => folderPath !== normalizedFolderPath)
+      : [normalizedFolderPath, ...folderPathFilters];
+    setFolderPathInputs(nextFolderPaths);
     navigateWithFilters({
       keyword,
       status: statusFilter,
       createdBy: createdByFilter,
-      folderPath: nextFolderPath,
+      folderPaths: nextFolderPaths,
       updatedFrom: updatedFromFilter,
       updatedTo: updatedToFilter,
       sort: sortFilter,
     });
+  }
+
+  function handleTagFilterClear(): void {
+    setFolderPathInputs([]);
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      createdBy: createdByFilter,
+      folderPaths: [],
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      sort: sortFilter,
+    });
+  }
+
+  function toggleTagInput(nextFolderPath: string): void {
+    const normalizedFolderPath = normalizeModuleFolderPath(nextFolderPath);
+    setFolderPathInputs((current) =>
+      current.includes(normalizedFolderPath)
+        ? current.filter((folderPath) => folderPath !== normalizedFolderPath)
+        : [...current, normalizedFolderPath],
+    );
   }
 
   async function handleFolderRenameSubmit(): Promise<void> {
@@ -1545,16 +1681,16 @@ function ModuleSearchPage() {
     const nextFolder = normalizeModuleFolderPath(folderRenameInput);
 
     if (folderPathFilter === "") {
-      setFolderRenameState({ status: "error", message: "先に変更対象のフォルダを選択してください。" });
+      setFolderRenameState({ status: "error", message: "先に変更対象のタグを選択してください。" });
       return;
     }
 
     if (currentFolder === nextFolder) {
-      setFolderRenameState({ status: "error", message: "変更前と変更後のフォルダ名が同じです。" });
+      setFolderRenameState({ status: "error", message: "変更前と変更後のタグ名が同じです。" });
       return;
     }
 
-    setFolderRenameState({ status: "submitting", message: "フォルダ名を変更しています。" });
+    setFolderRenameState({ status: "submitting", message: "タグ名を変更しています。" });
 
     try {
       const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
@@ -1567,30 +1703,34 @@ function ModuleSearchPage() {
       if (!response.ok || responseBody.result !== "success") {
         setFolderRenameState({
           status: "error",
-          message: responseBody.message || `フォルダ名の変更に失敗しました。HTTP ${response.status}`,
+          message: responseBody.message || `タグ名の変更に失敗しました。HTTP ${response.status}`,
         });
         return;
       }
 
-      setFolderRenameState({ status: "success", message: responseBody.message || "フォルダ名を変更しました。" });
-      setFolderPathInput(nextFolder);
+      setFolderRenameState({ status: "success", message: responseBody.message || "タグ名を変更しました。" });
+      const nextFolderPaths = [
+        nextFolder,
+        ...folderPathFilters.filter((folderPath) => folderPath !== currentFolder && folderPath !== nextFolder),
+      ];
+      setFolderPathInputs(nextFolderPaths);
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: nextFolder,
+        folderPaths: nextFolderPaths,
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderRenameState({ status: "error", message: "フォルダ名の変更中にAPI接続で失敗しました。" });
+      setFolderRenameState({ status: "error", message: "タグ名の変更中にAPI接続で失敗しました。" });
     }
   }
 
   async function handleFolderDeleteConfirm(): Promise<void> {
     const targetFolder = normalizeModuleFolderPath(folderPathFilter);
-    setFolderDeleteState({ status: "submitting", message: "フォルダを削除しています。" });
+    setFolderDeleteState({ status: "submitting", message: "タグを削除しています。" });
 
     try {
       const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
@@ -1603,26 +1743,27 @@ function ModuleSearchPage() {
       if (!response.ok || responseBody.result !== "success") {
         setFolderDeleteState({
           status: "error",
-          message: responseBody.message || `フォルダの削除に失敗しました。HTTP ${response.status}`,
+          message: responseBody.message || `タグの削除に失敗しました。HTTP ${response.status}`,
         });
         setIsFolderDeleteConfirmOpen(false);
         return;
       }
 
       setIsFolderDeleteConfirmOpen(false);
-      setFolderDeleteState({ status: "success", message: responseBody.message || "フォルダを削除しました。" });
-      setFolderPathInput("");
+      setFolderDeleteState({ status: "success", message: responseBody.message || "タグを削除しました。" });
+      const nextFolderPaths = folderPathFilters.filter((folderPath) => folderPath !== targetFolder);
+      setFolderPathInputs(nextFolderPaths);
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: "",
+        folderPaths: nextFolderPaths,
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderDeleteState({ status: "error", message: "フォルダ削除中にAPI接続で失敗しました。" });
+      setFolderDeleteState({ status: "error", message: "タグ削除中にAPI接続で失敗しました。" });
       setIsFolderDeleteConfirmOpen(false);
     }
   }
@@ -1657,75 +1798,75 @@ function ModuleSearchPage() {
     }
 
     if (folderOptions.some((folder) => normalizeModuleFolderPath(folder) === targetFolder)) {
-      setFolderCreateState({ status: "error", message: "同じ名前のフォルダが既にあります。既存フォルダへの移動を使ってください。" });
+      setFolderCreateState({ status: "error", message: "同じ名前のタグが既にあります。既存タグへの追加を使ってください。" });
       return;
     }
 
-    setFolderCreateState({ status: "submitting", message: "フォルダを作成し、選択モジュールを格納しています。" });
+    setFolderCreateState({ status: "submitting", message: "タグを作成し、選択モジュールへ関連付けています。" });
 
     try {
       const responseBody = await moveSelectedModulesToFolder(targetFolder);
 
       if (responseBody.result !== "success") {
-        setFolderCreateState({ status: "error", message: responseBody.message || "フォルダ追加に失敗しました。" });
+        setFolderCreateState({ status: "error", message: responseBody.message || "タグ追加に失敗しました。" });
         return;
       }
 
       setSelectedModuleIds([]);
       setFolderCreateInput("");
       setIsFolderCreateOpen(false);
-      setFolderCreateState({ status: "success", message: responseBody.message || "フォルダを追加しました。" });
+      setFolderCreateState({ status: "success", message: responseBody.message || "タグを追加しました。" });
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: targetFolder,
+        folderPaths: [targetFolder],
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderCreateState({ status: "error", message: "フォルダ追加中にAPI接続で失敗しました。" });
+      setFolderCreateState({ status: "error", message: "タグ追加中にAPI接続で失敗しました。" });
     }
   }
 
   function handleFolderCreateCancel(): void {
     setIsFolderCreateOpen(false);
     setFolderCreateInput("");
-    setFolderCreateState({ status: "idle", message: "新規フォルダには最低1つのモジュールを格納します。" });
+    setFolderCreateState({ status: "idle", message: "新規タグには最低1つのモジュールを関連付けます。" });
   }
 
   async function handleFolderMoveSubmit(): Promise<void> {
     const targetFolder = normalizeModuleFolderPath(folderMoveTarget);
 
     if (selectedModuleIds.length === 0) {
-      setFolderMoveState({ status: "error", message: "移動するモジュールを選択してください。" });
+      setFolderMoveState({ status: "error", message: "タグを追加するモジュールを選択してください。" });
       return;
     }
 
-    setFolderMoveState({ status: "submitting", message: "選択したモジュールを移動しています。" });
+    setFolderMoveState({ status: "submitting", message: "選択したモジュールへタグを追加しています。" });
 
     try {
       const responseBody = await moveSelectedModulesToFolder(targetFolder);
 
       if (responseBody.result !== "success") {
-        setFolderMoveState({ status: "error", message: responseBody.message || "モジュール移動に失敗しました。" });
+        setFolderMoveState({ status: "error", message: responseBody.message || "タグの追加に失敗しました。" });
         return;
       }
 
       setSelectedModuleIds([]);
-      setFolderMoveState({ status: "success", message: responseBody.message || "選択したモジュールを移動しました。" });
+      setFolderMoveState({ status: "success", message: responseBody.message || "選択したモジュールへタグを追加しました。" });
       navigateWithFilters({
         keyword,
         status: statusFilter,
         createdBy: createdByFilter,
-        folderPath: targetFolder,
+        folderPaths: [targetFolder],
         updatedFrom: updatedFromFilter,
         updatedTo: updatedToFilter,
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderMoveState({ status: "error", message: "モジュール移動中にAPI接続で失敗しました。" });
+      setFolderMoveState({ status: "error", message: "タグ追加中にAPI接続で失敗しました。" });
     }
   }
 
@@ -1733,7 +1874,8 @@ function ModuleSearchPage() {
   const moduleFolderOptions = moduleListState.folders ?? [];
   const folderOptions = moduleFolderOptions.length > 0 ? moduleFolderOptions : ["未分類"];
   const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
-  const selectedFolderLabel = folderPathFilter || "すべて";
+  const selectedTagFilterLabel = folderPathFilters.length > 0 ? folderPathFilters.join("、") : "すべて";
+  const selectedFolderLabel = folderPathFilter || "未選択";
   const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
   const canDeleteFolder = folderPathFilter !== "" && folderPathFilter !== "未分類" && folderDeleteState.status !== "submitting";
   const visibleModuleIds = Array.from(new Set(moduleListState.items.map((item) => item.module_id)));
@@ -1758,20 +1900,35 @@ function ModuleSearchPage() {
           {"作成者"}
           <input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
         </label>
-        <label>
-          {"フォルダ"}
-          <input
-            list="module-folder-search-options"
-            placeholder="未分類 / ネットワーク"
-            value={folderPathInput}
-            onChange={(event) => setFolderPathInput(event.target.value)}
-          />
-          <datalist id="module-folder-search-options">
-            {folderOptions.map((folder) => (
-              <option key={folder} value={folder} />
-            ))}
-          </datalist>
-        </label>
+        <fieldset className="module-tag-filter-field">
+          <legend>タグ</legend>
+          <details className="module-tag-filter-select">
+            <summary>
+              <span>{folderPathInputs.length > 0 ? `${folderPathInputs.length}件選択` : "すべて"}</span>
+              <small>{folderPathInputs.length > 0 ? folderPathInputs.join("、") : "タグを選択"}</small>
+            </summary>
+            <div className="module-tag-filter-menu">
+              <div className="module-tag-filter-options">
+                {folderOptions.map((folder) => (
+                  <label key={folder}>
+                    <input
+                      type="checkbox"
+                      checked={folderPathInputs.includes(folder)}
+                      onChange={() => toggleTagInput(folder)}
+                    />
+                    <span>{folder}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="module-tag-filter-footer">
+                <small>複数選択時は、すべてのタグを持つモジュールを表示します。</small>
+                <button className="text-button" type="button" onClick={() => setFolderPathInputs([])}>
+                  選択解除
+                </button>
+              </div>
+            </div>
+          </details>
+        </fieldset>
         <label>
           {"更新日"}
           <input
@@ -1801,61 +1958,41 @@ function ModuleSearchPage() {
         <div><span>{"検索キーワード"}</span><strong>{keyword || "指定なし"}</strong></div>
         <div><span>{"承認状態"}</span><strong>{statusFilterLabel}</strong></div>
         <div><span>{"作成者"}</span><strong>{createdByFilter || "指定なし"}</strong></div>
-        <div><span>{"フォルダ"}</span><strong>{folderPathFilter || "すべて"}</strong></div>
+        <div><span>タグ</span><strong>{selectedTagFilterLabel}</strong></div>
         <p>{moduleListState.message}</p>
       </section>
 
       <div className="module-explorer-layout">
-        <aside className="module-folder-pane" aria-label="モジュールフォルダ">
+        <aside className="module-folder-pane" aria-label="モジュールタグ">
           <div className="module-folder-pane-header">
-            <span>フォルダ</span>
-            <strong>{selectedFolderLabel}</strong>
+            <span>タグ</span>
+            <strong>{selectedTagFilterLabel}</strong>
           </div>
           <button
             type="button"
-            className={folderPathFilter === "" ? "module-folder-button active" : "module-folder-button"}
-            onClick={() => handleFolderFilterChange("")}
+            className={folderPathFilters.length === 0 ? "module-folder-button active" : "module-folder-button"}
+            onClick={handleTagFilterClear}
           >
             <span aria-hidden="true">▦</span>
             <span>すべて</span>
           </button>
-          <div className="module-folder-tree" role="tree" aria-label="フォルダ一覧">
+          <div className="module-folder-tree" role="tree" aria-label="タグ一覧">
             {folderTreeItems.map((folder) => (
               <button
                 key={folder.path}
                 type="button"
                 role="treeitem"
                 aria-level={folder.depth + 1}
-                className={folderPathFilter === folder.path ? "module-folder-button active" : "module-folder-button"}
+                aria-pressed={folderPathFilters.includes(folder.path)}
+                className={folderPathFilters.includes(folder.path) ? "module-folder-button active" : "module-folder-button"}
                 style={{ "--folder-depth": folder.depth } as CSSProperties}
-                onClick={() => handleFolderFilterChange(folder.path)}
+                onClick={() => handleTagFilterToggle(folder.path)}
               >
-                <span aria-hidden="true">{folder.hasDirectModule ? "▤" : "▸"}</span>
+                <span aria-hidden="true">{folderPathFilters.includes(folder.path) ? "✓" : folder.hasDirectModule ? "◇" : "▸"}</span>
                 <span>{folder.label}</span>
               </button>
             ))}
           </div>
-          <form
-            className="module-folder-rename-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleFolderRenameSubmit();
-            }}
-          >
-            <label>
-              フォルダ名変更
-              <input
-                value={folderRenameInput}
-                disabled={folderPathFilter === ""}
-                placeholder="例: ネットワーク/SBC"
-                onChange={(event) => setFolderRenameInput(event.target.value)}
-              />
-            </label>
-            <button type="submit" className="secondary" disabled={!canRenameFolder}>
-              変更
-            </button>
-            <p className={"module-folder-rename-message " + folderRenameState.status}>{folderRenameState.message}</p>
-          </form>
           <div className="module-folder-delete-panel">
             <button
               type="button"
@@ -1863,10 +2000,10 @@ function ModuleSearchPage() {
               disabled={!canDeleteFolder}
               onClick={() => setIsFolderDeleteConfirmOpen(true)}
             >
-              フォルダを削除
+              タグを削除
             </button>
-            <p className={"module-folder-rename-message " + folderDeleteState.status}>
-              {folderPathFilter === "未分類" ? "未分類フォルダは削除できません。" : folderDeleteState.message}
+            <p className={"module-folder-action-message " + folderDeleteState.status}>
+              {folderPathFilter === "未分類" ? "未分類タグは削除できません。" : folderDeleteState.message}
             </p>
           </div>
         </aside>
@@ -1878,7 +2015,7 @@ function ModuleSearchPage() {
             ))}
           </section>
 
-          <section className="module-folder-action-panel" aria-label="モジュールフォルダ操作">
+          <section className="module-folder-action-panel" aria-label="モジュールタグ操作">
             <div className="module-folder-action-summary">
               <span>選択中</span>
               <strong>{selectedModuleIds.length} 件</strong>
@@ -1886,7 +2023,7 @@ function ModuleSearchPage() {
 
             <div className="module-folder-action-card">
               <header>
-                <h2>フォルダ新規追加</h2>
+                <h2>タグ新規追加</h2>
                 {!isFolderCreateOpen ? (
                   <button className="secondary" type="button" onClick={() => setIsFolderCreateOpen(true)}>
                     + 追加
@@ -1901,7 +2038,7 @@ function ModuleSearchPage() {
                   }}
                 >
                   <label>
-                    新規フォルダ名
+                    新規タグ名
                     <input
                       value={folderCreateInput}
                       placeholder="例: ネットワーク/SBC"
@@ -1910,7 +2047,7 @@ function ModuleSearchPage() {
                   </label>
                   <div className="module-folder-action-buttons">
                     <button className="primary" type="submit" disabled={!canCreateFolder}>
-                      作成して格納
+                      作成して関連付け
                     </button>
                     <button className="secondary" type="button" onClick={handleFolderCreateCancel}>
                       キャンセル
@@ -1923,7 +2060,36 @@ function ModuleSearchPage() {
 
             <div className="module-folder-action-card">
               <header>
-                <h2>選択済みモジュールのフォルダ移動</h2>
+                <h2>タグ名変更</h2>
+                <span>操作対象: {selectedFolderLabel}</span>
+              </header>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleFolderRenameSubmit();
+                }}
+              >
+                <label>
+                  新しいタグ名
+                  <input
+                    value={folderRenameInput}
+                    disabled={folderPathFilter === ""}
+                    placeholder="例: ネットワーク/SBC"
+                    onChange={(event) => setFolderRenameInput(event.target.value)}
+                  />
+                </label>
+                <button type="submit" className="primary" disabled={!canRenameFolder}>
+                  名前を変更
+                </button>
+              </form>
+              <p className={"module-folder-action-message " + folderRenameState.status}>
+                {folderPathFilter === "" ? "左のタグ一覧から変更対象を選択してください。" : folderRenameState.message}
+              </p>
+            </div>
+
+            <div className="module-folder-action-card">
+              <header>
+                <h2>選択済みモジュールへタグ追加</h2>
               </header>
               <form
                 onSubmit={(event) => {
@@ -1932,17 +2098,17 @@ function ModuleSearchPage() {
                 }}
               >
                 <label>
-                  既存の移動先フォルダ
+                  追加するタグ
                   <select value={folderMoveTarget} onChange={(event) => setFolderMoveTarget(event.target.value)}>
                     {folderOptions.map((folder) => (
                       <option key={folder} value={folder}>
-                        {folder}
+                        {folder === "未分類" ? "未分類（他の所属を解除）" : folder}
                       </option>
                     ))}
                   </select>
                 </label>
                 <button className="secondary" type="submit" disabled={!canMoveSelectedModules}>
-                  選択モジュールを移動
+                  タグを追加
                 </button>
               </form>
               <p className={"module-folder-action-message " + folderMoveState.status}>{folderMoveState.message}</p>
@@ -1969,7 +2135,7 @@ function ModuleSearchPage() {
                 </label>,
                 "モジュールID",
                 "モジュール名",
-                "フォルダ",
+                "タグ",
                 "版",
                 "承認状態",
                 "行数",
@@ -1987,7 +2153,7 @@ function ModuleSearchPage() {
                 />,
                 item.module_key,
                 item.module_name,
-                item.folder_path || "未分類",
+                <ModuleFolderMembershipList item={item} />,
                 formatVersionLabel(item),
                 <ModuleStatusPill status={item.status} label={item.status_label} />,
                 item.row_count,
@@ -2010,8 +2176,8 @@ function ModuleSearchPage() {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <span className="modal-icon" aria-hidden="true">-</span>
-            <h2 id="folder-delete-dialog-title">フォルダを削除しますか？</h2>
-            <p>「{folderPathFilter}」と配下のフォルダを削除し、格納されているモジュールを「未分類」へ移動します。</p>
+            <h2 id="folder-delete-dialog-title">タグを削除しますか？</h2>
+            <p>「{folderPathFilter}」を削除します。他にタグがないモジュールだけ「未分類」へ移動します。</p>
             <div className="modal-actions">
               <button className="secondary" type="button" onClick={() => setIsFolderDeleteConfirmOpen(false)}>
                 キャンセル
@@ -2747,7 +2913,9 @@ function ModuleSimilarityReview({
   registrationConfirmed,
   diffState,
   diffCandidate,
+  downloadState,
   onShowDiff,
+  onDownloadDiff,
   onContinue,
   onCancel,
 }: {
@@ -2755,7 +2923,9 @@ function ModuleSimilarityReview({
   registrationConfirmed: boolean;
   diffState: ModuleDiffState;
   diffCandidate: ModuleSimilarityCandidateData | null;
+  downloadState: ModuleSimilarityDiffDownloadState;
   onShowDiff: (candidate: ModuleSimilarityCandidateData) => void;
+  onDownloadDiff: (candidate: ModuleSimilarityCandidateData) => void;
   onContinue: () => void;
   onCancel: () => void;
 }) {
@@ -2842,21 +3012,46 @@ function ModuleSimilarityReview({
                   </span>
                 </div>
                 <div role="cell">
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={() => onShowDiff(candidate)}
-                    disabled={
-                      diffState.status === "loading"
-                      && diffCandidate?.module_version_id === candidate.module_version_id
-                    }
-                  >
-                    差分を見る
-                  </button>
+                  <div className="module-similarity-row-actions">
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => onShowDiff(candidate)}
+                      disabled={
+                        diffState.status === "loading"
+                        && diffCandidate?.module_version_id === candidate.module_version_id
+                      }
+                    >
+                      差分を見る
+                    </button>
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => onDownloadDiff(candidate)}
+                      disabled={
+                        downloadState.status === "loading"
+                        && downloadState.candidateId === candidate.module_version_id
+                      }
+                    >
+                      {downloadState.status === "loading"
+                      && downloadState.candidateId === candidate.module_version_id
+                        ? "作成中..."
+                        : "差分Excel"}
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
+
+          {downloadState.status !== "idle" ? (
+            <p
+              className={`module-similarity-download-status ${downloadState.status}`}
+              aria-live="polite"
+            >
+              {downloadState.message}
+            </p>
+          ) : null}
 
           <div className="module-similarity-actions">
             <button className="danger" type="button" onClick={onCancel}>
@@ -3854,6 +4049,8 @@ function ModuleRegisterPageV2() {
   };
 
   const navigate = useNavigate();
+  const currentUser = getStoredAuthUser();
+  const isAdmin = currentUser?.role === "admin";
   const [searchParams] = useSearchParams();
   const versionSourceModuleId = searchParams.get("module_id");
   const versionSourceModuleKey = searchParams.get("module_key");
@@ -3907,7 +4104,9 @@ function ModuleRegisterPageV2() {
   const [importPreviewState, setImportPreviewState] = useState<ModuleImportPreviewState>({
     status: "idle",
     item: null,
-    message: "Excel取込プレビューはまだ実行していません。",
+    message: isAdmin
+      ? "Excel取込プレビューはまだ実行していません。"
+      : "Excelファイルはまだ取り込まれていません。",
   });
   const [similarityState, setSimilarityState] = useState<ModuleSimilarityCheckState>({
     status: "idle",
@@ -3921,6 +4120,11 @@ function ModuleRegisterPageV2() {
     message: "候補を選ぶと取込内容との差分を確認できます。",
   });
   const [similarityDiffCandidate, setSimilarityDiffCandidate] = useState<ModuleSimilarityCandidateData | null>(null);
+  const [similarityDiffDownloadState, setSimilarityDiffDownloadState] = useState<ModuleSimilarityDiffDownloadState>({
+    status: "idle",
+    candidateId: null,
+    message: "",
+  });
   const [importFileInputKey, setImportFileInputKey] = useState(0);
   const [isWorkbookImportApplied, setIsWorkbookImportApplied] = useState(false);
   const [isImportPreviewFullscreenOpen, setIsImportPreviewFullscreenOpen] = useState(false);
@@ -4138,6 +4342,11 @@ function ModuleRegisterPageV2() {
       item: null,
       message: "候補を選ぶと取込内容との差分を確認できます。",
     });
+    setSimilarityDiffDownloadState({
+      status: "idle",
+      candidateId: null,
+      message: "",
+    });
   }
 
   async function runSimilarityCheck(payload: ModuleImportPreviewData): Promise<void> {
@@ -4152,6 +4361,11 @@ function ModuleRegisterPageV2() {
       status: "idle",
       item: null,
       message: "候補を選ぶと取込内容との差分を確認できます。",
+    });
+    setSimilarityDiffDownloadState({
+      status: "idle",
+      candidateId: null,
+      message: "",
     });
 
     try {
@@ -4229,6 +4443,82 @@ function ModuleRegisterPageV2() {
         status: "unavailable",
         item: null,
         message: error instanceof Error ? error.message : "差分取得に失敗しました。",
+      });
+    }
+  }
+
+  async function handleSimilarityDiffDownload(
+    candidate: ModuleSimilarityCandidateData,
+  ): Promise<void> {
+    if (!selectedImportFile) {
+      setSimilarityDiffDownloadState({
+        status: "error",
+        candidateId: candidate.module_version_id,
+        message: "比較対象のExcelファイルを選択してください。",
+      });
+      return;
+    }
+
+    setSimilarityDiffDownloadState({
+      status: "loading",
+      candidateId: candidate.module_version_id,
+      message: `${candidate.module_key} との差分Excelを作成しています...`,
+    });
+
+    try {
+      const query = new URLSearchParams({
+        version_no: String(candidate.version_no),
+        filename: selectedImportFile.name,
+      });
+      if (createdByInput.trim()) {
+        query.set("created_by", createdByInput.trim());
+      }
+      const response = await fetch(
+        buildApiUrl(`/api/v1/modules/${candidate.module_id}/diff-preview/download?${query.toString()}`),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+          },
+          body: await selectedImportFile.arrayBuffer(),
+        },
+      );
+
+      if (!response.ok) {
+        const responseBody = await readApiResponse<unknown>(response);
+        setSimilarityDiffDownloadState({
+          status: "error",
+          candidateId: candidate.module_version_id,
+          message: responseBody.message || `差分Excelの作成に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition") ?? "";
+      const encodedFilename = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+      const plainFilename = contentDisposition.match(/filename="?([^";]+)"?/i)?.[1];
+      const filename = encodedFilename
+        ? decodeURIComponent(encodedFilename)
+        : plainFilename ?? `module-diff-${candidate.module_key}-v${candidate.version_no}-import.xlsx`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+      setSimilarityDiffDownloadState({
+        status: "success",
+        candidateId: candidate.module_version_id,
+        message: `${filename} をダウンロードしました。比較元・比較先の淡い紫色のセルが差分です。`,
+      });
+    } catch (error) {
+      setSimilarityDiffDownloadState({
+        status: "error",
+        candidateId: candidate.module_version_id,
+        message: error instanceof Error ? error.message : "差分Excelの作成に失敗しました。",
       });
     }
   }
@@ -4400,6 +4690,11 @@ function ModuleRegisterPageV2() {
           status: "idle",
           item: null,
           message: "候補を選ぶと行単位の差分を確認できます。",
+        });
+        setSimilarityDiffDownloadState({
+          status: "idle",
+          candidateId: null,
+          message: "",
         });
         setCreateState({
           status: "error",
@@ -4872,8 +5167,16 @@ function ModuleRegisterPageV2() {
                 type="file"
                 accept=".xlsx,.xlsm"
                 onChange={(event) => {
-                  setSelectedImportFile(event.target.files?.[0] ?? null);
+                  const nextFile = event.target.files?.[0] ?? null;
+                  setSelectedImportFile(nextFile);
                   setIsWorkbookImportApplied(false);
+                  setImportPreviewState({
+                    status: "idle",
+                    item: null,
+                    message: nextFile
+                      ? "ファイル取込を実行してください。"
+                      : "先に xlsx / xlsm ファイルを選択してください。",
+                  });
                   resetSimilarityReview();
                   setCreateState({
                     status: "idle",
@@ -4889,60 +5192,98 @@ function ModuleRegisterPageV2() {
             <strong>{selectedImportFile ? "選択済み" : "未選択"}</strong>
             <p>{selectedImportFile ? `${selectedImportFile.name} を選択しています。` : "先に xlsx / xlsm ファイルを選択してください。"}</p>
           </section>
-        </section>
-
-        <section className="register-step-card">
-          <div className="register-step-header">
-            <div>
-              <h2>Excel取込プレビュー</h2>
-              <p className="register-section-copy">
-                現在の入力を 1 シート相当の JSON として <code>POST /api/v1/modules/import-sheet</code> に送り、正規化内容を確認します。
-              </p>
-            </div>
-            <button className="secondary" type="button" onClick={() => void handleImportPreview()}>
-              <span aria-hidden="true">→</span>
-              プレビュー実行
-            </button>
-          </div>
-
-          <section
-            className={`register-status ${
-              importPreviewState.status === "success"
-                ? "register-status-success"
-                : importPreviewState.status === "error"
-                  ? "register-status-error"
-                  : importPreviewState.status === "submitting"
-                    ? "register-status-submitting"
-                    : ""
-            }`}
-          >
-            <span>プレビュー状態</span>
-            <strong>
-              {importPreviewState.status === "success"
-                ? "正規化完了"
-                : importPreviewState.status === "error"
-                  ? "変換失敗"
-                  : importPreviewState.status === "submitting"
-                    ? "変換中"
-                    : "未実行"}
-            </strong>
-            <p>{importPreviewState.message}</p>
-            {previewItem ? (
-              <>
+          {!isAdmin ? (
+            <section
+              aria-live="polite"
+              className={`register-status ${
+                importPreviewState.status === "success"
+                  ? "register-status-success"
+                  : importPreviewState.status === "error"
+                    ? "register-status-error"
+                    : importPreviewState.status === "submitting"
+                      ? "register-status-submitting"
+                      : ""
+              }`}
+            >
+              <span>取込状態</span>
+              <strong>
+                {importPreviewState.status === "success"
+                  ? "取込完了"
+                  : importPreviewState.status === "error"
+                    ? "取込失敗"
+                    : importPreviewState.status === "submitting"
+                      ? "取込中"
+                      : selectedImportFile
+                        ? "取込待ち"
+                        : "未選択"}
+              </strong>
+              <p>{importPreviewState.message}</p>
+              {importPreviewState.status === "success" && previewItem ? (
                 <div className="register-result-meta">
                   <span>{previewItem.module_key ?? "自動採番"}</span>
                   <span>{previewItem.module_name}</span>
                   <span>{`装置 ${previewItem.device_headers.length} 台`}</span>
                   <span>{`手順行 ${previewItem.rows.length} 行`}</span>
                 </div>
-                <details className="json-preview-wrap">
-                  <summary>正規化結果を表示</summary>
-                  <pre className="json-preview">{JSON.stringify(previewItem, null, 2)}</pre>
-                </details>
-              </>
-            ) : null}
-          </section>
+              ) : null}
+            </section>
+          ) : null}
         </section>
+
+        {isAdmin ? (
+          <section className="register-step-card">
+            <div className="register-step-header">
+              <div>
+                <h2>Excel取込プレビュー</h2>
+                <p className="register-section-copy">
+                  現在の入力を 1 シート相当の JSON として <code>POST /api/v1/modules/import-sheet</code> に送り、正規化内容を確認します。
+                </p>
+              </div>
+              <button className="secondary" type="button" onClick={() => void handleImportPreview()}>
+                <span aria-hidden="true">→</span>
+                プレビュー実行
+              </button>
+            </div>
+
+            <section
+              className={`register-status ${
+                importPreviewState.status === "success"
+                  ? "register-status-success"
+                  : importPreviewState.status === "error"
+                    ? "register-status-error"
+                    : importPreviewState.status === "submitting"
+                      ? "register-status-submitting"
+                      : ""
+              }`}
+            >
+              <span>プレビュー状態</span>
+              <strong>
+                {importPreviewState.status === "success"
+                  ? "正規化完了"
+                  : importPreviewState.status === "error"
+                    ? "変換失敗"
+                    : importPreviewState.status === "submitting"
+                      ? "変換中"
+                      : "未実行"}
+              </strong>
+              <p>{importPreviewState.message}</p>
+              {previewItem ? (
+                <>
+                  <div className="register-result-meta">
+                    <span>{previewItem.module_key ?? "自動採番"}</span>
+                    <span>{previewItem.module_name}</span>
+                    <span>{`装置 ${previewItem.device_headers.length} 台`}</span>
+                    <span>{`手順行 ${previewItem.rows.length} 行`}</span>
+                  </div>
+                  <details className="json-preview-wrap">
+                    <summary>正規化結果を表示</summary>
+                    <pre className="json-preview">{JSON.stringify(previewItem, null, 2)}</pre>
+                  </details>
+                </>
+              ) : null}
+            </section>
+          </section>
+        ) : null}
 
         <section
           className={`register-status ${
@@ -4981,7 +5322,9 @@ function ModuleRegisterPageV2() {
           registrationConfirmed={similarityRegistrationConfirmed}
           diffState={similarityDiffState}
           diffCandidate={similarityDiffCandidate}
+          downloadState={similarityDiffDownloadState}
           onShowDiff={(candidate) => void handleSimilarityDiff(candidate)}
+          onDownloadDiff={(candidate) => void handleSimilarityDiffDownload(candidate)}
           onContinue={() => setSimilarityRegistrationConfirmed(true)}
           onCancel={handleCancelSimilarityRegistration}
         />
@@ -4999,7 +5342,7 @@ function ModuleRegisterPageV2() {
           </button>
         </Toolbar>
       </form>
-            {isImportPreviewFullscreenOpen && previewItem && previewModuleItem ? (
+            {isAdmin && isImportPreviewFullscreenOpen && previewItem && previewModuleItem ? (
         <PreviewOverlay
           title="Excel取込プレビュー"
           description="現在の取込結果を保存前に全画面で確認します。Excel出力と同じ列構造で、装置が横に増えていく形で表示します。"
@@ -6515,13 +6858,16 @@ const caseDocText = {
   resolving: "案件CS生成用の値を解決しています。",
   resolveFailed: "値の解決に失敗しました。",
   resolved: "案件CS生成用の値を解決しました。",
-  generate: "案件CSを生成",
+  generate: "保存先を選んで案件CSを生成",
   generateStatus: "生成状態",
   generateReady: "解決値を確認後、案件CSを生成できます。",
   generateFirst: "先に解決値を確認してください。",
   generating: "案件CSを生成しています。",
   generated: "案件CSを生成しました。",
   generateFailed: "案件CSの生成に失敗しました。",
+  saveDestinationCancelled: "保存先の選択をキャンセルしました。",
+  saveDestinationFailed: "保存先の選択に失敗しました。",
+  saveFailed: "案件CSの保存に失敗しました。",
   selectTargetRequired: "対象装置を1台以上選択してください。",
 };
 
@@ -6880,6 +7226,20 @@ function CaseDocsPage() {
       return;
     }
 
+    const suggestedFilename = `case-doc-${selectedSourceDocId}-${selectedUnitConfig.unit_config_id}.xlsm`;
+    let saveSelection: CaseDocSaveSelection | null;
+    try {
+      saveSelection = await selectCaseDocSaveDestination(suggestedFilename);
+    } catch {
+      setGenerateState({ status: "error", filename: null, message: caseDocText.saveDestinationFailed });
+      return;
+    }
+
+    if (saveSelection === null) {
+      setGenerateState({ status: "idle", filename: null, message: caseDocText.saveDestinationCancelled });
+      return;
+    }
+
     setGenerateState({ status: "submitting", filename: null, message: caseDocText.generating });
 
     try {
@@ -6912,16 +7272,13 @@ function CaseDocsPage() {
       const blob = await response.blob();
       const contentDisposition = response.headers.get("Content-Disposition") ?? "";
       const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/);
-      const filename = filenameMatch?.[1] ?? `case-doc-${selectedSourceDocId}-${selectedUnitConfig.unit_config_id}.xlsm`;
-      const downloadUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(downloadUrl);
-      setGenerateState({ status: "success", filename, message: `${caseDocText.generated} ${filename}` });
+      const filename = filenameMatch?.[1] ?? suggestedFilename;
+      try {
+        const savedFilename = await saveCaseDocBlob(blob, filename, saveSelection);
+        setGenerateState({ status: "success", filename: savedFilename, message: `${caseDocText.generated} ${savedFilename}` });
+      } catch {
+        setGenerateState({ status: "error", filename: null, message: caseDocText.saveFailed });
+      }
     } catch {
       setGenerateState({ status: "error", filename: null, message: caseDocText.apiFailed });
     }
@@ -7816,7 +8173,7 @@ function ModuleApprovalStatusPage() {
           rows={filteredModuleItems.map((item) => [
             item.module_key,
             item.module_name,
-            item.folder_path || "未分類",
+            <ModuleFolderMembershipList item={item} />,
             formatVersionLabel(item),
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             selectedItem?.target_id === item.module_id && selectedItem.version_no === item.version_no

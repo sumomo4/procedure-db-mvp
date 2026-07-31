@@ -329,8 +329,11 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
                     "MOD-001",
                     "初期点検手順",
                     "説明",
+                    ["ネットワーク", "SBC"],
                     10,
                     1,
+                    0,
+                    0,
                     "draft",
                     3,
                     "作業開始前の状態を確認する",
@@ -342,16 +345,35 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
         ),
     )
 
-    result = list_modules(AppSettings(), keyword="点検", status_filter="draft")
+    result = list_modules(
+        AppSettings(),
+        keyword="点検",
+        status_filter="draft",
+        folder_paths=["ネットワーク", "SBC"],
+    )
 
     assert any(
-        parameters == {"keyword": "%点検%", "status_filter": "draft"}
+        parameters
+        == {
+            "keyword": "%点検%",
+            "status_filter": "draft",
+            "folder_path_0": "ネットワーク",
+            "folder_path_1": "SBC",
+        }
         for _, parameters in fake_cursor.executions
     )
+    filtered_query = next(
+        query
+        for query, parameters in fake_cursor.executions
+        if parameters.get("folder_path_0") == "ネットワーク"
+    )
+    assert "folder_filter_0.folder_path = %(folder_path_0)s" in filtered_query
+    assert "folder_filter_1.folder_path = %(folder_path_1)s" in filtered_query
     assert result.items[0].module_id == 1
     assert result.items[0].module_key == "MOD-001"
     assert result.items[0].module_name == "初期点検手順"
-    assert result.items[0].folder_path == "未分類"
+    assert result.items[0].folder_path == "ネットワーク"
+    assert result.items[0].folder_paths == ["ネットワーク", "SBC"]
     assert result.items[0].status == "draft"
     assert result.items[0].status_label == "作成中"
     assert result.items[0].row_count == 3
