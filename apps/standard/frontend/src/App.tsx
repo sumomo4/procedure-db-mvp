@@ -6823,7 +6823,7 @@ const caseDocText = {
   targetDevice: "対象装置",
   none: "未選択",
   targetDeviceSlots: "対象装置番号対応表",
-  excelNo: "Excel番号",
+  excelNo: "target番号",
   hostAssignments: "ホスト割当",
   commonValues: "共通値",
   resolvedValues: "解決済み値",
