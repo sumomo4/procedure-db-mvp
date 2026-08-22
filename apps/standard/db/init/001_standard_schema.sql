@@ -250,6 +250,85 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_items_blueprint_version_id
 CREATE INDEX IF NOT EXISTS idx_blueprint_items_module_version_id
     ON proc.blueprint_items (module_version_id);
 
+CREATE TABLE IF NOT EXISTS proc.case_documents (
+    case_document_id bigserial PRIMARY KEY,
+    case_document_key text NOT NULL UNIQUE,
+    source_doc_id bigint NOT NULL,
+    source_doc_version_id bigint NOT NULL,
+    source_doc_key text NOT NULL,
+    source_doc_name text NOT NULL,
+    unit_config_id text NOT NULL,
+    prefecture text NOT NULL,
+    building text NOT NULL,
+    context_json jsonb NOT NULL,
+    workbook_path text NOT NULL,
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed')),
+    created_by text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    completed_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS proc.case_document_targets (
+    case_document_target_id bigserial PRIMARY KEY,
+    case_document_id bigint NOT NULL REFERENCES proc.case_documents (case_document_id) ON DELETE CASCADE,
+    target_no integer NOT NULL CHECK (target_no BETWEEN 1 AND 20),
+    slot_key text NOT NULL,
+    device_type text NOT NULL,
+    system text,
+    host_name text NOT NULL,
+    UNIQUE (case_document_id, target_no)
+);
+
+CREATE TABLE IF NOT EXISTS proc.case_document_execution_items (
+    execution_item_id bigserial PRIMARY KEY,
+    case_document_id bigint NOT NULL REFERENCES proc.case_documents (case_document_id) ON DELETE CASCADE,
+    module_row_id bigint,
+    row_order integer NOT NULL CHECK (row_order > 0),
+    target_no integer NOT NULL CHECK (target_no BETWEEN 1 AND 20),
+    excel_cell text NOT NULL,
+    major_no text,
+    middle_no text,
+    minor_no text,
+    tech_doc_text text,
+    work_text text,
+    check_text text,
+    window_text text,
+    p_text text,
+    command_text text,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'checked', 'skipped')),
+    performed_at timestamptz,
+    performed_by text,
+    skip_reason text,
+    lock_version integer NOT NULL DEFAULT 0 CHECK (lock_version >= 0),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (case_document_id, row_order, target_no)
+);
+
+ALTER TABLE proc.case_document_execution_items
+    ADD COLUMN IF NOT EXISTS tech_doc_text text;
+ALTER TABLE proc.case_document_execution_items
+    ADD COLUMN IF NOT EXISTS window_text text;
+ALTER TABLE proc.case_document_execution_items
+    ADD COLUMN IF NOT EXISTS p_text text;
+
+CREATE INDEX IF NOT EXISTS idx_case_document_execution_items_case_document
+    ON proc.case_document_execution_items (case_document_id, row_order, target_no);
+
+CREATE TABLE IF NOT EXISTS proc.case_document_execution_histories (
+    history_id bigserial PRIMARY KEY,
+    execution_item_id bigint NOT NULL REFERENCES proc.case_document_execution_items (execution_item_id) ON DELETE CASCADE,
+    from_status text NOT NULL CHECK (from_status IN ('pending', 'checked', 'skipped')),
+    to_status text NOT NULL CHECK (to_status IN ('pending', 'checked', 'skipped')),
+    changed_at timestamptz NOT NULL DEFAULT now(),
+    changed_by text,
+    note text
+);
+
+CREATE INDEX IF NOT EXISTS idx_case_document_execution_histories_item
+    ON proc.case_document_execution_histories (execution_item_id, changed_at);
+
 INSERT INTO proc.modules (module_key, name, description)
 VALUES
     ('MOD-001', '初期点検手順', '作業開始前の確認を行うモジュール'),

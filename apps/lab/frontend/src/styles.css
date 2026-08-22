@@ -8,6 +8,315 @@
   -webkit-font-smoothing: antialiased;
 }
 
+.case-execution-selector {
+  display: grid;
+  grid-template-columns: minmax(280px, 640px) 1fr;
+  align-items: end;
+  gap: 16px;
+}
+
+.case-execution-selector label {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.case-execution-completed-section {
+  display: grid;
+  gap: 14px;
+}
+
+.case-execution-completed-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.case-execution-completed-heading h2 {
+  margin: 0;
+}
+
+.case-execution-completed-heading span {
+  color: #41505a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.case-execution-completed-section .table-wrap {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.case-execution-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 20px 0;
+}
+
+.case-execution-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.case-execution-grid-section {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 0;
+  overflow: hidden;
+  contain: inline-size;
+}
+
+.case-execution-sheet-heading {
+  padding: 0 24px 18px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.case-execution-sheet-heading h2,
+.case-execution-sheet-heading p {
+  margin: 0;
+}
+
+.case-execution-sheet-heading p {
+  margin-top: 6px;
+  color: #56636c;
+}
+
+.case-execution-step-pager {
+  min-height: 64px;
+  padding: 10px 24px;
+  border-top: 1px solid #c8d4d8;
+  border-bottom: 1px solid #c8d4d8;
+  display: grid;
+  grid-template-columns: 112px minmax(260px, 1fr) 112px;
+  align-items: center;
+  gap: 14px;
+  background: #eef4f6;
+}
+
+.case-execution-step-pager button {
+  width: 100%;
+  margin: 0;
+}
+
+.case-execution-step-current {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #40515a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.case-execution-step-current strong {
+  color: #172026;
+  font-size: 20px;
+}
+
+.case-execution-step-validation {
+  flex-basis: 100%;
+  color: #b63d2a;
+  text-align: center;
+  font-weight: 900;
+}
+
+.case-execution-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: #41505a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.case-execution-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.case-execution-legend i {
+  width: 12px;
+  height: 12px;
+  border: 1px solid #9aa6ac;
+}
+
+.case-execution-legend-pending {
+  background: #ffffff;
+}
+
+.case-execution-legend-checked {
+  background: #e4f2e8;
+}
+
+.case-execution-legend-skipped {
+  background: #d9d9d9;
+}
+
+.case-execution-table-wrap {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  max-height: 68vh;
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior-x: contain;
+  contain: inline-size;
+}
+
+.case-execution-table-wrap.excel-sheet-scroll-case {
+  padding-right: 0;
+}
+
+.case-execution-table-wrap .case-execution-sheet {
+  margin-right: var(--sticky-scroll-tail-width);
+}
+
+.case-execution-sheet .excel-col-time {
+  width: 78px;
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(1) {
+  position: sticky;
+  left: 0;
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(2) {
+  position: sticky;
+  left: 24px;
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(3) {
+  position: sticky;
+  left: 48px;
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(4) {
+  position: sticky;
+  left: 72px;
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(5) {
+  position: sticky;
+  left: 150px;
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > :nth-child(6) {
+  position: sticky;
+  left: 426px;
+  box-shadow: 5px 0 8px rgba(16, 32, 42, 0.18);
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > td:nth-child(-n + 6) {
+  z-index: 4;
+  background: #ffffff;
+}
+
+.case-execution-sticky tr:not(.excel-case-title-row):not(.excel-case-device-meta-row):not(.excel-case-spacer-row):not(.excel-case-group-row) > th:nth-child(-n + 6) {
+  z-index: 7;
+  background: #d4e9fb;
+}
+
+.case-execution-sheet td.case-execution-time-cell {
+  padding: 3px;
+  vertical-align: middle;
+}
+
+.case-execution-time-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 3px;
+}
+
+.case-execution-icon-button,
+.case-execution-reset-button {
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid #9aa6ac;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #17343d;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.case-execution-check-button:hover:not(:disabled) {
+  border-color: #2f8a56;
+  background: #e4f2e8;
+}
+
+.case-execution-skip-button:hover:not(:disabled) {
+  border-color: #68767d;
+  background: #e7eaeb;
+}
+
+.case-execution-time-value {
+  display: block;
+  font-size: 11px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.case-execution-reset-button {
+  width: 24px;
+  min-height: 22px;
+  margin: 3px auto 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.case-execution-sheet td.case-execution-checked {
+  background: #e4f2e8;
+}
+
+.case-execution-sheet td.case-execution-skipped {
+  background: #d9d9d9;
+  color: #3f474b;
+}
+
+.case-execution-sheet td.case-execution-pending {
+  background: #ffffff;
+}
+
+@media (max-width: 1000px) {
+  .case-execution-selector,
+  .case-execution-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .case-execution-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .case-execution-sheet-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .case-execution-step-pager {
+    grid-template-columns: 96px minmax(0, 1fr) 96px;
+    padding-inline: 14px;
+  }
+
+  .case-execution-step-current {
+    gap: 4px 10px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -188,7 +497,8 @@ textarea {
   color: #ffffff;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 18px;
+  overflow-y: auto;
 }
 
 .brand {
@@ -234,9 +544,35 @@ textarea {
   color: #ffffff;
 }
 
-nav {
+.sidebar-nav {
   display: grid;
   gap: 8px;
+}
+
+.sidebar-nav-group {
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sidebar-nav-group h2 {
+  margin: 0;
+  padding: 0 12px 3px;
+  color: #9fb3b8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sidebar-nav-links {
+  display: grid;
+  gap: 2px;
+}
+
+.sidebar-nav-group .nav-link {
+  min-height: 38px;
+  padding-left: 18px;
+  font-size: 14px;
 }
 
 .nav-link {
@@ -341,6 +677,65 @@ nav {
   padding: 34px;
 }
 
+.workflow-navigation {
+  width: 100%;
+  margin-bottom: 22px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #ded6c8;
+  border-bottom: 1px solid #ded6c8;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.workflow-navigation-step {
+  min-height: 36px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #56636c;
+  text-decoration: none;
+  font-weight: 800;
+}
+
+.workflow-navigation-step > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #b8c1c4;
+  border-radius: 50%;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.workflow-navigation-step.active {
+  color: #155f68;
+}
+
+.workflow-navigation-step.active > span {
+  border-color: #1f6f78;
+  color: #ffffff;
+  background: #1f6f78;
+}
+
+.workflow-navigation-step.passed > span {
+  border-color: #82aeb3;
+  color: #155f68;
+  background: #dceced;
+}
+
+.workflow-navigation-step:hover {
+  color: #155f68;
+}
+
+.workflow-navigation-arrow {
+  color: #8b979c;
+  font-weight: 900;
+}
+
 .preview-screen {
   min-height: 100vh;
   padding: 30px;
@@ -429,6 +824,9 @@ nav {
 }
 
 .page {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   display: grid;
   gap: 24px;
 }
@@ -451,6 +849,130 @@ nav {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
+}
+
+.workflow-dashboard {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid #d6cdbc;
+  border-bottom: 1px solid #d6cdbc;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.workflow-stage-card {
+  min-width: 0;
+  min-height: 166px;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.workflow-stage-card + .workflow-stage-card {
+  border-left: 1px solid #d6cdbc;
+}
+
+.workflow-stage-number {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #1f6f78;
+  font-weight: 900;
+}
+
+.workflow-stage-card h2,
+.workflow-stage-card p {
+  margin: 0;
+}
+
+.workflow-stage-card h2 {
+  font-size: 19px;
+}
+
+.workflow-stage-card p {
+  margin-top: 8px;
+  color: #56636c;
+}
+
+.workflow-stage-card p strong {
+  margin-right: 4px;
+  color: #172026;
+  font-size: 26px;
+}
+
+.workflow-stage-link {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  color: #155f68;
+  text-decoration: none;
+  font-weight: 900;
+}
+
+.work-queue-section {
+  display: grid;
+  gap: 18px;
+}
+
+.work-queue-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.work-queue-card {
+  min-height: 104px;
+  padding: 16px;
+  border: 1px solid #d6cdbc;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #ffffff;
+}
+
+.work-queue-card > div {
+  display: grid;
+  gap: 5px;
+}
+
+.work-queue-card span {
+  color: #56636c;
+  font-weight: 800;
+}
+
+.work-queue-card strong {
+  font-size: 28px;
+}
+
+.work-queue-card strong small {
+  margin-left: 4px;
+  font-size: 13px;
+}
+
+.overview-state {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: #6a521a;
+  background: #f7e8bd;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.overview-state-available {
+  color: #256744;
+  background: #dfeee5;
+}
+
+.overview-state-unavailable {
+  color: #8d392c;
+  background: #f4ddd8;
 }
 
 .api-health {
@@ -3257,6 +3779,24 @@ th {
   .sidebar {
     position: static;
     height: auto;
+  }
+
+  .workflow-navigation {
+    overflow-x: auto;
+  }
+
+  .workflow-navigation-step {
+    flex: 0 0 auto;
+  }
+
+  .workflow-dashboard,
+  .work-queue-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-stage-card + .workflow-stage-card {
+    border-left: 0;
+    border-top: 1px solid #d6cdbc;
   }
 
   .dashboard-grid,

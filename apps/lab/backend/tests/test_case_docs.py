@@ -10,9 +10,22 @@ from fastapi import status
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
-from app.core.case_doc_generation import TEMPLATE_PATH
+from app.core.case_doc_generation import (
+    TEMPLATE_PATH,
+    build_case_doc_evidence_workbook_bytes,
+    build_case_doc_execution_item_snapshots,
+    build_case_doc_workbook_bytes,
+)
 from app.core.config import AppSettings
 from app.core.responses import (
+    CaseDocExecutionHistoryData,
+    CaseDocExecutionItemData,
+    CaseDocHostAssignmentData,
+    CaseDocInstanceDetailData,
+    CaseDocTargetDeviceSlotData,
+    CaseDocResolveContextData,
+    CaseDocResolvedPlaceholderData,
+    CaseDocUnitConfigItemData,
     ModuleRowData,
     ModuleRowDeviceEntryData,
     ModuleRowImageData,
@@ -168,6 +181,39 @@ def _mock_source_doc_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.routers.case_docs.get_source_doc_detail",
         lambda settings, source_doc_id: _fake_source_doc_detail(source_doc_id),
+    )
+
+
+def _fake_case_doc_context() -> CaseDocResolveContextData:
+    assignments = [
+        CaseDocHostAssignmentData(slot_key="SBC_0", device_type="SBC", system="0", host_name="sbc-test-0"),
+        CaseDocHostAssignmentData(slot_key="SBC_1", device_type="SBC", system="1", host_name="sbc-test-1"),
+    ]
+    slots = [
+        CaseDocTargetDeviceSlotData(
+            excel_no=index + 1,
+            slot_key=assignment.slot_key,
+            device_type=assignment.device_type,
+            system=assignment.system,
+            host_name=assignment.host_name,
+        )
+        for index, assignment in enumerate(assignments)
+    ]
+    return CaseDocResolveContextData(
+        source_doc_id=1,
+        unit_config=CaseDocUnitConfigItemData(
+            unit_config_id="unit-test-001",
+            fs_cluster_name="FS-TEST-001",
+            block="B001",
+            prefecture="東京都",
+            building="テストビル",
+        ),
+        target_assignment=assignments[0],
+        target_assignments=assignments,
+        target_device_slots=slots,
+        host_assignments=assignments,
+        common_values=[],
+        resolved_placeholders=[],
     )
 
 
@@ -589,6 +635,8 @@ def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch
     assert workbook["\u539f\u672c\u5c55\u958b"].sheet_state == "hidden"
     template_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
     assert template_sheet["A1"].value == "01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63"
+
+
     assert template_sheet["K1"].value == "target"
     assert template_sheet["K2"].value == 1
     assert template_sheet["M4"].value == "sbc-tyo-cl1-0"
@@ -842,3 +890,96 @@ def test_generate_case_doc_preserves_device_specific_commands(client: TestClient
     assert template_sheet["M7"].value == "slot-1-command"
     assert template_sheet["P7"].value == "WIN"
     assert template_sheet["Q7"].value == "slot-2-command"
+
+
+def test_case_doc_execution_snapshots_map_each_target_to_its_time_cell() -> None:
+    source_doc = _fake_source_doc_detail(1)
+    context = _fake_case_doc_context()
+
+    snapshots = build_case_doc_execution_item_snapshots(source_doc, context)
+
+    assert len(snapshots) == 4
+    assert [item["target_no"] for item in snapshots] == [1, 2, 1, 2]
+    assert snapshots[0]["excel_cell"].startswith("J")
+    assert snapshots[1]["excel_cell"].startswith("N")
+    assert snapshots[0]["host_name"] == "sbc-test-0"
+    assert snapshots[1]["host_name"] == "sbc-test-1"
+    assert "tech_doc_text" in snapshots[0]
+    assert "window_text" in snapshots[0]
+    assert "p_text" in snapshots[0]
+
+
+def test_case_doc_evidence_workbook_writes_checked_time_and_skip_fill() -> None:
+    source_doc = _fake_source_doc_detail(1)
+    context = _fake_case_doc_context()
+    original_bytes = build_case_doc_workbook_bytes(context, source_doc)
+    snapshots = build_case_doc_execution_item_snapshots(source_doc, context)
+    execution_items: list[CaseDocExecutionItemData] = []
+    for index, snapshot in enumerate(snapshots, start=1):
+        item_status = "checked" if index == 1 else "skipped" if index == 2 else "pending"
+        performed_at = "2026-08-18T05:34:56+00:00" if item_status != "pending" else None
+        execution_items.append(
+            CaseDocExecutionItemData(
+                execution_item_id=index,
+                row_order=snapshot["row_order"],
+                module_row_id=snapshot["module_row_id"],
+                target_no=snapshot["target_no"],
+                host_name=snapshot["host_name"],
+                excel_cell=snapshot["excel_cell"],
+                major_no=snapshot["major_no"],
+                middle_no=snapshot["middle_no"],
+                minor_no=snapshot["minor_no"],
+                work_text=snapshot["work_text"],
+                check_text=snapshot["check_text"],
+                command_text=snapshot["command_text"],
+                status=item_status,
+                performed_at=performed_at,
+                performed_by="pytest" if performed_at else None,
+                skip_reason="test skip" if item_status == "skipped" else None,
+                lock_version=1 if performed_at else 0,
+                histories=(
+                    [
+                        CaseDocExecutionHistoryData(
+                            history_id=index,
+                            from_status="pending",
+                            to_status=item_status,
+                            changed_at=performed_at or "",
+                            changed_by="pytest",
+                            note="test skip" if item_status == "skipped" else None,
+                        )
+                    ]
+                    if performed_at
+                    else []
+                ),
+            )
+        )
+    detail = CaseDocInstanceDetailData(
+        case_document_id=1,
+        case_document_key="CASE-TEST-001",
+        source_doc_id=1,
+        source_doc_key=source_doc.source_doc_key,
+        source_doc_name=source_doc.source_doc_name,
+        unit_config_id=context.unit_config.unit_config_id,
+        status="active",
+        total_count=4,
+        checked_count=1,
+        skipped_count=1,
+        pending_count=2,
+        created_by="pytest",
+        created_at="2026-08-18T05:00:00+00:00",
+        updated_at="2026-08-18T05:34:56+00:00",
+        prefecture=context.unit_config.prefecture,
+        building=context.unit_config.building,
+        targets=context.target_device_slots,
+        execution_items=execution_items,
+    )
+
+    evidence_bytes = build_case_doc_evidence_workbook_bytes(original_bytes, detail)
+    workbook = load_workbook(BytesIO(evidence_bytes), keep_vba=True)
+    body_sheet = workbook["01.\u30dc\u30fc\u30ec\u30fc\u30c8\u78ba\u8a8d\u30fb\u4fee\u6b63_CS"]
+
+    assert body_sheet[snapshots[0]["excel_cell"]].value == "14:34:56"
+    assert body_sheet[snapshots[1]["excel_cell"]].value == "SKIP"
+    assert str(body_sheet[snapshots[1]["excel_cell"]].fill.fgColor.rgb).endswith("D9D9D9")
+    assert "\u5b9f\u65bd\u5c65\u6b74" in workbook.sheetnames
+    assert workbook.vba_archive is not None

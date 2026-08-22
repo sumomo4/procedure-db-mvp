@@ -39,6 +39,7 @@ class AppSettings(BaseModel):
         case_doc_access_export_dir: Directory where Access export files are placed.
         case_doc_import_strict: Whether Access export import should fail on validation warnings.
         case_doc_placeholder_mapping_path: YAML path for case document placeholder mappings.
+        case_doc_instance_storage_dir: Directory where generated case document workbooks are stored.
         module_image_storage_dir: Directory where extracted module row images are stored.
     """
 
@@ -56,6 +57,7 @@ class AppSettings(BaseModel):
     case_doc_access_export_dir: str = Field(default="/app/storage/access_exports")
     case_doc_import_strict: bool = Field(default=True)
     case_doc_placeholder_mapping_path: str = Field(default="app/config/placeholder_mapping.yml")
+    case_doc_instance_storage_dir: str = Field(default="/app/storage/case_docs")
     module_image_storage_dir: str = Field(default="/app/storage/module_images")
     module_similarity_threshold: float = Field(default=DEFAULT_MODULE_SIMILARITY_THRESHOLD, ge=0, le=1)
     module_similarity_candidate_limit: int = Field(default=DEFAULT_MODULE_SIMILARITY_CANDIDATE_LIMIT, ge=1)
@@ -181,6 +183,10 @@ def get_settings() -> AppSettings:
         case_doc_placeholder_mapping_path=os.environ.get(
             "CASE_DOC_PLACEHOLDER_MAPPING_PATH",
             "app/config/placeholder_mapping.yml",
+        ),
+        case_doc_instance_storage_dir=os.environ.get(
+            "CASE_DOC_INSTANCE_STORAGE_DIR",
+            "/app/storage/case_docs",
         ),
         module_image_storage_dir=os.environ.get("MODULE_IMAGE_STORAGE_DIR", "/app/storage/module_images"),
         module_similarity_threshold=_get_float_from_env(

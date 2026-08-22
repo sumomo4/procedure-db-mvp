@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from copy import copy
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 import re
+from typing import Any
+from zoneinfo import ZoneInfo
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import load_workbook
@@ -14,7 +17,13 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.core.responses import CaseDocHostAssignmentData, CaseDocResolveContextData, ModuleRowData, SourceDocDetailData
+from app.core.responses import (
+    CaseDocHostAssignmentData,
+    CaseDocInstanceDetailData,
+    CaseDocResolveContextData,
+    ModuleRowData,
+    SourceDocDetailData,
+)
 
 
 XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12"
@@ -32,6 +41,8 @@ WORK_CONTENT_TRAILING_COLUMN_MIN_WIDTH = 56
 IMAGE_ROW_HEIGHT_POINTS = 150
 IMAGE_MAX_WIDTH_PX = 520
 IMAGE_MAX_HEIGHT_PX = 190
+EVIDENCE_SHEET_NAME = "\u5b9f\u65bd\u5c65\u6b74"
+JAPAN_TIME_ZONE = ZoneInfo("Asia/Tokyo")
 EXTERNAL_LINK_CONTENT_TYPE_RE = re.compile(
     r'<Override PartName="/xl/externalLinks/[^"]+" '
     r'ContentType="application/vnd\.openxmlformats-officedocument\.spreadsheetml\.externalLink\+xml"/>'
@@ -843,6 +854,175 @@ def build_case_doc_workbook_bytes(
         _replace_placeholders(source_doc_sheet, placeholder_values)
         source_doc_sheet.sheet_state = "hidden"
 
+    output = BytesIO()
+    workbook.save(output)
+    return _sanitize_cd_creator_package(output.getvalue())
+
+
+def _is_actionable_execution_row(module_row: ModuleRowData) -> bool:
+    """Return whether a generated row should expose execution controls."""
+
+    if module_row.row_type in {"header", "meta", "spacer", "footer"}:
+        return False
+    values = [
+        module_row.work_text,
+        module_row.expected_result,
+        module_row.command_text,
+        *(entry.command_text for entry in module_row.device_entries),
+    ]
+    return any(_cell_text(value) for value in values)
+
+
+def build_case_doc_execution_item_snapshots(
+    source_doc: SourceDocDetailData,
+    context: CaseDocResolveContextData,
+    generated_workbook_bytes: bytes | None = None,
+) -> list[dict[str, Any]]:
+    """Build immutable execution-item snapshots mapped to generated Excel cells."""
+
+    source_rows = _flatten_enabled_source_doc_rows(source_doc)
+    workbook_source = BytesIO(generated_workbook_bytes) if generated_workbook_bytes is not None else TEMPLATE_PATH
+    workbook = load_workbook(workbook_source, keep_vba=True, read_only=False, data_only=False)
+    body_sheet = _find_case_doc_body_sheet(workbook)
+    if body_sheet is None:
+        raise ValueError("案件CSテンプレートの作業シートが見つかりませんでした。")
+    header_row = _find_body_header_row(body_sheet)
+    if header_row is None:
+        raise ValueError("案件CSテンプレートの作業行ヘッダーが見つかりませんでした。")
+    body_columns = _detect_body_columns(body_sheet, header_row)
+
+    snapshots: list[dict[str, Any]] = []
+    for offset, source_row in enumerate(source_rows):
+        if not _is_actionable_execution_row(source_row):
+            continue
+        excel_row = header_row + 1 + offset
+        global_row_order = offset + 1
+        generated_work_text = next(
+            (
+                _cell_text(body_sheet.cell(row=excel_row, column=column_index).value)
+                for column_index in range(body_columns["work_text"], body_columns["expected_result"])
+                if _cell_text(body_sheet.cell(row=excel_row, column=column_index).value)
+            ),
+            "",
+        )
+        generated_check_text = _cell_text(
+            body_sheet.cell(row=excel_row, column=body_columns["expected_result"]).value
+        )
+        generated_tech_doc_text = _cell_text(
+            body_sheet.cell(row=excel_row, column=body_columns["tech_doc_text"]).value
+        )
+        for block_index, assignment in enumerate(context.target_assignments):
+            target_no = block_index + 1
+            time_column = _target_block_start_column(block_index)
+            generated_window_text = _cell_text(body_sheet.cell(row=excel_row, column=time_column + 1).value)
+            generated_p_text = _cell_text(body_sheet.cell(row=excel_row, column=time_column + 2).value)
+            generated_command_text = _cell_text(body_sheet.cell(row=excel_row, column=time_column + 3).value)
+            snapshots.append(
+                {
+                    "module_row_id": source_row.module_row_id,
+                    "row_order": global_row_order,
+                    "target_no": target_no,
+                    "excel_cell": body_sheet.cell(row=excel_row, column=time_column).coordinate,
+                    "major_no": source_row.major_no,
+                    "middle_no": source_row.middle_no,
+                    "minor_no": source_row.minor_no,
+                    "tech_doc_text": generated_tech_doc_text or source_row.tech_doc_text,
+                    "work_text": generated_work_text or source_row.work_text,
+                    "check_text": generated_check_text or source_row.expected_result,
+                    "window_text": generated_window_text or None,
+                    "p_text": generated_p_text or None,
+                    "command_text": generated_command_text or None,
+                    "host_name": assignment.host_name,
+                }
+            )
+    return snapshots
+
+
+def _format_evidence_time(value: str | None, *, include_date: bool) -> str:
+    if not value:
+        return ""
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=JAPAN_TIME_ZONE)
+    localized = parsed.astimezone(JAPAN_TIME_ZONE)
+    return localized.strftime("%Y/%m/%d %H:%M:%S" if include_date else "%H:%M:%S")
+
+
+def _write_case_doc_evidence_sheet(workbook, detail: CaseDocInstanceDetailData) -> None:
+    if EVIDENCE_SHEET_NAME in workbook.sheetnames:
+        workbook.remove(workbook[EVIDENCE_SHEET_NAME])
+    sheet = workbook.create_sheet(EVIDENCE_SHEET_NAME)
+    headers = [
+        "\u884c",
+        "target\u756a\u53f7",
+        "\u30db\u30b9\u30c8\u540d",
+        "\u4f5c\u696d\u5185\u5bb9",
+        "\u72b6\u614b",
+        "\u5b9f\u65bd\u6642\u523b",
+        "\u5b9f\u65bd\u8005",
+        "\u7406\u7531",
+    ]
+    sheet.append(headers)
+    header_fill = PatternFill(fill_type="solid", fgColor="D9EAD3")
+    for cell in sheet[1]:
+        cell.font = Font(b=True)
+        cell.fill = header_fill
+
+    status_labels = {
+        "pending": "\u672a\u5b9f\u65bd",
+        "checked": "\u30c1\u30a7\u30c3\u30af",
+        "skipped": "\u30b9\u30ad\u30c3\u30d7",
+    }
+    for item in detail.execution_items:
+        sheet.append(
+            [
+                item.row_order,
+                item.target_no,
+                item.host_name,
+                item.work_text or "",
+                status_labels[item.status],
+                _format_evidence_time(item.performed_at, include_date=True),
+                item.performed_by or "",
+                item.skip_reason or "",
+            ]
+        )
+        if item.status == "skipped":
+            for cell in sheet[sheet.max_row]:
+                cell.fill = PatternFill(fill_type="solid", fgColor="D9D9D9")
+
+    widths = {"A": 10, "B": 12, "C": 28, "D": 54, "E": 14, "F": 22, "G": 20, "H": 36}
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+
+
+def build_case_doc_evidence_workbook_bytes(
+    original_workbook_bytes: bytes,
+    detail: CaseDocInstanceDetailData,
+) -> bytes:
+    """Apply WebUI execution results to a copy of the original xlsm workbook."""
+
+    workbook = load_workbook(BytesIO(original_workbook_bytes), keep_vba=True, data_only=False)
+    target_sheet = _find_case_doc_body_sheet(workbook)
+    if target_sheet is None:
+        raise ValueError("証跡を反映する案件CSシートが見つかりませんでした。")
+    for item in detail.execution_items:
+        if item.status == "pending":
+            continue
+        cell = target_sheet[item.excel_cell]
+        if item.status == "checked":
+            cell.value = _format_evidence_time(item.performed_at, include_date=False)
+        else:
+            cell.value = "SKIP"
+            cell.fill = PatternFill(fill_type="solid", fgColor="D9D9D9")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    _write_case_doc_evidence_sheet(workbook, detail)
     output = BytesIO()
     workbook.save(output)
     return _sanitize_cd_creator_package(output.getvalue())

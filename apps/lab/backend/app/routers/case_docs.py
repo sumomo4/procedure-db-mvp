@@ -7,10 +7,20 @@ from fastapi.responses import Response
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.core.case_doc_generation import XLSM_MEDIA_TYPE, build_case_doc_workbook_bytes
+from app.core.case_doc_generation import (
+    XLSM_MEDIA_TYPE,
+    build_case_doc_evidence_workbook_bytes,
+    build_case_doc_execution_item_snapshots,
+    build_case_doc_workbook_bytes,
+)
 from app.core.responses import (
     ApiResponse,
+    CaseDocExecutionUpdateRequest,
     CaseDocGenerateRequest,
+    CaseDocInstanceCompleteRequest,
+    CaseDocInstanceCreateRequest,
+    CaseDocInstanceDetailData,
+    CaseDocInstanceListData,
     CaseDocMasterOptionsData,
     CaseDocPlaceholderMappingEnabledRequest,
     CaseDocPlaceholderMappingItemData,
@@ -33,6 +43,14 @@ from app.db.case_docs import (
     set_case_doc_placeholder_mapping_enabled,
     update_case_doc_placeholder_mapping,
     validate_case_doc_placeholder_mapping,
+)
+from app.db.case_doc_instances import (
+    complete_case_doc_instance,
+    create_case_doc_instance,
+    get_case_doc_instance_detail,
+    list_case_doc_instances,
+    read_case_doc_original_workbook,
+    update_case_doc_execution_item,
 )
 from app.db.source_docs import get_source_doc_detail
 from app.routers.health import get_app_settings
@@ -99,6 +117,11 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
                 method="POST",
                 path="/api/v1/case-docs/generate",
                 purpose="Generate a case document from a source document and resolved context.",
+            ),
+            RouterEndpointData(
+                method="POST",
+                path="/api/v1/case-docs/instances",
+                purpose="Create a persistent executable case document instance.",
             ),
         ],
     )
@@ -279,6 +302,139 @@ def generate_case_doc(
     filename = f"case-doc-{payload.source_doc_id}-{context.unit_config.unit_config_id}.xlsm"
     return Response(
         content=workbook_bytes,
+        media_type=XLSM_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/instances",
+    response_model=ApiResponse[CaseDocInstanceDetailData],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_case_doc_instance_resource(
+    payload: CaseDocInstanceCreateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceDetailData]:
+    """Generate and persist an executable case document instance."""
+
+    try:
+        context = resolve_case_doc_context(settings, payload)
+        source_doc = get_source_doc_detail(settings, payload.source_doc_id)
+        if source_doc is None:
+            raise ValueError("原本が見つかりませんでした。")
+        workbook_bytes = build_case_doc_workbook_bytes(context, source_doc)
+        execution_items = build_case_doc_execution_item_snapshots(source_doc, context, workbook_bytes)
+        data = create_case_doc_instance(
+            settings,
+            source_doc,
+            context,
+            workbook_bytes,
+            execution_items,
+            payload.created_by,
+        )
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    except (FileNotFoundError, OSError) as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+
+    return success_response(data, "案件CSを作成し、実行対象として保存しました。")
+
+
+@router.get("/instances", response_model=ApiResponse[CaseDocInstanceListData])
+def read_case_doc_instances(
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceListData]:
+    """Return persistent executable case document instances."""
+
+    try:
+        data = list_case_doc_instances(settings)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    return success_response(data, "案件CS実行一覧を取得しました。")
+
+
+@router.get("/instances/{case_document_id}", response_model=ApiResponse[CaseDocInstanceDetailData])
+def read_case_doc_instance_detail(
+    case_document_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceDetailData]:
+    """Return one executable case document instance."""
+
+    try:
+        data = get_case_doc_instance_detail(settings, case_document_id)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    if data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="案件CSが見つかりませんでした。")
+    return success_response(data, "案件CS実行詳細を取得しました。")
+
+
+@router.patch(
+    "/instances/{case_document_id}/items/{execution_item_id}",
+    response_model=ApiResponse[CaseDocInstanceDetailData],
+)
+def update_case_doc_execution_item_resource(
+    case_document_id: int,
+    execution_item_id: int,
+    payload: CaseDocExecutionUpdateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceDetailData]:
+    """Check, skip, or reset one case document time cell."""
+
+    try:
+        data = update_case_doc_execution_item(settings, case_document_id, execution_item_id, payload)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    return success_response(data, "案件CSの実施状態を更新しました。")
+
+
+@router.post(
+    "/instances/{case_document_id}/complete",
+    response_model=ApiResponse[CaseDocInstanceDetailData],
+)
+def complete_case_doc_instance_resource(
+    case_document_id: int,
+    payload: CaseDocInstanceCompleteRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceDetailData]:
+    """Mark a case document instance as completed."""
+
+    del payload
+    try:
+        data = complete_case_doc_instance(settings, case_document_id)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    return success_response(data, "案件CSを完了しました。")
+
+
+@router.get("/instances/{case_document_id}/export")
+def export_case_doc_instance_evidence(
+    case_document_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> Response:
+    """Download a copy of the original xlsm with WebUI execution evidence."""
+
+    try:
+        detail = get_case_doc_instance_detail(settings, case_document_id)
+        if detail is None:
+            raise ValueError("案件CSが見つかりませんでした。")
+        original_bytes = read_case_doc_original_workbook(settings, case_document_id)
+        evidence_bytes = build_case_doc_evidence_workbook_bytes(original_bytes, detail)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+
+    filename = f"{detail.case_document_key}-evidence.xlsm"
+    return Response(
+        content=evidence_bytes,
         media_type=XLSM_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

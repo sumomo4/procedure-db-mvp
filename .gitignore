@@ -10,4 +10,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 pytest-cache-files-*/
+/storage/lab/case_docs/
+/storage/standard/case_docs/
 .DS_Store

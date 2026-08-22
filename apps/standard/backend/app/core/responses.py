@@ -838,6 +838,98 @@ class CaseDocGenerateRequest(CaseDocResolveContextRequest):
     """Request payload for case document generation."""
 
 
+class CaseDocInstanceCreateRequest(CaseDocResolveContextRequest):
+    """Request payload for creating a persistent case document instance."""
+
+    created_by: str | None = None
+
+
+class CaseDocExecutionHistoryData(BaseModel):
+    """One immutable case document execution state transition."""
+
+    history_id: int
+    from_status: Literal["pending", "checked", "skipped"]
+    to_status: Literal["pending", "checked", "skipped"]
+    changed_at: str
+    changed_by: str | None = None
+    note: str | None = None
+
+
+class CaseDocExecutionItemData(BaseModel):
+    """One actionable time cell in a generated case document."""
+
+    execution_item_id: int
+    row_order: int
+    module_row_id: int | None = None
+    target_no: int = Field(ge=1, le=20)
+    host_name: str
+    excel_cell: str
+    major_no: str | None = None
+    middle_no: str | None = None
+    minor_no: str | None = None
+    tech_doc_text: str | None = None
+    work_text: str | None = None
+    check_text: str | None = None
+    window_text: str | None = None
+    p_text: str | None = None
+    command_text: str | None = None
+    status: Literal["pending", "checked", "skipped"]
+    performed_at: str | None = None
+    performed_by: str | None = None
+    skip_reason: str | None = None
+    lock_version: int = Field(ge=0)
+    histories: list[CaseDocExecutionHistoryData] = Field(default_factory=list)
+
+
+class CaseDocInstanceListItemData(BaseModel):
+    """Summary of one persistent case document instance."""
+
+    case_document_id: int
+    case_document_key: str
+    source_doc_id: int
+    source_doc_key: str
+    source_doc_name: str
+    unit_config_id: str
+    status: Literal["active", "completed"]
+    total_count: int = Field(ge=0)
+    checked_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    pending_count: int = Field(ge=0)
+    created_by: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class CaseDocInstanceListData(BaseModel):
+    """Persistent case document instance list."""
+
+    items: list[CaseDocInstanceListItemData]
+
+
+class CaseDocInstanceDetailData(CaseDocInstanceListItemData):
+    """Persistent case document instance with targets and execution items."""
+
+    prefecture: str
+    building: str
+    targets: list[CaseDocTargetDeviceSlotData]
+    execution_items: list[CaseDocExecutionItemData]
+
+
+class CaseDocExecutionUpdateRequest(BaseModel):
+    """Request payload for checking, skipping, or resetting one time cell."""
+
+    status: Literal["pending", "checked", "skipped"]
+    performed_by: str = Field(min_length=1)
+    skip_reason: str | None = None
+    expected_lock_version: int = Field(ge=0)
+
+
+class CaseDocInstanceCompleteRequest(BaseModel):
+    """Request payload for completing a case document instance."""
+
+    completed_by: str = Field(min_length=1)
+
+
 def success_response(data: DataT, message: str = "") -> ApiResponse[DataT]:
     """Build a successful API response.
 
