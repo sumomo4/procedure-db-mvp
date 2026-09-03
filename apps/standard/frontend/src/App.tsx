@@ -8991,10 +8991,17 @@ function ModuleApprovalStatusPage() {
 
   return (
     <Page
-      title="モジュール承認状態確認 / 変更"
+      title="モジュール承認管理"
       description="モジュール版の承認状態を確認し、承認依頼・承認・差戻し・保管を行います。"
     >
-      <section className="approval-flow" aria-label="モジュール承認状態フィルター">
+      <section className="approval-flow approval-flow-with-heading" aria-label="モジュール承認状態フィルター">
+        <div className="approval-filter-heading">
+          <div>
+            <span>承認対象</span>
+            <h2>モジュールを選択</h2>
+          </div>
+          <strong>{filteredModuleItems.length} 件</strong>
+        </div>
         {statusFilterOptions.map((option) => (
           <button
             key={option.value}
@@ -9040,7 +9047,7 @@ function ModuleApprovalStatusPage() {
         </section>
       ) : (
         <DataTable
-          columns={["選択", "モジュールID", "モジュール名", "フォルダ", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択状態"]}
+          columns={["選択", "モジュールID", "モジュール名", "版", "承認状態", "次の操作", "作成者", "更新日", "タグ", "行数", "選択状態"]}
           rows={filteredModuleItems.map((item) => [
             <label className="approval-selection-radio">
               <input
@@ -9053,15 +9060,15 @@ function ModuleApprovalStatusPage() {
             </label>,
             <span className="approval-row-primary">{item.module_key}</span>,
             <span className="approval-row-primary">{item.module_name}</span>,
-            <ModuleFolderMembershipList item={item} />,
             <span className="approval-row-version">{formatVersionLabel(item)}</span>,
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             selectedItem?.target_id === item.module_id && selectedItem.version_no === item.version_no
               ? selectedItem.next_action
               : "-",
-            String(item.row_count),
             item.created_by ?? "-",
             item.updated_at,
+            <ModuleFolderMembershipList item={item} />,
+            String(item.row_count),
             selectedModuleVersionId === item.module_version_id ? (
               <span className="approval-selected-indicator"><span aria-hidden="true">✓</span>選択中</span>
             ) : (
@@ -9149,13 +9156,17 @@ function ModuleApprovalStatusPage() {
 
       {selectedItem && selectedSummary ? (
         <>
-          <section className="detail-layout">
+          <section className="detail-layout approval-target-detail">
+            <div className="approval-target-detail-heading">
+              <span>対象情報</span>
+              <h2>モジュール</h2>
+            </div>
             <div className="facts">
               <Fact label="モジュールID" value={selectedSummary.module_key} />
               <Fact label="モジュール名" value={selectedSummary.module_name} />
               <Fact label="版" value={formatVersionLabel(selectedItem)} />
               <Fact label="承認状態" value={selectedItem.status_label} />
-              <Fact label="行数" value={String(selectedSummary.row_count)} />
+              <Fact label="作成者" value={selectedSummary.created_by ?? "-"} />
               <Fact label="更新日" value={selectedSummary.updated_at} />
             </div>
             <div className="module-detail-note">
@@ -9167,11 +9178,12 @@ function ModuleApprovalStatusPage() {
           </section>
 
           <section className="section-band approval-related-panel">
-            <h2>モジュール情報</h2>
+            <h2>登録情報</h2>
             <div className="facts">
               <Fact label="取込元" value={selectedSummary.source_xlsx_path ?? "-"} />
               <Fact label="作成者" value={selectedSummary.created_by ?? "-"} />
               <Fact label="現在の版" value={formatVersionLabel(selectedItem)} />
+              <Fact label="行数" value={String(selectedSummary.row_count)} />
             </div>
           </section>
 
@@ -9490,10 +9502,17 @@ function ApprovalPage() {
 
   return (
     <Page
-      title="原本承認状態確認 / 変更"
-      description="会議で整理した版管理・承認ルールに沿って、原本の状態確認と変更を行います。"
+      title="原本承認管理"
+      description="原本版の承認状態を確認し、承認依頼・承認・差戻し・保管を行います。"
     >
-      <section className="approval-flow" aria-label="承認状態フィルター">
+      <section className="approval-flow approval-flow-with-heading" aria-label="原本承認状態フィルター">
+        <div className="approval-filter-heading">
+          <div>
+            <span>承認対象</span>
+            <h2>原本を選択</h2>
+          </div>
+          <strong>{filteredApprovalItems.length} 件</strong>
+        </div>
         {approvalStatusFilterOptions.map((option) => (
           <button
             key={option.value}
@@ -9530,16 +9549,16 @@ function ApprovalPage() {
 
       {approvalListState.status === "available" && filteredApprovalItems.length === 0 ? (
         <section className="empty-state">
-          <h2>{approvalListState.items.length === 0 ? "承認対象はまだありません" : "条件に一致する承認対象はありません"}</h2>
+          <h2>{approvalListState.items.length === 0 ? "原本はまだありません" : "条件に一致する原本はありません"}</h2>
           <p>
             {approvalListState.items.length === 0
               ? "原本を保存すると、この画面から承認状態と次の操作を確認できます。"
-              : "フィルターを切り替えると、別の状態の承認対象を確認できます。"}
+              : "フィルターを切り替えると、別の状態の原本を確認できます。"}
           </p>
         </section>
       ) : (
         <DataTable
-          columns={["選択", "対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "選択状態"]}
+          columns={["選択", "原本ID", "原本名", "版", "承認状態", "次の操作", "作成者", "更新日", "利用モジュール", "選択状態"]}
           rows={filteredApprovalItems.map((item) => [
             <label className="approval-selection-radio">
               <input
@@ -9550,12 +9569,14 @@ function ApprovalPage() {
                 aria-label={`${item.target_key} ${formatVersionLabel(item)}を選択`}
               />
             </label>,
-            <span className="approval-row-primary">{item.target_key} {item.target_name}</span>,
+            <span className="approval-row-primary">{item.target_key}</span>,
+            <span className="approval-row-primary">{item.target_name}</span>,
             <span className="approval-row-version">{formatVersionLabel(item)}</span>,
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             item.next_action,
-            `${item.enabled_module_count}/${item.module_count}`,
+            item.created_by ?? "-",
             item.updated_at,
+            `${item.enabled_module_count}/${item.module_count}`,
             selectedTargetId === item.target_id ? (
               <span className="approval-selected-indicator"><span aria-hidden="true">✓</span>選択中</span>
             ) : (
@@ -9643,12 +9664,16 @@ function ApprovalPage() {
 
       {selectedItem ? (
         <>
-          <section className="detail-layout">
+          <section className="detail-layout approval-target-detail">
+            <div className="approval-target-detail-heading">
+              <span>対象情報</span>
+              <h2>原本</h2>
+            </div>
             <div className="facts">
-              <Fact label="対象ID" value={selectedItem.target_key} />
-              <Fact label="対象名" value={selectedItem.target_name} />
+              <Fact label="原本ID" value={selectedItem.target_key} />
+              <Fact label="原本名" value={selectedItem.target_name} />
               <Fact label="版" value={formatVersionLabel(selectedItem)} />
-              <Fact label="現在状態" value={selectedItem.status_label} />
+              <Fact label="承認状態" value={selectedItem.status_label} />
               <Fact label="作成者" value={selectedItem.created_by ?? "-"} />
               <Fact label="更新日" value={selectedItem.updated_at} />
             </div>
@@ -9683,7 +9708,7 @@ function ApprovalPage() {
 
           <Toolbar>
             <button className="secondary" onClick={() => navigate(`/documents/${selectedItem.target_id}`)}>
-              <span aria-hidden="true">↗</span>
+              <span aria-hidden="true">→</span>
               原本詳細へ
             </button>
           </Toolbar>
