@@ -2902,6 +2902,71 @@ th {
   font-weight: 800;
 }
 
+.approval-content-preview-button {
+  justify-self: start;
+  margin-top: 6px;
+}
+
+.approval-history-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.approval-history-heading,
+.approval-history-heading-actions,
+.approval-history-action {
+  display: flex;
+  align-items: center;
+}
+
+.approval-history-heading {
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.approval-history-heading h2,
+.approval-history-heading p,
+.approval-history-empty {
+  margin: 0;
+}
+
+.approval-history-heading p {
+  margin-top: 4px;
+  color: #56636c;
+}
+
+.approval-history-heading-actions {
+  flex: 0 0 auto;
+  gap: 12px;
+}
+
+.approval-history-heading-actions strong {
+  white-space: nowrap;
+}
+
+.approval-history-action {
+  gap: 8px;
+}
+
+.approval-history-latest-label {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #237249;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.approval-history-row-latest td {
+  background: #f0f8f3;
+  font-weight: 700;
+}
+
+.approval-history-row-latest td:first-child {
+  box-shadow: inset 4px 0 0 #2f8a56;
+}
+
 .approval-permission-panel.approval-permission-summary {
   margin: 0;
 }
@@ -4000,6 +4065,15 @@ th {
 
   .approval-action-header {
     grid-template-columns: 1fr;
+  }
+
+  .approval-history-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .approval-history-heading-actions {
+    justify-content: space-between;
   }
 
   .approval-action-buttons {

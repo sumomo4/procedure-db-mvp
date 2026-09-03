@@ -8718,6 +8718,7 @@ function ModuleApprovalStatusPage() {
   const [approvalComment, setApprovalComment] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | ModuleApiStatus>("all");
   const [reloadTick, setReloadTick] = useState(0);
+  const [isContentPreviewOpen, setIsContentPreviewOpen] = useState(false);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -8781,6 +8782,10 @@ function ModuleApprovalStatusPage() {
 
   const selectedSummary =
     moduleListState.items.find((item) => item.module_version_id === selectedModuleVersionId) ?? null;
+  const moduleContentState = useModuleDetailState(
+    selectedSummary ? String(selectedSummary.module_id) : undefined,
+    selectedSummary ? String(selectedSummary.version_no) : null,
+  );
 
   useEffect(() => {
     if (selectedSummary === null) {
@@ -9101,6 +9106,13 @@ function ModuleApprovalStatusPage() {
           targetLabel={`${selectedSummary.module_key} ${selectedSummary.module_name}`}
           versionLabel={formatVersionLabel(selectedItem)}
           statusLabel={selectedItem.status_label}
+          previewDisabled={moduleContentState.status !== "available" || moduleContentState.item === null}
+          previewHint={
+            moduleContentState.status === "available"
+              ? "選択中のモジュール版を全画面で確認します。"
+              : moduleContentState.message
+          }
+          onPreview={() => setIsContentPreviewOpen(true)}
           actor={approvalActor}
           roleLabel={currentRoleLabel}
           roleDescription={currentRoleDescription}
@@ -9163,23 +9175,11 @@ function ModuleApprovalStatusPage() {
             </div>
           </section>
 
-          <section className="section-band">
-            <h2>承認履歴</h2>
-            {(selectedItem.history ?? []).length > 0 ? (
-              <DataTable
-                columns={["日時", "操作", "変更", "実行者", "コメント"]}
-                rows={(selectedItem.history ?? []).map((history) => [
-                  history.changed_at,
-                  history.action_label,
-                  `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
-                  history.changed_by ?? "-",
-                  history.note ?? "",
-                ])}
-              />
-            ) : (
-              <p>承認履歴はまだありません。</p>
-            )}
-          </section>
+          <ApprovalHistoryPanel
+            key={`module-history-${selectedItem.target_id}-${selectedItem.version_no}`}
+            history={selectedItem.history ?? []}
+            noteLabel="コメント"
+          />
 
           <Toolbar>
             <button className="secondary" onClick={() => navigate(`/modules/${selectedSummary.module_id}?version_no=${selectedSummary.version_no}`)}>
@@ -9194,6 +9194,18 @@ function ModuleApprovalStatusPage() {
           <p>{approvalDetailState.message}</p>
         </section>
       )}
+
+      {isContentPreviewOpen && moduleContentState.item ? (
+        <PreviewOverlay
+          title={`${moduleContentState.item.module_name.replace("_CS ", " ")} / 承認内容確認`}
+          description="選択中のモジュール版を、承認画面から離れずに確認できます。"
+          onClose={() => setIsContentPreviewOpen(false)}
+        >
+          <div className="preview-surface preview-surface-sheet">
+            <ExcelModulePreview item={moduleContentState.item} mode="fullscreen" />
+          </div>
+        </PreviewOverlay>
+      ) : null}
     </Page>
   );
 }
@@ -9222,6 +9234,7 @@ function ApprovalPage() {
   const [approvalComment, setApprovalComment] = useState("");
   const [approvalStatusFilter, setApprovalStatusFilter] = useState<"all" | ModuleApiStatus>("all");
   const [reloadTick, setReloadTick] = useState(0);
+  const [isContentPreviewOpen, setIsContentPreviewOpen] = useState(false);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -9351,11 +9364,15 @@ function ApprovalPage() {
       message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
     });
     setApprovalComment("");
+    setIsContentPreviewOpen(false);
   }, [selectedTargetId]);
 
   const selectedItem = approvalDetailState.item;
   const selectedSummary =
     approvalListState.items.find((item) => item.target_id === selectedTargetId) ?? null;
+  const sourceDocContentState = useSourceDocDetailState(
+    selectedTargetId === null ? undefined : String(selectedTargetId),
+  );
   const selectedExecutableTransitions = selectedItem?.allowed_transitions.filter((transition) =>
     canRunApprovalTransition(currentUser?.role, selectedItem.status, transition.to_status)
   ) ?? [];
@@ -9583,6 +9600,13 @@ function ApprovalPage() {
           targetLabel={`${selectedItem.target_key} ${selectedItem.target_name}`}
           versionLabel={formatVersionLabel(selectedItem)}
           statusLabel={selectedItem.status_label}
+          previewDisabled={sourceDocContentState.status !== "available" || sourceDocContentState.item === null}
+          previewHint={
+            sourceDocContentState.status === "available"
+              ? "選択中の原本を全画面で確認します。"
+              : sourceDocContentState.message
+          }
+          onPreview={() => setIsContentPreviewOpen(true)}
           actor={approvalActor}
           roleLabel={currentRoleLabel}
           roleDescription={currentRoleDescription}
@@ -9651,23 +9675,11 @@ function ApprovalPage() {
             )}
           </section>
 
-          <section className="section-band">
-            <h2>承認履歴</h2>
-            {(selectedItem.history ?? []).length > 0 ? (
-              <DataTable
-                columns={["日時", "操作", "変更", "実行者", "メモ"]}
-                rows={(selectedItem.history ?? []).map((history) => [
-                  history.changed_at,
-                  history.action_label,
-                  `${history.from_status_label ?? "-"} → ${history.to_status_label}`,
-                  history.changed_by ?? "-",
-                  history.note ?? "",
-                ])}
-              />
-            ) : (
-              <p>承認履歴はまだありません。</p>
-            )}
-          </section>
+          <ApprovalHistoryPanel
+            key={`source-history-${selectedItem.target_id}-${selectedItem.version_no}`}
+            history={selectedItem.history ?? []}
+            noteLabel="コメント"
+          />
 
           <Toolbar>
             <button className="secondary" onClick={() => navigate(`/documents/${selectedItem.target_id}`)}>
@@ -9691,6 +9703,21 @@ function ApprovalPage() {
           承認されたものは <code>published</code> へ移行し、最終的に <code>archived</code> へ保管します。
         </p>
       </section>
+
+      {isContentPreviewOpen && sourceDocContentState.item ? (
+        <PreviewOverlay
+          title={`${sourceDocContentState.item.source_doc_name} / 承認内容確認`}
+          description="選択中の原本を、承認画面から離れずに確認できます。"
+          onClose={() => setIsContentPreviewOpen(false)}
+        >
+          <div className="preview-surface">
+            <ExcelSourceDocPreview
+              item={sourceDocContentState.item}
+              onOpenModule={(moduleId) => navigate(`/modules/${moduleId}`)}
+            />
+          </div>
+        </PreviewOverlay>
+      ) : null}
     </Page>
   );
 }
@@ -9785,6 +9812,9 @@ function ApprovalActionPanel({
   targetLabel,
   versionLabel,
   statusLabel,
+  previewDisabled,
+  previewHint,
+  onPreview,
   actor,
   roleLabel,
   roleDescription,
@@ -9804,6 +9834,9 @@ function ApprovalActionPanel({
   targetLabel: string;
   versionLabel: string;
   statusLabel: string;
+  previewDisabled: boolean;
+  previewHint: string;
+  onPreview: () => void;
   actor: string;
   roleLabel: string;
   roleDescription: string;
@@ -9835,6 +9868,16 @@ function ApprovalActionPanel({
           <span>承認操作</span>
           <h2 id={`${idPrefix}-title`}>{targetLabel}</h2>
           <p>{versionLabel} / {statusLabel}</p>
+          <button
+            className="secondary approval-content-preview-button"
+            type="button"
+            onClick={onPreview}
+            disabled={previewDisabled}
+            title={previewHint}
+          >
+            <span aria-hidden="true">□</span>
+            内容を確認
+          </button>
         </div>
         <div className={`approval-permission-panel approval-permission-summary ${canManage ? "can-manage" : "view-only"}`}>
           <span>実行ユーザー</span>
@@ -9897,6 +9940,80 @@ function ApprovalActionPanel({
             ? "現在のユーザーでは、この状態に対して実行できる操作はありません。"
             : "この状態から実行できる承認操作はありません。"}
         </p>
+      )}
+    </section>
+  );
+}
+
+function formatApprovalHistoryDateTime(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(parsed);
+}
+
+function ApprovalHistoryPanel({
+  history,
+  noteLabel,
+}: {
+  history: ApprovalStatusHistoryItemData[];
+  noteLabel: string;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const sortedHistory = [...history].sort((left, right) => {
+    const leftTime = new Date(left.changed_at).getTime();
+    const rightTime = new Date(right.changed_at).getTime();
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return 0;
+    }
+    return rightTime - leftTime;
+  });
+  const visibleHistory = showAll ? sortedHistory : sortedHistory.slice(0, 5);
+
+  return (
+    <section className="section-band approval-history-panel">
+      <div className="approval-history-heading">
+        <div>
+          <h2>承認履歴</h2>
+          <p>最新の変更から表示します。</p>
+        </div>
+        <div className="approval-history-heading-actions">
+          <strong>{sortedHistory.length} 件</strong>
+          {sortedHistory.length > 5 ? (
+            <button className="secondary" type="button" onClick={() => setShowAll((current) => !current)}>
+              <span aria-hidden="true">{showAll ? "−" : "+"}</span>
+              {showAll ? "最新5件に戻す" : "すべて表示"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {visibleHistory.length > 0 ? (
+        <DataTable
+          columns={["日時", "操作", "変更", "実行者", noteLabel]}
+          rows={visibleHistory.map((item, index) => [
+            <time dateTime={item.changed_at}>{formatApprovalHistoryDateTime(item.changed_at)}</time>,
+            <span className="approval-history-action">
+              {index === 0 ? <span className="approval-history-latest-label">最新</span> : null}
+              {item.action_label}
+            </span>,
+            `${item.from_status_label ?? "-"} → ${item.to_status_label}`,
+            item.changed_by ?? "-",
+            item.note ?? "",
+          ])}
+          rowClassNames={visibleHistory.map((_, index) =>
+            index === 0 ? "approval-history-row-latest" : undefined,
+          )}
+        />
+      ) : (
+        <p className="approval-history-empty">承認履歴はまだありません。</p>
       )}
     </section>
   );
