@@ -2115,6 +2115,72 @@ textarea {
   background: #ffffff;
 }
 
+.approval-row-selected > td {
+  background: #e7f3f5;
+}
+
+.approval-row-selected > td:first-child {
+  border-left: 5px solid #1f6f78;
+  padding-left: 9px;
+}
+
+.approval-row-selected .approval-row-primary,
+.approval-row-selected .approval-row-version {
+  color: #173f45;
+  font-weight: 800;
+}
+
+.approval-selection-radio {
+  display: grid;
+  width: 32px;
+  min-height: 32px;
+  place-items: center;
+  cursor: pointer;
+}
+
+.approval-selection-radio input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #1f6f78;
+  cursor: pointer;
+}
+
+.approval-selected-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #17636c;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.approval-selected-indicator > span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #1f6f78;
+  color: #ffffff;
+  font-size: 13px;
+}
+
+.approval-current-selection {
+  border-color: #9fc8cd;
+  background: #f3f9fa;
+  box-shadow: none;
+}
+
+.approval-current-selection.has-selection {
+  border-left: 7px solid #1f6f78;
+}
+
+.approval-current-selection-primary strong {
+  color: #173f45;
+  font-size: 16px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

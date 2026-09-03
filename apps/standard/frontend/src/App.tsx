@@ -9035,12 +9035,21 @@ function ModuleApprovalStatusPage() {
         </section>
       ) : (
         <DataTable
-          columns={["モジュールID", "モジュール名", "フォルダ", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択"]}
+          columns={["選択", "モジュールID", "モジュール名", "フォルダ", "版", "承認状態", "次の操作", "行数", "作成者", "更新日", "選択状態"]}
           rows={filteredModuleItems.map((item) => [
-            item.module_key,
-            item.module_name,
+            <label className="approval-selection-radio">
+              <input
+                type="radio"
+                name="module-approval-target"
+                checked={selectedModuleVersionId === item.module_version_id}
+                onChange={() => setSelectedModuleVersionId(item.module_version_id)}
+                aria-label={`${item.module_key} ${formatVersionLabel(item)}を選択`}
+              />
+            </label>,
+            <span className="approval-row-primary">{item.module_key}</span>,
+            <span className="approval-row-primary">{item.module_name}</span>,
             <ModuleFolderMembershipList item={item} />,
-            formatVersionLabel(item),
+            <span className="approval-row-version">{formatVersionLabel(item)}</span>,
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             selectedItem?.target_id === item.module_id && selectedItem.version_no === item.version_no
               ? selectedItem.next_action
@@ -9048,29 +9057,36 @@ function ModuleApprovalStatusPage() {
             String(item.row_count),
             item.created_by ?? "-",
             item.updated_at,
-            <button className="text-button" onClick={() => setSelectedModuleVersionId(item.module_version_id)}>
-              対象を選ぶ
-            </button>,
+            selectedModuleVersionId === item.module_version_id ? (
+              <span className="approval-selected-indicator"><span aria-hidden="true">✓</span>選択中</span>
+            ) : (
+              <button className="text-button" onClick={() => setSelectedModuleVersionId(item.module_version_id)}>
+                選択
+              </button>
+            ),
           ])}
+          rowClassNames={filteredModuleItems.map((item) =>
+            selectedModuleVersionId === item.module_version_id ? "approval-row-selected" : undefined,
+          )}
+          rowAriaSelected={filteredModuleItems.map((item) => selectedModuleVersionId === item.module_version_id)}
         />
       )}
 
-      <section className={`list-status list-status-${detailStatusClass}`} aria-live="polite">
-        <div>
-          <span>選択状態</span>
-          <strong>
-            {approvalDetailState.status === "idle"
-              ? "未選択"
-              : approvalDetailState.status === "loading"
-                ? "取得中"
-                : approvalDetailState.status === "available"
-                  ? "取得成功"
-                  : "取得失敗"}
-          </strong>
+      <section
+        className={`list-status list-status-${detailStatusClass} approval-current-selection ${selectedSummary ? "has-selection" : ""}`}
+        aria-live="polite"
+      >
+        <div className="approval-current-selection-primary">
+          <span>現在の選択</span>
+          <strong>{selectedSummary ? `${selectedSummary.module_key} ${selectedSummary.module_name}` : "未選択"}</strong>
         </div>
         <div>
-          <span>対象ID</span>
-          <strong>{selectedSummary?.module_key ?? "未選択"}</strong>
+          <span>版 / 承認状態</span>
+          <strong>
+            {selectedSummary
+              ? `${formatVersionLabel(selectedSummary)} / ${selectedSummary.status_label}`
+              : "-"}
+          </strong>
         </div>
         <div>
           <span>次の操作</span>
@@ -9559,37 +9575,53 @@ function ApprovalPage() {
         </section>
       ) : (
         <DataTable
-          columns={["対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "選択"]}
+          columns={["選択", "対象", "版数", "現在状態", "次の操作", "利用モジュール", "更新日", "選択状態"]}
           rows={filteredApprovalItems.map((item) => [
-            `${item.target_key} ${item.target_name}`,
-            formatVersionLabel(item),
+            <label className="approval-selection-radio">
+              <input
+                type="radio"
+                name="source-approval-target"
+                checked={selectedTargetId === item.target_id}
+                onChange={() => setSelectedTargetId(item.target_id)}
+                aria-label={`${item.target_key} ${formatVersionLabel(item)}を選択`}
+              />
+            </label>,
+            <span className="approval-row-primary">{item.target_key} {item.target_name}</span>,
+            <span className="approval-row-version">{formatVersionLabel(item)}</span>,
             <ModuleStatusPill status={item.status} label={item.status_label} />,
             item.next_action,
             `${item.enabled_module_count}/${item.module_count}`,
             item.updated_at,
-            <button className="text-button" onClick={() => setSelectedTargetId(item.target_id)}>
-              対象を選ぶ
-            </button>,
+            selectedTargetId === item.target_id ? (
+              <span className="approval-selected-indicator"><span aria-hidden="true">✓</span>選択中</span>
+            ) : (
+              <button className="text-button" onClick={() => setSelectedTargetId(item.target_id)}>
+                選択
+              </button>
+            ),
           ])}
+          rowClassNames={filteredApprovalItems.map((item) =>
+            selectedTargetId === item.target_id ? "approval-row-selected" : undefined,
+          )}
+          rowAriaSelected={filteredApprovalItems.map((item) => selectedTargetId === item.target_id)}
         />
       )}
 
-      <section className={`list-status list-status-${detailStatusClass}`} aria-live="polite">
-        <div>
-          <span>選択状態</span>
-          <strong>
-            {approvalDetailState.status === "idle"
-              ? "未選択"
-              : approvalDetailState.status === "loading"
-                ? "取得中"
-                : approvalDetailState.status === "available"
-                  ? "取得成功"
-                  : "取得失敗"}
-          </strong>
+      <section
+        className={`list-status list-status-${detailStatusClass} approval-current-selection ${selectedSummary ? "has-selection" : ""}`}
+        aria-live="polite"
+      >
+        <div className="approval-current-selection-primary">
+          <span>現在の選択</span>
+          <strong>{selectedSummary ? `${selectedSummary.target_key} ${selectedSummary.target_name}` : "未選択"}</strong>
         </div>
         <div>
-          <span>対象ID</span>
-          <strong>{selectedTargetId ?? "未選択"}</strong>
+          <span>版 / 承認状態</span>
+          <strong>
+            {selectedSummary
+              ? `${formatVersionLabel(selectedSummary)} / ${selectedSummary.status_label}`
+              : "-"}
+          </strong>
         </div>
         <div>
           <span>次の操作</span>
@@ -9854,7 +9886,17 @@ function SearchForm({ fields, onSubmit }: { fields: [string, string][]; onSubmit
   );
 }
 
-function DataTable({ columns, rows }: { columns: ReactNode[]; rows: ReactNode[][] }) {
+function DataTable({
+  columns,
+  rows,
+  rowClassNames,
+  rowAriaSelected,
+}: {
+  columns: ReactNode[];
+  rows: ReactNode[][];
+  rowClassNames?: Array<string | undefined>;
+  rowAriaSelected?: boolean[];
+}) {
   return (
     <div className="table-wrap">
       <table>
@@ -9863,7 +9905,7 @@ function DataTable({ columns, rows }: { columns: ReactNode[]; rows: ReactNode[][
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={index}>
+            <tr key={index} className={rowClassNames?.[index]} aria-selected={rowAriaSelected?.[index]}>
               {row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
             </tr>
           ))}
