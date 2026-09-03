@@ -664,6 +664,32 @@ textarea {
   line-height: 1.7;
 }
 
+.module-cancellation-dialog {
+  width: min(540px, 100%);
+}
+
+.module-cancellation-reason-field {
+  display: grid;
+  gap: 8px;
+  color: #33444f;
+  font-weight: 800;
+}
+
+.module-cancellation-reason-field textarea {
+  width: 100%;
+  min-height: 104px;
+  resize: vertical;
+  border: 1px solid #b8c5ca;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #172026;
+  background: #ffffff;
+}
+
+.module-cancellation-dialog .form-error {
+  color: #b64a3a;
+}
+
 .modal-actions {
   margin-top: 8px;
   display: flex;

@@ -20,6 +20,7 @@ from app.core.responses import (
     ModuleCreateDeviceHeaderInput,
     ModuleCreateRequest,
     ModuleCreateRowDeviceEntryInput,
+    ModuleCancellationData,
     ModuleDeviceHeaderData,
     ModuleDetailData,
     ModuleListData,
@@ -204,6 +205,23 @@ def _normalize_module_folder_path(folder_path: str | None) -> str:
     return normalized or "未分類"
 
 
+def _ensure_module_deletion_columns(cursor: Any) -> None:
+    """Ensure logical-deletion metadata exists for an existing database."""
+
+    cursor.execute(
+        """
+        ALTER TABLE proc.modules
+            ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+            ADD COLUMN IF NOT EXISTS deleted_by text,
+            ADD COLUMN IF NOT EXISTS delete_reason text;
+
+        CREATE INDEX IF NOT EXISTS idx_modules_deleted_at
+            ON proc.modules (deleted_at);
+        """,
+        {},
+    )
+
+
 def _ensure_module_folder_column(cursor: Any) -> None:
     """Ensure virtual folder metadata exists and migrate legacy assignments."""
 
@@ -289,7 +307,7 @@ def _build_module_list_query(
 ) -> tuple[str, dict[str, object]]:
     """Build the module list query and parameters."""
 
-    conditions: list[str] = []
+    conditions: list[str] = ["m.deleted_at IS NULL"]
     parameters: dict[str, object] = {}
 
     if keyword:
@@ -454,9 +472,12 @@ def _fetch_module_folder_paths(cursor: Any) -> list[str]:
 
     cursor.execute(
         """
-        SELECT DISTINCT folder_path
-        FROM proc.module_folder_memberships
-        ORDER BY folder_path ASC;
+        SELECT DISTINCT membership.folder_path
+        FROM proc.module_folder_memberships membership
+        JOIN proc.modules m
+            ON m.module_id = membership.module_id
+        WHERE m.deleted_at IS NULL
+        ORDER BY membership.folder_path ASC;
         """,
         {},
     )
@@ -552,6 +573,7 @@ def _build_module_detail_query(version_no: int | None = None) -> str:
             WHERE mri.module_row_id = r.module_row_id
         ) row_images ON true
         WHERE m.module_id = %(module_id)s
+          AND m.deleted_at IS NULL
         ORDER BY r.row_order;
     """.format(version_condition=version_condition, version_order=version_order)
 
@@ -565,6 +587,7 @@ def _fetch_module_detail_rows(connection: Any, module_id: int, version_no: int |
 
     with connection.cursor() as cursor:
         _ensure_module_version_number_columns(cursor)
+        _ensure_module_deletion_columns(cursor)
         cursor.execute(_build_module_detail_query(version_no), parameters)
         return cursor.fetchall()
 
@@ -1256,10 +1279,16 @@ def _find_module_id_by_key(cursor: Any, module_key: str) -> int | None:
     """Return module_id for an existing module key."""
 
     cursor.execute(
-        "SELECT module_id FROM proc.modules WHERE module_key = %(module_key)s;",
+        """
+        SELECT module_id, deleted_at IS NOT NULL AS is_deleted
+        FROM proc.modules
+        WHERE module_key = %(module_key)s;
+        """,
         {"module_key": module_key},
     )
     row = cursor.fetchone()
+    if row is not None and len(row) > 1 and bool(row[1]):
+        raise ValueError("cancelled module_key cannot be reused.")
     return int(row[0]) if row is not None else None
 
 
@@ -1375,6 +1404,7 @@ def list_modules(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_module_version_number_columns(cursor)
+                _ensure_module_deletion_columns(cursor)
                 _ensure_module_folder_column(cursor)
                 cursor.execute(query, parameters)
                 rows = cursor.fetchall()
@@ -1700,6 +1730,7 @@ def list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersion
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_module_version_number_columns(cursor)
+                _ensure_module_deletion_columns(cursor)
                 cursor.execute(
                     """
                     SELECT
@@ -1722,6 +1753,7 @@ def list_module_versions(settings: AppSettings, module_id: int) -> ModuleVersion
                     LEFT JOIN proc.module_rows r
                         ON r.module_version_id = mv.module_version_id
                     WHERE m.module_id = %(module_id)s
+                      AND m.deleted_at IS NULL
                     GROUP BY
                         m.module_id,
                         m.module_key,
@@ -1831,6 +1863,7 @@ def get_module_version_status(
         WHERE
             m.module_id = %(module_id)s
             AND mv.version_no = %(version_no)s
+            AND m.deleted_at IS NULL
         GROUP BY
             m.module_id,
             m.module_key,
@@ -1855,6 +1888,7 @@ def get_module_version_status(
                 _ensure_module_approval_history_table(cursor)
                 _ensure_module_status_constraints(cursor)
                 _ensure_module_version_number_columns(cursor)
+                _ensure_module_deletion_columns(cursor)
                 cursor.execute(query, {"module_id": module_id, "version_no": version_no})
                 row = cursor.fetchone()
                 if row is None:
@@ -1929,17 +1963,21 @@ def update_module_version_status(
                 _ensure_module_approval_history_table(cursor)
                 _ensure_module_status_constraints(cursor)
                 _ensure_module_version_number_columns(cursor)
+                _ensure_module_deletion_columns(cursor)
                 cursor.execute(
                     """
                     SELECT
-                        module_version_id,
-                        status,
-                        version_major,
-                        version_minor
-                    FROM proc.module_versions
+                        mv.module_version_id,
+                        mv.status,
+                        mv.version_major,
+                        mv.version_minor
+                    FROM proc.module_versions mv
+                    JOIN proc.modules m
+                        ON m.module_id = mv.module_id
                     WHERE
-                        module_id = %(module_id)s
-                        AND version_no = %(version_no)s;
+                        mv.module_id = %(module_id)s
+                        AND mv.version_no = %(version_no)s
+                        AND m.deleted_at IS NULL;
                     """,
                     {"module_id": module_id, "version_no": version_no},
                 )
@@ -2029,6 +2067,111 @@ def update_module_version_status(
     return get_module_version_status(settings, module_id, version_no)
 
 
+def cancel_module_registration(
+    settings: AppSettings,
+    module_id: int,
+    cancelled_by: str,
+    reason: str,
+) -> ModuleCancellationData | None:
+    """Logically cancel an unused initial draft module registration."""
+
+    normalized_cancelled_by = cancelled_by.strip()
+    normalized_reason = reason.strip()
+    if not normalized_cancelled_by:
+        raise ValueError("実行者を指定してください。")
+    if not normalized_reason:
+        raise ValueError("取消理由を入力してください。")
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_module_deletion_columns(cursor)
+                cursor.execute(
+                    """
+                    SELECT
+                        m.module_id,
+                        m.module_key,
+                        m.name,
+                        m.deleted_at,
+                        version_summary.version_count,
+                        version_summary.module_version_id,
+                        version_summary.status,
+                        EXISTS (
+                            SELECT 1
+                            FROM proc.blueprint_items blueprint_item
+                            JOIN proc.module_versions linked_version
+                                ON linked_version.module_version_id = blueprint_item.module_version_id
+                            WHERE linked_version.module_id = m.module_id
+                        ) AS is_used_by_source_doc
+                    FROM proc.modules m
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            COUNT(*)::int AS version_count,
+                            MIN(mv.module_version_id) AS module_version_id,
+                            MIN(mv.status) AS status
+                        FROM proc.module_versions mv
+                        WHERE mv.module_id = m.module_id
+                    ) version_summary ON true
+                    WHERE m.module_id = %(module_id)s
+                    FOR UPDATE OF m;
+                    """,
+                    {"module_id": module_id},
+                )
+                module_row = cursor.fetchone()
+                if module_row is None or module_row[3] is not None:
+                    return None
+                if int(module_row[4] or 0) != 1:
+                    raise ValueError("初版だけが存在するモジュールのみ登録取消できます。")
+                if str(module_row[6] or "") != "draft":
+                    raise ValueError("作成中のモジュールのみ登録取消できます。")
+                if bool(module_row[7]):
+                    raise ValueError("原本で使用中のモジュールは登録取消できません。")
+
+                cursor.execute(
+                    """
+                    UPDATE proc.modules
+                    SET
+                        deleted_at = CURRENT_TIMESTAMP,
+                        deleted_by = %(cancelled_by)s,
+                        delete_reason = %(reason)s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE module_id = %(module_id)s
+                      AND deleted_at IS NULL
+                    RETURNING deleted_at;
+                    """,
+                    {
+                        "module_id": module_id,
+                        "cancelled_by": normalized_cancelled_by,
+                        "reason": normalized_reason,
+                    },
+                )
+                cancelled_row = cursor.fetchone()
+                if cancelled_row is None:
+                    return None
+            connection.commit()
+    except ValueError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("Module registration cancellation failed.") from exception
+
+    return ModuleCancellationData(
+        module_id=int(module_row[0]),
+        module_key=str(module_row[1]),
+        module_name=str(module_row[2]),
+        cancelled_by=normalized_cancelled_by,
+        cancelled_at=_format_changed_at(cancelled_row[0]),
+        reason=normalized_reason,
+    )
+
+
 def get_module_row_image(settings: AppSettings, module_row_image_id: int) -> ModuleRowImageData | None:
     """Read metadata for one module row image."""
 
@@ -2043,20 +2186,28 @@ def get_module_row_image(settings: AppSettings, module_row_image_id: int) -> Mod
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_module_deletion_columns(cursor)
                 cursor.execute(
                     """
                     SELECT
-                        module_row_image_id,
-                        image_key,
-                        image_path,
-                        anchor_cell,
-                        offset_x_px,
-                        offset_y_px,
-                        width_px,
-                        height_px,
-                        image_order
-                    FROM proc.module_row_images
-                    WHERE module_row_image_id = %(module_row_image_id)s;
+                        image.module_row_image_id,
+                        image.image_key,
+                        image.image_path,
+                        image.anchor_cell,
+                        image.offset_x_px,
+                        image.offset_y_px,
+                        image.width_px,
+                        image.height_px,
+                        image.image_order
+                    FROM proc.module_row_images image
+                    JOIN proc.module_rows module_row
+                        ON module_row.module_row_id = image.module_row_id
+                    JOIN proc.module_versions module_version
+                        ON module_version.module_version_id = module_row.module_version_id
+                    JOIN proc.modules module
+                        ON module.module_id = module_version.module_id
+                    WHERE image.module_row_image_id = %(module_row_image_id)s
+                      AND module.deleted_at IS NULL;
                     """,
                     {"module_row_image_id": module_row_image_id},
                 )
@@ -2103,6 +2254,7 @@ def create_module(settings: AppSettings, payload: ModuleCreateRequest) -> Module
 
             with connection.cursor() as cursor:
                 _ensure_module_version_number_columns(cursor)
+                _ensure_module_deletion_columns(cursor)
                 normalized_module_key = _normalize_module_key(payload.module_key)
                 module_version_id: int | None = None
                 if normalized_module_key is None:

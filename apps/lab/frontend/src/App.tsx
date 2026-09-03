@@ -235,6 +235,15 @@ type ModuleDetailData = {
   rows: ModuleDetailRowData[];
 };
 
+type ModuleCancellationData = {
+  module_id: number;
+  module_key: string;
+  module_name: string;
+  cancelled_by: string;
+  cancelled_at: string;
+  reason: string;
+};
+
 type ApiResponse<TData> = {
   result: ApiResult;
   data: TData | null;
@@ -281,6 +290,11 @@ type ModuleDetailState = {
 type ModuleVersionListState = {
   status: "idle" | "loading" | "available" | "unavailable";
   items: ModuleVersionListItemData[];
+  message: string;
+};
+
+type ModuleCancellationState = {
+  status: "idle" | "submitting" | "error";
   message: string;
 };
 
@@ -2486,6 +2500,7 @@ function useModuleDetailState(moduleId: string | undefined, versionNo: string | 
 
 function ModuleDetailPage() {
   const navigate = useNavigate();
+  const currentUser = getStoredAuthUser();
   const { moduleId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedVersionNo = searchParams.get("version_no");
@@ -2504,6 +2519,12 @@ function ModuleDetailPage() {
   });
   const [diffFromVersionNo, setDiffFromVersionNo] = useState<number | null>(null);
   const [diffToVersionNo, setDiffToVersionNo] = useState<number | null>(null);
+  const [isCancellationDialogOpen, setIsCancellationDialogOpen] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [cancellationState, setCancellationState] = useState<ModuleCancellationState>({
+    status: "idle",
+    message: "",
+  });
   const versionOptions = [...versionListState.items].sort((a, b) => a.version_no - b.version_no);
   const nextVersionNo =
     versionListState.items.length > 0
@@ -2516,6 +2537,10 @@ function ModuleDetailPage() {
   );
   const isModuleLocked = item?.status === "review_requested";
   const canCreateSourceDoc = item?.status === "published";
+  const canCancelRegistration =
+    item?.status === "draft"
+    && versionListState.status === "available"
+    && versionListState.items.length === 1;
 
   useEffect(() => {
     if (!moduleId) {
@@ -2588,6 +2613,21 @@ function ModuleDetailPage() {
     });
   }, [item?.version_no, versionListState.items]);
 
+  useEffect(() => {
+    if (!isCancellationDialogOpen) {
+      return;
+    }
+
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape" && cancellationState.status !== "submitting") {
+        setIsCancellationDialogOpen(false);
+      }
+    }
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isCancellationDialogOpen, cancellationState.status]);
+
   function handleVersionSelect(versionNo: number): void {
     setSearchParams({ version_no: String(versionNo) });
   }
@@ -2645,6 +2685,49 @@ function ModuleDetailPage() {
         item: null,
         message: "差分取得中にAPI接続で失敗しました。",
       });
+    }
+  }
+
+  function openCancellationDialog(): void {
+    setCancellationReason("");
+    setCancellationState({ status: "idle", message: "" });
+    setIsCancellationDialogOpen(true);
+  }
+
+  async function handleCancelModuleRegistration(): Promise<void> {
+    if (!item || !canCancelRegistration || cancellationState.status === "submitting") {
+      return;
+    }
+
+    const normalizedReason = cancellationReason.trim();
+    if (!normalizedReason) {
+      setCancellationState({ status: "error", message: "取消理由を入力してください。" });
+      return;
+    }
+
+    setCancellationState({ status: "submitting", message: "登録を取り消しています。" });
+    try {
+      const response = await fetch(buildApiUrl(`/api/v1/modules/${item.module_id}`), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cancelled_by: currentUser?.displayName ?? "WebUIユーザー",
+          reason: normalizedReason,
+        }),
+      });
+      const responseBody = await readApiResponse<ModuleCancellationData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setCancellationState({
+          status: "error",
+          message: responseBody.message || `登録取消に失敗しました。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setIsCancellationDialogOpen(false);
+      navigate("/modules/search", { replace: true });
+    } catch {
+      setCancellationState({ status: "error", message: "登録取消中にAPI接続で失敗しました。" });
     }
   }
 
@@ -2717,6 +2800,12 @@ function ModuleDetailPage() {
           <span aria-hidden="true">＋</span>
           このモジュールで原本作成
         </button>
+        {canCancelRegistration ? (
+          <button className="danger" type="button" onClick={openCancellationDialog}>
+            <span aria-hidden="true">×</span>
+            登録を取り消す
+          </button>
+        ) : null}
       </Toolbar>
 
       {item ? (
@@ -2797,6 +2886,72 @@ function ModuleDetailPage() {
             <ExcelModulePreview item={item} mode="fullscreen" />
           </div>
         </PreviewOverlay>
+      ) : null}
+
+      {item && isCancellationDialogOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={() => {
+            if (cancellationState.status !== "submitting") {
+              setIsCancellationDialogOpen(false);
+            }
+          }}
+        >
+          <section
+            aria-labelledby="module-cancellation-dialog-title"
+            aria-modal="true"
+            className="modal-dialog module-cancellation-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="modal-icon" aria-hidden="true">×</span>
+            <h2 id="module-cancellation-dialog-title">モジュール登録を取り消しますか？</h2>
+            <p>
+              {item.module_key} / {item.module_name} を通常の一覧から非表示にします。
+              取込ファイルと記録は保持されます。
+            </p>
+            <label className="module-cancellation-reason-field">
+              取消理由
+              <textarea
+                value={cancellationReason}
+                onChange={(event) => {
+                  setCancellationReason(event.target.value);
+                  if (cancellationState.status === "error") {
+                    setCancellationState({ status: "idle", message: "" });
+                  }
+                }}
+                rows={4}
+                required
+                disabled={cancellationState.status === "submitting"}
+                placeholder="例: 対象外のExcelを誤って登録したため"
+              />
+            </label>
+            {cancellationState.message ? (
+              <p className={cancellationState.status === "error" ? "form-error" : "form-hint"} role="alert">
+                {cancellationState.message}
+              </p>
+            ) : null}
+            <div className="modal-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setIsCancellationDialogOpen(false)}
+                disabled={cancellationState.status === "submitting"}
+              >
+                キャンセル
+              </button>
+              <button
+                className="danger"
+                type="button"
+                onClick={() => void handleCancelModuleRegistration()}
+                disabled={cancellationState.status === "submitting"}
+              >
+                登録を取り消す
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
     </Page>
   );

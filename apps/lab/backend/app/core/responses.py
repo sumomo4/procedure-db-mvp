@@ -156,6 +156,24 @@ class ModuleFolderMoveRequest(BaseModel):
     folder_path: str = Field(min_length=1)
 
 
+class ModuleCancellationRequest(BaseModel):
+    """Request payload for cancelling an accidental module registration."""
+
+    cancelled_by: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class ModuleCancellationData(BaseModel):
+    """Result of logically cancelling an accidental module registration."""
+
+    module_id: int
+    module_key: str
+    module_name: str
+    cancelled_by: str
+    cancelled_at: str
+    reason: str
+
+
 class ModuleVersionListItemData(BaseModel):
     """Module version list item response payload."""
 

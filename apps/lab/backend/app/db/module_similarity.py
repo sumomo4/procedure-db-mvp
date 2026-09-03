@@ -35,6 +35,14 @@ class ModuleSimilarityCandidateRecord:
 def _ensure_module_similarity_schema(cursor: Any) -> None:
     """Create similarity persistence objects for an existing Lab database."""
 
+    cursor.execute(
+        """
+        ALTER TABLE proc.modules
+            ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+            ADD COLUMN IF NOT EXISTS deleted_by text,
+            ADD COLUMN IF NOT EXISTS delete_reason text;
+        """
+    )
     cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
     cursor.execute(
         """
@@ -97,7 +105,10 @@ def list_missing_published_module_versions(
                             mv.module_version_id,
                             mv.version_no
                         FROM proc.module_versions mv
+                        JOIN proc.modules m
+                            ON m.module_id = mv.module_id
                         WHERE mv.status = 'published'
+                          AND m.deleted_at IS NULL
                         ORDER BY mv.module_id, mv.version_no DESC
                     )
                     SELECT
@@ -253,6 +264,7 @@ def list_module_similarity_candidates(
                         JOIN proc.module_versions mv
                             ON mv.module_id = m.module_id
                         WHERE mv.status = 'published'
+                          AND m.deleted_at IS NULL
                         ORDER BY mv.module_id, mv.version_no DESC
                     )
                     SELECT

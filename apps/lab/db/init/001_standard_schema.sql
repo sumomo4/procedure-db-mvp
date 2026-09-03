@@ -12,9 +12,20 @@ CREATE TABLE IF NOT EXISTS proc.modules (
     name text NOT NULL,
     description text,
     folder_path text NOT NULL DEFAULT '未分類',
+    deleted_at timestamptz,
+    deleted_by text,
+    delete_reason text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE proc.modules
+    ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+    ADD COLUMN IF NOT EXISTS deleted_by text,
+    ADD COLUMN IF NOT EXISTS delete_reason text;
+
+CREATE INDEX IF NOT EXISTS idx_modules_deleted_at
+    ON proc.modules (deleted_at);
 
 CREATE TABLE IF NOT EXISTS proc.module_versions (
     module_version_id bigserial PRIMARY KEY,

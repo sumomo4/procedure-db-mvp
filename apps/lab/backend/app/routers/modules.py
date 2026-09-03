@@ -22,6 +22,8 @@ from app.core.responses import (
     ApprovalStatusDetailData,
     ApprovalStatusUpdateRequest,
     ExcelImportSheetRequest,
+    ModuleCancellationData,
+    ModuleCancellationRequest,
     ModuleCreateRequest,
     ModuleDetailData,
     ModuleDiffData,
@@ -37,6 +39,7 @@ from app.core.responses import (
 )
 from app.db.modules import (
     VALID_MODULE_STATUSES,
+    cancel_module_registration,
     create_module,
     delete_module_folder,
     get_module_detail,
@@ -468,6 +471,41 @@ def read_module_detail(
         )
 
     return success_response(data, "モジュール詳細を取得しました。")
+
+
+@router.delete("/{module_id}", response_model=ApiResponse[ModuleCancellationData])
+def cancel_module_registration_resource(
+    module_id: int,
+    payload: ModuleCancellationRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[ModuleCancellationData]:
+    """Logically cancel an accidental, unused initial draft registration."""
+
+    try:
+        data = cancel_module_registration(
+            settings,
+            module_id,
+            payload.cancelled_by,
+            payload.reason,
+        )
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="モジュールが見つかりませんでした。",
+        )
+
+    return success_response(data, "モジュール登録を取り消しました。")
 
 
 @router.get("/images/{module_row_image_id}", response_class=FileResponse)

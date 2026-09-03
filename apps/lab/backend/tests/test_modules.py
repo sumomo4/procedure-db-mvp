@@ -9,6 +9,7 @@ from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ApprovalStatusDetailData,
     ApprovalTransitionData,
+    ModuleCancellationData,
     ModuleDetailData,
     ModuleDiffData,
     ModuleDiffRowData,
@@ -520,6 +521,65 @@ def test_read_module_detail_returns_not_found_response(
         "data": None,
         "message": "モジュールが見つかりませんでした。",
     }
+
+
+def test_cancel_module_registration_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation API should return the logically deleted module metadata."""
+
+    def fake_cancel_module_registration(
+        settings: AppSettings,
+        module_id: int,
+        cancelled_by: str,
+        reason: str,
+    ) -> ModuleCancellationData:
+        assert settings.app_env == "test"
+        assert module_id == 4
+        assert cancelled_by == "メンバーユーザー"
+        assert reason == "誤ったExcelを登録したため"
+        return ModuleCancellationData(
+            module_id=4,
+            module_key="MOD-004",
+            module_name="誤登録モジュール",
+            cancelled_by=cancelled_by,
+            cancelled_at="2026-09-03T10:00:00+00:00",
+            reason=reason,
+        )
+
+    monkeypatch.setattr(modules, "cancel_module_registration", fake_cancel_module_registration)
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/modules/4",
+        json={"cancelled_by": "メンバーユーザー", "reason": "誤ったExcelを登録したため"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["message"] == "モジュール登録を取り消しました。"
+    assert response.json()["data"]["module_key"] == "MOD-004"
+
+
+def test_cancel_module_registration_rejects_ineligible_module(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation API should expose business-rule failures as conflicts."""
+
+    def fake_cancel_module_registration(*args: object, **kwargs: object) -> None:
+        raise ValueError("原本で使用中のモジュールは登録取消できません。")
+
+    monkeypatch.setattr(modules, "cancel_module_registration", fake_cancel_module_registration)
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/modules/4",
+        json={"cancelled_by": "メンバーユーザー", "reason": "誤登録"},
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["message"] == "原本で使用中のモジュールは登録取消できません。"
 
 
 def test_read_module_detail_returns_error_response(
