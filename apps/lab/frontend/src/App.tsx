@@ -9095,29 +9095,45 @@ function ModuleApprovalStatusPage() {
         <p>{approvalDetailState.message}</p>
       </section>
 
-      <section className={`list-status list-status-${mutationStatusClass}`} aria-live="polite">
-        <div>
-          <span>状態変更</span>
+      {selectedItem && selectedSummary ? (
+        <ApprovalActionPanel
+          idPrefix="module-approval-action"
+          targetLabel={`${selectedSummary.module_key} ${selectedSummary.module_name}`}
+          versionLabel={formatVersionLabel(selectedItem)}
+          statusLabel={selectedItem.status_label}
+          actor={approvalActor}
+          roleLabel={currentRoleLabel}
+          roleDescription={currentRoleDescription}
+          canManage={canCommentOnSelectedApproval}
+          isReviewRequested={selectedItem.status === "review_requested"}
+          latestReturnNote={
+            selectedItem.status === "returned"
+              ? selectedLatestReturnHistory?.note ?? "コメントはありません。"
+              : null
+          }
+          comment={approvalComment}
+          onCommentChange={setApprovalComment}
+          showReturnReasonError={showReturnReasonError}
+          returnReasonMessage={returnReasonRequiredMessage}
+          availableTransitionCount={selectedItem.allowed_transitions.length}
+          executableTransitions={selectedExecutableTransitions}
+          isSubmitting={approvalMutationState.status === "submitting"}
+          onTransition={(toStatus) => void handleApplyTransition(toStatus)}
+        />
+      ) : null}
+
+      {approvalMutationState.status !== "idle" && !showReturnReasonError ? (
+        <section className={`approval-operation-feedback approval-operation-feedback-${mutationStatusClass}`} aria-live="polite">
           <strong>
-            {approvalMutationState.status === "idle"
-              ? "未実行"
-              : approvalMutationState.status === "submitting"
-                ? "変更中"
-                : approvalMutationState.status === "success"
-                  ? "変更成功"
-                  : "変更失敗"}
+            {approvalMutationState.status === "submitting"
+              ? "変更中"
+              : approvalMutationState.status === "success"
+                ? "変更成功"
+                : "変更失敗"}
           </strong>
-        </div>
-        <div>
-          <span>対象</span>
-          <strong>{selectedSummary?.module_key ?? "未選択"}</strong>
-        </div>
-        <div>
-          <span>実行候補</span>
-          <strong>{selectedItem?.allowed_transitions.length ?? 0}</strong>
-        </div>
-        {!showReturnReasonError ? <p>{approvalMutationState.message}</p> : null}
-      </section>
+          <span>{approvalMutationState.message}</span>
+        </section>
+      ) : null}
 
       {selectedItem && selectedSummary ? (
         <>
@@ -9138,81 +9154,12 @@ function ModuleApprovalStatusPage() {
             </div>
           </section>
 
-          <section className="section-band approval-detail-grid">
-            <div>
-              <h2>実行できる操作</h2>
-              <div className={`approval-permission-panel ${canCommentOnSelectedApproval ? "can-manage" : "view-only"}`}>
-                <span>現在の権限</span>
-                <strong>{currentRoleLabel}</strong>
-                <p>{currentRoleDescription}</p>
-              </div>
-              <label className="approval-actor-field">
-                実行者
-                <input value={approvalActor || "未ログイン"} readOnly />
-              </label>
-              {selectedItem.status === "review_requested" ? (
-                <div className="approval-lock-note">
-                  <strong>承認依頼中です</strong>
-                  <span>メンバー側では編集・再依頼操作を行わず、承認者の確認を待つ状態です。</span>
-                </div>
-              ) : null}
-              {selectedItem.status === "returned" && selectedLatestReturnHistory ? (
-                <div className="approval-return-note">
-                  <strong>差戻しコメント</strong>
-                  <span>{selectedLatestReturnHistory.note ?? "コメントはありません。"}</span>
-                </div>
-              ) : null}
-              {!canCommentOnSelectedApproval ? (
-                <p className="approval-role-note">現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
-              ) : null}
-              <label className="approval-comment-field">
-                コメント
-                <textarea
-                  value={approvalComment}
-                  onChange={(event) => setApprovalComment(event.target.value)}
-                  disabled={!canCommentOnSelectedApproval}
-                  rows={3}
-                  placeholder={
-                    canCommentOnSelectedApproval
-                      ? "承認依頼の補足や差戻し理由を入力します。"
-                      : "現在のユーザーで実行できる操作はありません。"
-                  }
-                />
-              </label>
-              {showReturnReasonError ? <p className="approval-inline-error">{returnReasonRequiredMessage}</p> : null}
-              {selectedItem.allowed_transitions.length > 0 ? (
-                <div className="approval-transition-list">
-                  {selectedExecutableTransitions.length > 0 ? (
-                    selectedExecutableTransitions.map((transition) => (
-                      <article key={transition.to_status} className="approval-transition-card">
-                        <strong>{transition.action_label}</strong>
-                        <button
-                          className="primary"
-                          onClick={() => void handleApplyTransition(transition.to_status)}
-                          disabled={approvalMutationState.status === "submitting"}
-                          title={transition.action_label}
-                        >
-                          {approvalMutationState.status === "submitting"
-                            ? "変更中..."
-                            : transition.action_label}
-                        </button>
-                      </article>
-                    ))
-                  ) : (
-                    <p>現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
-                  )}
-                </div>
-              ) : (
-                <p>この状態から実行できる承認操作はありません。</p>
-              )}
-            </div>
-            <div>
-              <h2>モジュール情報</h2>
-              <div className="facts">
-                <Fact label="取込元" value={selectedSummary.source_xlsx_path ?? "-"} />
-                <Fact label="作成者" value={selectedSummary.created_by ?? "-"} />
-                <Fact label="現在の版" value={formatVersionLabel(selectedItem)} />
-              </div>
+          <section className="section-band approval-related-panel">
+            <h2>モジュール情報</h2>
+            <div className="facts">
+              <Fact label="取込元" value={selectedSummary.source_xlsx_path ?? "-"} />
+              <Fact label="作成者" value={selectedSummary.created_by ?? "-"} />
+              <Fact label="現在の版" value={formatVersionLabel(selectedItem)} />
             </div>
           </section>
 
@@ -9630,29 +9577,45 @@ function ApprovalPage() {
         <p>{approvalDetailState.message}</p>
       </section>
 
-      <section className={`list-status list-status-${mutationStatusClass}`} aria-live="polite">
-        <div>
-          <span>状態変更</span>
+      {selectedItem ? (
+        <ApprovalActionPanel
+          idPrefix="source-approval-action"
+          targetLabel={`${selectedItem.target_key} ${selectedItem.target_name}`}
+          versionLabel={formatVersionLabel(selectedItem)}
+          statusLabel={selectedItem.status_label}
+          actor={approvalActor}
+          roleLabel={currentRoleLabel}
+          roleDescription={currentRoleDescription}
+          canManage={canCommentOnSelectedApproval}
+          isReviewRequested={selectedItem.status === "review_requested"}
+          latestReturnNote={
+            selectedItem.status === "returned"
+              ? selectedLatestReturnHistory?.note ?? "コメントはありません。"
+              : null
+          }
+          comment={approvalComment}
+          onCommentChange={setApprovalComment}
+          showReturnReasonError={showReturnReasonError}
+          returnReasonMessage={returnReasonRequiredMessage}
+          availableTransitionCount={selectedItem.allowed_transitions.length}
+          executableTransitions={selectedExecutableTransitions}
+          isSubmitting={approvalMutationState.status === "submitting"}
+          onTransition={(toStatus) => void handleApplyTransition(toStatus)}
+        />
+      ) : null}
+
+      {approvalMutationState.status !== "idle" && !showReturnReasonError ? (
+        <section className={`approval-operation-feedback approval-operation-feedback-${mutationStatusClass}`} aria-live="polite">
           <strong>
-            {approvalMutationState.status === "idle"
-              ? "未実行"
-              : approvalMutationState.status === "submitting"
-                ? "変更中"
-                : approvalMutationState.status === "success"
-                  ? "変更成功"
-                  : "変更失敗"}
+            {approvalMutationState.status === "submitting"
+              ? "変更中"
+              : approvalMutationState.status === "success"
+                ? "変更成功"
+                : "変更失敗"}
           </strong>
-        </div>
-        <div>
-          <span>対象</span>
-          <strong>{selectedSummary?.target_key ?? "未選択"}</strong>
-        </div>
-        <div>
-          <span>実行候補</span>
-          <strong>{selectedItem?.allowed_transitions.length ?? 0}</strong>
-        </div>
-        {!showReturnReasonError ? <p>{approvalMutationState.message}</p> : null}
-      </section>
+          <span>{approvalMutationState.message}</span>
+        </section>
+      ) : null}
 
       {selectedItem ? (
         <>
@@ -9673,88 +9636,19 @@ function ApprovalPage() {
             </div>
           </section>
 
-          <section className="section-band approval-detail-grid">
-            <div>
-              <h2>実行できる操作</h2>
-              <div className={`approval-permission-panel ${canCommentOnSelectedApproval ? "can-manage" : "view-only"}`}>
-                <span>現在の権限</span>
-                <strong>{currentRoleLabel}</strong>
-                <p>{currentRoleDescription}</p>
+          <section className="section-band approval-related-panel">
+            <h2>関連モジュール</h2>
+            {selectedItem.module_names.length > 0 ? (
+              <div className="approval-module-list">
+                {selectedItem.module_names.map((moduleName) => (
+                  <span key={moduleName} className="flow-step">
+                    {moduleName}
+                  </span>
+                ))}
               </div>
-              <label className="approval-actor-field">
-                実行者
-                <input value={approvalActor || "未ログイン"} readOnly />
-              </label>
-              {selectedItem.status === "review_requested" ? (
-                <div className="approval-lock-note">
-                  <strong>承認依頼中です</strong>
-                  <span>メンバー側では編集・再依頼操作を行わず、承認者の確認を待つ状態です。</span>
-                </div>
-              ) : null}
-              {selectedItem.status === "returned" && selectedLatestReturnHistory ? (
-                <div className="approval-return-note">
-                  <strong>差戻しコメント</strong>
-                  <span>{selectedLatestReturnHistory.note ?? "コメントはありません。"}</span>
-                </div>
-              ) : null}
-              {!canCommentOnSelectedApproval ? (
-                <p className="approval-role-note">現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
-              ) : null}
-              <label className="approval-comment-field">
-                コメント
-                <textarea
-                  value={approvalComment}
-                  onChange={(event) => setApprovalComment(event.target.value)}
-                  disabled={!canCommentOnSelectedApproval}
-                  rows={3}
-                  placeholder={
-                    canCommentOnSelectedApproval
-                      ? "承認依頼の補足や差戻し理由を入力します。"
-                      : "現在のユーザーで実行できる操作はありません。"
-                  }
-                />
-              </label>
-              {showReturnReasonError ? <p className="approval-inline-error">{returnReasonRequiredMessage}</p> : null}
-              {selectedItem.allowed_transitions.length > 0 ? (
-                <div className="approval-transition-list">
-                  {selectedExecutableTransitions.length > 0 ? (
-                    selectedExecutableTransitions.map((transition) => (
-                      <article key={transition.to_status} className="approval-transition-card">
-                        <strong>{transition.action_label}</strong>
-                        <button
-                          className="primary"
-                          onClick={() => void handleApplyTransition(transition.to_status)}
-                          disabled={approvalMutationState.status === "submitting"}
-                          title={transition.action_label}
-                        >
-                          {approvalMutationState.status === "submitting"
-                            ? "変更中..."
-                            : transition.action_label}
-                        </button>
-                      </article>
-                    ))
-                  ) : (
-                    <p>現在のユーザーでは、この状態に対して実行できる操作はありません。</p>
-                  )}
-                </div>
-              ) : (
-                <p>この状態から実行できる承認操作はありません。</p>
-              )}
-            </div>
-            <div>
-              <h2>関連モジュール</h2>
-              {selectedItem.module_names.length > 0 ? (
-                <div className="approval-module-list">
-                  {selectedItem.module_names.map((moduleName) => (
-                    <span key={moduleName} className="flow-step">
-                      {moduleName}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p>関連モジュールはありません。</p>
-              )}
-            </div>
+            ) : (
+              <p>関連モジュールはありません。</p>
+            )}
           </section>
 
           <section className="section-band">
@@ -9883,6 +9777,128 @@ function SearchForm({ fields, onSubmit }: { fields: [string, string][]; onSubmit
       ))}
       <button className="primary" type="submit"><span aria-hidden="true">⌕</span>検索実行</button>
     </form>
+  );
+}
+
+function ApprovalActionPanel({
+  idPrefix,
+  targetLabel,
+  versionLabel,
+  statusLabel,
+  actor,
+  roleLabel,
+  roleDescription,
+  canManage,
+  isReviewRequested,
+  latestReturnNote,
+  comment,
+  onCommentChange,
+  showReturnReasonError,
+  returnReasonMessage,
+  availableTransitionCount,
+  executableTransitions,
+  isSubmitting,
+  onTransition,
+}: {
+  idPrefix: string;
+  targetLabel: string;
+  versionLabel: string;
+  statusLabel: string;
+  actor: string;
+  roleLabel: string;
+  roleDescription: string;
+  canManage: boolean;
+  isReviewRequested: boolean;
+  latestReturnNote: string | null;
+  comment: string;
+  onCommentChange: (comment: string) => void;
+  showReturnReasonError: boolean;
+  returnReasonMessage: string;
+  availableTransitionCount: number;
+  executableTransitions: ApprovalTransitionData[];
+  isSubmitting: boolean;
+  onTransition: (toStatus: ModuleApiStatus) => void;
+}) {
+  function handleTransition(transition: ApprovalTransitionData): void {
+    const confirmed = window.confirm(
+      `${targetLabel}\n「${transition.action_label}」を実行します。よろしいですか？`,
+    );
+    if (confirmed) {
+      onTransition(transition.to_status);
+    }
+  }
+
+  return (
+    <section className="section-band approval-action-panel" aria-labelledby={`${idPrefix}-title`}>
+      <div className="approval-action-header">
+        <div className="approval-action-heading">
+          <span>承認操作</span>
+          <h2 id={`${idPrefix}-title`}>{targetLabel}</h2>
+          <p>{versionLabel} / {statusLabel}</p>
+        </div>
+        <div className={`approval-permission-panel approval-permission-summary ${canManage ? "can-manage" : "view-only"}`}>
+          <span>実行ユーザー</span>
+          <strong>{actor || "未ログイン"} / {roleLabel}</strong>
+          <p>{roleDescription}</p>
+        </div>
+      </div>
+
+      {isReviewRequested ? (
+        <div className="approval-lock-note">
+          <strong>承認依頼中です</strong>
+          <span>メンバー側では編集・再依頼操作を行わず、承認者の確認を待つ状態です。</span>
+        </div>
+      ) : null}
+
+      {latestReturnNote !== null ? (
+        <div className="approval-return-note">
+          <strong>差戻しコメント</strong>
+          <span>{latestReturnNote}</span>
+        </div>
+      ) : null}
+
+      {canManage ? (
+        <div className="approval-action-form">
+          <label className="approval-comment-field">
+            コメント
+            <textarea
+              value={comment}
+              onChange={(event) => onCommentChange(event.target.value)}
+              rows={3}
+              placeholder="承認依頼の補足や差戻し理由を入力します。"
+            />
+          </label>
+          {showReturnReasonError ? <p className="approval-inline-error">{returnReasonMessage}</p> : null}
+          <div className="approval-action-buttons">
+            {executableTransitions.map((transition) => (
+              <button
+                key={transition.to_status}
+                className={
+                  transition.to_status === "returned"
+                    ? "approval-action-button approval-action-button-return"
+                    : transition.to_status === "archived"
+                      ? "secondary approval-action-button"
+                      : "primary approval-action-button"
+                }
+                type="button"
+                onClick={() => handleTransition(transition)}
+                disabled={isSubmitting}
+                title={transition.action_label}
+              >
+                <span aria-hidden="true">{transition.to_status === "returned" ? "↩" : "✓"}</span>
+                {isSubmitting ? "変更中..." : transition.action_label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="approval-role-note">
+          {availableTransitionCount > 0
+            ? "現在のユーザーでは、この状態に対して実行できる操作はありません。"
+            : "この状態から実行できる承認操作はありません。"}
+        </p>
+      )}
+    </section>
   );
 }
 

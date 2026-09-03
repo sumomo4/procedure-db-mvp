@@ -2867,6 +2867,118 @@ th {
   overflow-wrap: anywhere;
 }
 
+.approval-action-panel {
+  border-top: 4px solid #1f7780;
+  display: grid;
+  gap: 16px;
+}
+
+.approval-action-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.65fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.approval-action-heading {
+  display: grid;
+  gap: 5px;
+}
+
+.approval-action-heading > span {
+  color: #1f7780;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.approval-action-heading h2,
+.approval-related-panel h2 {
+  margin: 0;
+}
+
+.approval-action-heading p {
+  margin: 0;
+  color: #56636c;
+  font-weight: 800;
+}
+
+.approval-permission-panel.approval-permission-summary {
+  margin: 0;
+}
+
+.approval-action-form {
+  display: grid;
+  gap: 12px;
+}
+
+.approval-action-form .approval-comment-field {
+  margin: 0;
+}
+
+.approval-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.approval-action-button {
+  min-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.approval-action-button-return {
+  border: 1px solid #b64a3a;
+  background: #ffffff;
+  color: #9e3e31;
+}
+
+.approval-action-button-return:hover:not(:disabled) {
+  background: #fff1ee;
+}
+
+.approval-operation-feedback {
+  padding: 13px 16px;
+  border: 1px solid #c9d1d3;
+  border-left: 5px solid #7b8a92;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #ffffff;
+}
+
+.approval-operation-feedback strong {
+  flex: 0 0 auto;
+}
+
+.approval-operation-feedback span {
+  color: #56636c;
+}
+
+.approval-operation-feedback-available {
+  border-left-color: #2f9461;
+  background: #f4fbf7;
+}
+
+.approval-operation-feedback-unavailable {
+  border-left-color: #b64a3a;
+  background: #fff5f2;
+}
+
+.approval-operation-feedback-loading {
+  border-left-color: #d7a84f;
+  background: #fffaf0;
+}
+
+.approval-related-panel {
+  display: grid;
+  gap: 14px;
+}
+
 .approval-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3884,6 +3996,18 @@ th {
   .module-diff-card-header {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .approval-action-header {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-action-buttons {
+    justify-content: stretch;
+  }
+
+  .approval-action-button {
+    flex: 1 1 100%;
   }
 
   .module-diff-status,
