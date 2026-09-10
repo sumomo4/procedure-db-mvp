@@ -578,6 +578,25 @@ class SourceDocUpdateRequest(BaseModel):
     items: list[SourceDocCreateItemInput] = Field(min_length=1)
 
 
+class SourceDocCancellationRequest(BaseModel):
+    """Request payload for cancelling an accidental source document registration."""
+
+    cancelled_by: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=1000)
+    source_doc_key_confirmation: str = Field(min_length=1)
+
+
+class SourceDocCancellationData(BaseModel):
+    """Result of logically cancelling an accidental source document registration."""
+
+    source_doc_id: int
+    source_doc_key: str
+    source_doc_name: str
+    cancelled_by: str
+    cancelled_at: str
+    reason: str
+
+
 class SourceDocModuleItemData(BaseModel):
     """Linked module item included in a source document detail response."""
 

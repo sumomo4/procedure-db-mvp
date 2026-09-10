@@ -10,6 +10,8 @@ from app.core.responses import (
     ApiResponse,
     RouterEndpointData,
     RouterFoundationData,
+    SourceDocCancellationData,
+    SourceDocCancellationRequest,
     SourceDocCreateRequest,
     SourceDocDetailData,
     SourceDocListData,
@@ -18,6 +20,7 @@ from app.core.responses import (
 )
 from app.db.source_docs import (
     VALID_SOURCE_DOC_STATUSES,
+    cancel_source_doc_registration,
     create_source_doc,
     get_source_doc_detail,
     list_source_docs,
@@ -82,6 +85,7 @@ def read_source_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
             RouterEndpointData(method="GET", path="/api/v1/source-docs/{source_doc_id}", purpose="原本詳細参照"),
             RouterEndpointData(method="POST", path="/api/v1/source-docs", purpose="原本作成"),
             RouterEndpointData(method="PUT", path="/api/v1/source-docs/{source_doc_id}", purpose="原本更新"),
+            RouterEndpointData(method="DELETE", path="/api/v1/source-docs/{source_doc_id}", purpose="原本登録取消"),
         ],
     )
     return success_response(data, "原本 API 構成情報を取得しました。")
@@ -109,6 +113,42 @@ def read_source_doc_detail(
         )
 
     return success_response(data, "原本詳細を取得しました。")
+
+
+@router.delete("/{source_doc_id}", response_model=ApiResponse[SourceDocCancellationData])
+def cancel_source_doc_registration_resource(
+    source_doc_id: int,
+    payload: SourceDocCancellationRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[SourceDocCancellationData]:
+    """Logically cancel an accidental, unused initial draft registration."""
+
+    try:
+        data = cancel_source_doc_registration(
+            settings,
+            source_doc_id,
+            payload.cancelled_by,
+            payload.reason,
+            payload.source_doc_key_confirmation,
+        )
+    except ValueError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exception),
+        ) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exception),
+        ) from exception
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="原本が見つかりませんでした。",
+        )
+
+    return success_response(data, "原本登録を取り消しました。")
 
 
 @router.post("", response_model=ApiResponse[SourceDocDetailData], status_code=status.HTTP_201_CREATED)

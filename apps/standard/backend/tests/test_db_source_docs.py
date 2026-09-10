@@ -9,7 +9,13 @@ import pytest
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import SourceDocCreateItemInput, SourceDocCreateRequest, SourceDocUpdateRequest
-from app.db.source_docs import create_source_doc, get_source_doc_detail, list_source_docs, update_source_doc
+from app.db.source_docs import (
+    cancel_source_doc_registration,
+    create_source_doc,
+    get_source_doc_detail,
+    list_source_docs,
+    update_source_doc,
+)
 
 
 class FakeCursor:
@@ -127,6 +133,7 @@ def test_list_source_docs_returns_source_doc_list(monkeypatch: pytest.MonkeyPatc
     assert result.items[0].source_doc_key == "BP-STD-001"
     assert result.items[0].module_count == 2
     assert result.items[0].updated_at == "2026-04-22"
+    assert any("b.deleted_at IS NULL" in query for query, _ in fake_cursor.executions)
 
 
 def test_get_source_doc_detail_returns_detail(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -520,3 +527,95 @@ def test_update_source_doc_raises_for_connection_error(monkeypatch: pytest.Monke
 
     with pytest.raises(DatabaseConnectionError):
         update_source_doc(AppSettings(), source_doc_id=1, payload=payload)
+
+
+def test_cancel_source_doc_registration_marks_initial_unused_draft_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unused initial draft should be logically cancelled with its audit values."""
+
+    cancelled_at = datetime(2026, 9, 9, 10, 30, tzinfo=timezone.utc)
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            fetchone_results=[
+                (1, "BP-STD-001", "Source doc A", None, 1, "draft", False),
+                (cancelled_at,),
+            ]
+        ),
+    )
+
+    result = cancel_source_doc_registration(
+        AppSettings(),
+        source_doc_id=1,
+        cancelled_by="  Admin User  ",
+        reason="  Wrong module composition  ",
+        source_doc_key_confirmation="BP-STD-001",
+    )
+
+    assert result is not None
+    assert result.source_doc_id == 1
+    assert result.source_doc_key == "BP-STD-001"
+    assert result.cancelled_by == "Admin User"
+    assert result.reason == "Wrong module composition"
+    assert result.cancelled_at == "2026-09-09T10:30:00+00:00"
+    executed_queries = "\n".join(query for query, _ in fake_cursor.executions)
+    assert "FROM proc.case_documents" in executed_queries
+    assert "UPDATE proc.blueprints" in executed_queries
+    assert "delete_reason = %(reason)s" in executed_queries
+
+
+@pytest.mark.parametrize(
+    ("source_doc_row", "message"),
+    [
+        (
+            (1, "BP-STD-001", "Source doc A", None, 2, "draft", False),
+            "初版だけが存在する原本のみ登録取消できます。",
+        ),
+        (
+            (1, "BP-STD-001", "Source doc A", None, 1, "published", False),
+            "作成中の原本のみ登録取消できます。",
+        ),
+        (
+            (1, "BP-STD-001", "Source doc A", None, 1, "draft", True),
+            "案件CSで使用中の原本は登録取消できません。",
+        ),
+    ],
+)
+def test_cancel_source_doc_registration_rejects_ineligible_source_doc(
+    monkeypatch: pytest.MonkeyPatch,
+    source_doc_row: tuple[object, ...],
+    message: str,
+) -> None:
+    """Versioned, approved, and case-used source docs must remain available."""
+
+    install_fake_psycopg(monkeypatch, FakeCursor(fetchone_results=[source_doc_row]))
+
+    with pytest.raises(ValueError, match=message):
+        cancel_source_doc_registration(
+            AppSettings(),
+            source_doc_id=1,
+            cancelled_by="Admin User",
+            reason="Wrong registration",
+            source_doc_key_confirmation="BP-STD-001",
+        )
+
+
+def test_cancel_source_doc_registration_rejects_wrong_key_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact source document key must be supplied before cancellation."""
+
+    install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(fetchone_results=[(1, "BP-STD-001", "Source doc A", None, 1, "draft", False)]),
+    )
+
+    with pytest.raises(ValueError, match="原本IDが一致しません。"):
+        cancel_source_doc_registration(
+            AppSettings(),
+            source_doc_id=1,
+            cancelled_by="Admin User",
+            reason="Wrong registration",
+            source_doc_key_confirmation="BP-STD-999",
+        )

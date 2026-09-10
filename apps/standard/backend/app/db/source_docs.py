@@ -7,6 +7,7 @@ from typing import Any
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    SourceDocCancellationData,
     SourceDocCreateRequest,
     SourceDocUpdateRequest,
     ModuleRowData,
@@ -26,6 +27,24 @@ SOURCE_DOC_STATUS_LABELS = {
     "archived": "保管済み",
 }
 VALID_SOURCE_DOC_STATUSES = frozenset(SOURCE_DOC_STATUS_LABELS)
+
+
+def _ensure_source_doc_deletion_columns(cursor: Any) -> None:
+    """Ensure logical-deletion columns exist on existing DB volumes."""
+
+    cursor.execute(
+        """
+        ALTER TABLE proc.blueprints
+            ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+        ALTER TABLE proc.blueprints
+            ADD COLUMN IF NOT EXISTS deleted_by text;
+        ALTER TABLE proc.blueprints
+            ADD COLUMN IF NOT EXISTS delete_reason text;
+        CREATE INDEX IF NOT EXISTS idx_blueprints_deleted_at
+            ON proc.blueprints (deleted_at);
+        """,
+        {},
+    )
 
 
 def _format_source_doc_version_label(version_major: int | None, version_minor: int | None) -> str:
@@ -130,7 +149,7 @@ def _build_source_doc_list_query(
 ) -> tuple[str, dict[str, str]]:
     """Build the source document list query and parameters."""
 
-    conditions: list[str] = []
+    conditions: list[str] = ["b.deleted_at IS NULL"]
     parameters: dict[str, str] = {}
 
     if keyword:
@@ -308,6 +327,7 @@ def _build_source_doc_detail_query() -> str:
         LEFT JOIN proc.modules m
             ON m.module_id = mv.module_id
         WHERE b.blueprint_id = %(source_doc_id)s
+          AND b.deleted_at IS NULL
         ORDER BY bi.item_order;
     """
 
@@ -320,6 +340,9 @@ def _build_source_doc_module_rows_query() -> str:
             SELECT
                 bv.blueprint_version_id
             FROM proc.blueprint_versions bv
+            JOIN proc.blueprints b
+                ON b.blueprint_id = bv.blueprint_id
+               AND b.deleted_at IS NULL
             WHERE bv.blueprint_id = %(source_doc_id)s
             ORDER BY bv.version_no DESC
             LIMIT 1
@@ -376,6 +399,7 @@ def _fetch_source_doc_detail_rows(
     """Fetch raw rows used to build a source document detail payload."""
 
     with connection.cursor() as cursor:
+        _ensure_source_doc_deletion_columns(cursor)
         _ensure_source_doc_version_number_columns(cursor)
         cursor.execute(_build_source_doc_detail_query(), {"source_doc_id": str(source_doc_id)})
         rows = cursor.fetchall()
@@ -621,6 +645,7 @@ def list_source_docs(
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(query, parameters)
                 rows = cursor.fetchall()
@@ -710,6 +735,7 @@ def create_source_doc(
             source_doc_id: int | None = None
 
             with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
                 normalized_source_doc_key = _normalize_source_doc_key(payload.source_doc_key)
                 if normalized_source_doc_key is None:
@@ -812,12 +838,14 @@ def update_source_doc(
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(
                     """
                     SELECT blueprint_key
                     FROM proc.blueprints
-                    WHERE blueprint_id = %(source_doc_id)s;
+                    WHERE blueprint_id = %(source_doc_id)s
+                      AND deleted_at IS NULL;
                     """,
                     {"source_doc_id": source_doc_id},
                 )
@@ -851,7 +879,8 @@ def update_source_doc(
                         blueprint_key = %(source_doc_key)s,
                         name = %(source_doc_name)s,
                         description = %(description)s
-                    WHERE blueprint_id = %(source_doc_id)s;
+                    WHERE blueprint_id = %(source_doc_id)s
+                      AND deleted_at IS NULL;
                     """,
                     {
                         "source_doc_id": source_doc_id,
@@ -924,3 +953,118 @@ def update_source_doc(
     if detail is None:
         raise DatabaseConnectionError("Source document update failed.")
     return detail
+
+
+def cancel_source_doc_registration(
+    settings: AppSettings,
+    source_doc_id: int,
+    cancelled_by: str,
+    reason: str,
+    source_doc_key_confirmation: str,
+) -> SourceDocCancellationData | None:
+    """Logically cancel an unused initial draft source document registration."""
+
+    normalized_cancelled_by = cancelled_by.strip()
+    normalized_reason = reason.strip()
+    normalized_confirmation = source_doc_key_confirmation.strip()
+    if not normalized_cancelled_by:
+        raise ValueError("実行者を指定してください。")
+    if not normalized_reason:
+        raise ValueError("取消理由を入力してください。")
+    if not normalized_confirmation:
+        raise ValueError("確認のため原本IDを入力してください。")
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
+                cursor.execute(
+                    """
+                    SELECT
+                        b.blueprint_id,
+                        b.blueprint_key,
+                        b.name,
+                        b.deleted_at,
+                        version_summary.version_count,
+                        version_summary.status,
+                        EXISTS (
+                            SELECT 1
+                            FROM proc.case_documents case_document
+                            WHERE case_document.source_doc_id = b.blueprint_id
+                        ) AS is_used_by_case_document
+                    FROM proc.blueprints b
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            COUNT(*)::int AS version_count,
+                            MIN(bv.status) AS status
+                        FROM proc.blueprint_versions bv
+                        WHERE bv.blueprint_id = b.blueprint_id
+                    ) version_summary ON true
+                    WHERE b.blueprint_id = %(source_doc_id)s
+                    FOR UPDATE OF b;
+                    """,
+                    {"source_doc_id": source_doc_id},
+                )
+                source_doc_row = cursor.fetchone()
+                if source_doc_row is None or source_doc_row[3] is not None:
+                    return None
+                if normalized_confirmation != str(source_doc_row[1]):
+                    raise ValueError("原本IDが一致しません。")
+                if int(source_doc_row[4] or 0) != 1:
+                    raise ValueError("初版だけが存在する原本のみ登録取消できます。")
+                if str(source_doc_row[5] or "") != "draft":
+                    raise ValueError("作成中の原本のみ登録取消できます。")
+                if bool(source_doc_row[6]):
+                    raise ValueError("案件CSで使用中の原本は登録取消できません。")
+
+                cursor.execute(
+                    """
+                    UPDATE proc.blueprints
+                    SET
+                        deleted_at = CURRENT_TIMESTAMP,
+                        deleted_by = %(cancelled_by)s,
+                        delete_reason = %(reason)s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE blueprint_id = %(source_doc_id)s
+                      AND deleted_at IS NULL
+                    RETURNING deleted_at;
+                    """,
+                    {
+                        "source_doc_id": source_doc_id,
+                        "cancelled_by": normalized_cancelled_by,
+                        "reason": normalized_reason,
+                    },
+                )
+                cancelled_row = cursor.fetchone()
+                if cancelled_row is None:
+                    return None
+            connection.commit()
+    except ValueError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document registration cancellation failed.") from exception
+
+    cancelled_at = cancelled_row[0]
+    if isinstance(cancelled_at, datetime):
+        cancelled_at_text = cancelled_at.isoformat(timespec="seconds")
+    elif isinstance(cancelled_at, date):
+        cancelled_at_text = cancelled_at.isoformat()
+    else:
+        cancelled_at_text = str(cancelled_at)
+
+    return SourceDocCancellationData(
+        source_doc_id=int(source_doc_row[0]),
+        source_doc_key=str(source_doc_row[1]),
+        source_doc_name=str(source_doc_row[2]),
+        cancelled_by=normalized_cancelled_by,
+        cancelled_at=cancelled_at_text,
+        reason=normalized_reason,
+    )

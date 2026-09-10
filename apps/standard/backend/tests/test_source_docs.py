@@ -8,6 +8,7 @@ from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
     ModuleRowData,
+    SourceDocCancellationData,
     SourceDocCreateRequest,
     SourceDocDetailData,
     SourceDocListData,
@@ -702,3 +703,92 @@ def test_update_source_doc_returns_error_response(
         "data": None,
         "message": "Source document update failed.",
     }
+
+
+def test_cancel_source_doc_registration_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document cancellation should return its audit data."""
+
+    def fake_cancel_source_doc_registration(
+        settings: AppSettings,
+        source_doc_id: int,
+        cancelled_by: str,
+        reason: str,
+        source_doc_key_confirmation: str,
+    ) -> SourceDocCancellationData | None:
+        assert settings.app_env == "test"
+        assert source_doc_id == 1
+        assert cancelled_by == "Admin User"
+        assert reason == "Wrong module composition"
+        assert source_doc_key_confirmation == "BP-STD-001"
+        return SourceDocCancellationData(
+            source_doc_id=1,
+            source_doc_key="BP-STD-001",
+            source_doc_name="Source doc A",
+            cancelled_by=cancelled_by,
+            cancelled_at="2026-09-09T10:30:00+09:00",
+            reason=reason,
+        )
+
+    monkeypatch.setattr(source_docs, "cancel_source_doc_registration", fake_cancel_source_doc_registration)
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/source-docs/1",
+        json={
+            "cancelled_by": "Admin User",
+            "reason": "Wrong module composition",
+            "source_doc_key_confirmation": "BP-STD-001",
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["message"] == "原本登録を取り消しました。"
+    assert response.json()["data"]["source_doc_key"] == "BP-STD-001"
+
+
+def test_cancel_source_doc_registration_returns_conflict_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ineligible source documents should produce a conflict response."""
+
+    def fake_cancel_source_doc_registration(
+        settings: AppSettings,
+        source_doc_id: int,
+        cancelled_by: str,
+        reason: str,
+        source_doc_key_confirmation: str,
+    ) -> SourceDocCancellationData | None:
+        del settings, source_doc_id, cancelled_by, reason, source_doc_key_confirmation
+        raise ValueError("案件CSで使用中の原本は登録取消できません。")
+
+    monkeypatch.setattr(source_docs, "cancel_source_doc_registration", fake_cancel_source_doc_registration)
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/source-docs/1",
+        json={
+            "cancelled_by": "Admin User",
+            "reason": "Wrong registration",
+            "source_doc_key_confirmation": "BP-STD-001",
+        },
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["message"] == "案件CSで使用中の原本は登録取消できません。"
+
+
+def test_cancel_source_doc_registration_rejects_incomplete_payload(client: TestClient) -> None:
+    """Cancellation audit and confirmation values are mandatory."""
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/source-docs/1",
+        json={"cancelled_by": "Admin User", "reason": "Wrong registration"},
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["message"] == "Request validation failed: 1 error(s)."

@@ -170,8 +170,23 @@ CREATE TABLE IF NOT EXISTS proc.blueprints (
     name text NOT NULL,
     description text,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    deleted_at timestamptz,
+    deleted_by text,
+    delete_reason text
 );
+
+ALTER TABLE proc.blueprints
+    ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+
+ALTER TABLE proc.blueprints
+    ADD COLUMN IF NOT EXISTS deleted_by text;
+
+ALTER TABLE proc.blueprints
+    ADD COLUMN IF NOT EXISTS delete_reason text;
+
+CREATE INDEX IF NOT EXISTS idx_blueprints_deleted_at
+    ON proc.blueprints (deleted_at);
 
 CREATE TABLE IF NOT EXISTS proc.blueprint_versions (
     blueprint_version_id bigserial PRIMARY KEY,
