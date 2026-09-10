@@ -14,6 +14,7 @@ from app.core.responses import (
 )
 from app.db.source_docs import (
     SOURCE_DOC_STATUS_LABELS,
+    _ensure_source_doc_deletion_columns,
     _ensure_source_doc_version_number_columns,
     _format_source_doc_version_label,
 )
@@ -188,6 +189,7 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
             ON lv.blueprint_id = b.blueprint_id
         LEFT JOIN proc.blueprint_items bi
             ON bi.blueprint_version_id = lv.blueprint_version_id
+        WHERE b.deleted_at IS NULL
         GROUP BY
             b.blueprint_id,
             b.blueprint_key,
@@ -207,6 +209,7 @@ def list_statuses(settings: AppSettings) -> ApprovalStatusListData:
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(query, {})
                 rows = cursor.fetchall()
@@ -291,6 +294,7 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
         LEFT JOIN proc.modules m
             ON m.module_id = mv.module_id
         WHERE b.blueprint_id = %(target_id)s
+          AND b.deleted_at IS NULL
         GROUP BY
             b.blueprint_id,
             b.blueprint_key,
@@ -311,6 +315,7 @@ def get_status_detail(settings: AppSettings, target_id: int) -> ApprovalStatusDe
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
                 _ensure_history_table(cursor)
                 _ensure_status_constraints(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
@@ -388,6 +393,7 @@ def update_status(
             connect_timeout=settings.db_connect_timeout_seconds,
         ) as connection:
             with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
                 _ensure_history_table(cursor)
                 _ensure_status_constraints(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
@@ -399,6 +405,9 @@ def update_status(
                         bv.version_major,
                         bv.version_minor
                     FROM proc.blueprint_versions bv
+                    JOIN proc.blueprints b
+                        ON b.blueprint_id = bv.blueprint_id
+                       AND b.deleted_at IS NULL
                     WHERE bv.blueprint_id = %(target_id)s
                     ORDER BY bv.version_no DESC
                     LIMIT 1;
