@@ -111,29 +111,48 @@ def test_list_source_docs_returns_source_doc_list(monkeypatch: pytest.MonkeyPatc
                         "Description",
                         10,
                         1,
+                        0,
+                        0,
                         "draft",
                         2,
                         1,
                         ["Module A", "Module B"],
                         "seed",
                         datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
+                        ["ネットワーク", "SBC"],
                     )
-                ]
+                ],
+                [("SBC",), ("ネットワーク",)],
             ]
         ),
     )
 
-    result = list_source_docs(AppSettings(), keyword="M1", status_filter="draft")
+    result = list_source_docs(
+        AppSettings(),
+        keyword="M1",
+        status_filter="draft",
+        tag_paths=["ネットワーク", "SBC"],
+    )
 
-    assert fake_cursor.parameters == {
+    list_query_parameters = next(
+        parameters
+        for query, parameters in fake_cursor.executions
+        if "b.name AS source_doc_name" in query
+    )
+    assert list_query_parameters == {
         "keyword": "%M1%",
         "status_filter": "draft",
+        "tag_path_0": "ネットワーク",
+        "tag_path_1": "SBC",
     }
     assert result.items[0].source_doc_id == 1
     assert result.items[0].source_doc_key == "BP-STD-001"
     assert result.items[0].module_count == 2
+    assert result.items[0].tag_paths == ["ネットワーク", "SBC"]
+    assert result.tags == ["SBC", "ネットワーク"]
     assert result.items[0].updated_at == "2026-04-22"
     assert any("b.deleted_at IS NULL" in query for query, _ in fake_cursor.executions)
+    assert sum("FROM proc.blueprint_tag_memberships tag_filter_" in query for query, _ in fake_cursor.executions) == 1
 
 
 def test_get_source_doc_detail_returns_detail(monkeypatch: pytest.MonkeyPatch) -> None:

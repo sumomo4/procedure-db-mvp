@@ -199,6 +199,21 @@ ALTER TABLE proc.blueprints
 CREATE INDEX IF NOT EXISTS idx_blueprints_deleted_at
     ON proc.blueprints (deleted_at);
 
+CREATE TABLE IF NOT EXISTS proc.blueprint_tag_memberships (
+    blueprint_id bigint NOT NULL REFERENCES proc.blueprints (blueprint_id) ON DELETE CASCADE,
+    tag_path text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (blueprint_id, tag_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blueprint_tag_memberships_tag_path
+    ON proc.blueprint_tag_memberships (tag_path);
+
+INSERT INTO proc.blueprint_tag_memberships (blueprint_id, tag_path)
+SELECT blueprint_id, '未分類'
+FROM proc.blueprints
+ON CONFLICT (blueprint_id, tag_path) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS proc.blueprint_versions (
     blueprint_version_id bigserial PRIMARY KEY,
     blueprint_id bigint NOT NULL REFERENCES proc.blueprints (blueprint_id),

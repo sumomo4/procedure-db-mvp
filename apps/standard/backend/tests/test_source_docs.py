@@ -29,6 +29,7 @@ def test_read_source_docs_returns_success_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        tag_paths: list[str] | None = None,
         created_by: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
@@ -40,6 +41,7 @@ def test_read_source_docs_returns_success_response(
         assert settings.app_env == "test"
         assert keyword == "M1"
         assert status_filter == "draft"
+        assert tag_paths == ["ネットワーク", "SBC"]
         return SourceDocListData(
             items=[
                 SourceDocListItemData(
@@ -54,15 +56,19 @@ def test_read_source_docs_returns_success_response(
                     module_count=2,
                     enabled_module_count=2,
                     module_names=["初期点検手順", "部品交換手順"],
+                    tag_paths=["ネットワーク", "SBC"],
                     created_by="seed",
                     updated_at="2026-04-22",
                 )
-            ]
+            ],
+            tags=["ネットワーク", "SBC"],
         )
 
     monkeypatch.setattr(source_docs, "list_source_docs", fake_list_source_docs)
 
-    response = client.get("/api/v1/source-docs?keyword=M1&status=draft")
+    response = client.get(
+        "/api/v1/source-docs?keyword=M1&status=draft&tag_path=ネットワーク&tag_path=SBC"
+    )
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {
@@ -84,10 +90,12 @@ def test_read_source_docs_returns_success_response(
                     "module_count": 2,
                     "enabled_module_count": 2,
                     "module_names": ["初期点検手順", "部品交換手順"],
+                    "tag_paths": ["ネットワーク", "SBC"],
                     "created_by": "seed",
                     "updated_at": "2026-04-22",
                 }
-            ]
+            ],
+            "tags": ["ネットワーク", "SBC"],
         },
         "message": "原本一覧を取得しました。",
     }
@@ -116,6 +124,7 @@ def test_read_source_docs_returns_error_response(
         settings: AppSettings,
         keyword: str | None = None,
         status_filter: str | None = None,
+        tag_paths: list[str] | None = None,
         created_by: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
@@ -124,7 +133,7 @@ def test_read_source_docs_returns_error_response(
     ) -> SourceDocListData:
         """Raise a deterministic database error."""
 
-        del settings, keyword, status_filter
+        del settings, keyword, status_filter, tag_paths
         raise DatabaseConnectionError("Source document list query failed.")
 
     monkeypatch.setattr(source_docs, "list_source_docs", fake_list_source_docs)
@@ -137,6 +146,80 @@ def test_read_source_docs_returns_error_response(
         "data": None,
         "message": "Source document list query failed.",
     }
+
+
+def test_rename_source_doc_tag_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source document tags should be renameable without changing memberships."""
+
+    def fake_rename_source_doc_tag(
+        settings: AppSettings,
+        current_tag_path: str,
+        new_tag_path: str,
+    ) -> SourceDocListData:
+        assert settings.app_env == "test"
+        assert current_tag_path == "ネットワーク"
+        assert new_tag_path == "ネットワーク/SBC"
+        return SourceDocListData(items=[], tags=["ネットワーク/SBC"])
+
+    monkeypatch.setattr(source_docs, "rename_source_doc_tag", fake_rename_source_doc_tag)
+
+    response = client.patch(
+        "/api/v1/source-docs/tags",
+        json={"current_tag_path": "ネットワーク", "new_tag_path": "ネットワーク/SBC"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"]["tags"] == ["ネットワーク/SBC"]
+    assert response.json()["message"] == "タグ名を変更しました。"
+
+
+def test_delete_source_doc_tag_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting a source document tag should return the remaining tags."""
+
+    def fake_delete_source_doc_tag(settings: AppSettings, tag_path: str) -> SourceDocListData:
+        assert settings.app_env == "test"
+        assert tag_path == "TEST"
+        return SourceDocListData(items=[], tags=["未分類", "test"])
+
+    monkeypatch.setattr(source_docs, "delete_source_doc_tag", fake_delete_source_doc_tag)
+
+    response = client.request("DELETE", "/api/v1/source-docs/tags", json={"tag_path": "TEST"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"]["tags"] == ["未分類", "test"]
+
+
+def test_add_source_docs_to_tag_returns_success_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Selected source documents should be assignable to an additional tag."""
+
+    def fake_add_source_docs_to_tag(
+        settings: AppSettings,
+        source_doc_ids: list[int],
+        tag_path: str,
+    ) -> SourceDocListData:
+        assert settings.app_env == "test"
+        assert source_doc_ids == [1, 2]
+        assert tag_path == "ネットワーク/SBC"
+        return SourceDocListData(items=[], tags=["ネットワーク/SBC"])
+
+    monkeypatch.setattr(source_docs, "add_source_docs_to_tag", fake_add_source_docs_to_tag)
+
+    response = client.patch(
+        "/api/v1/source-docs/tags/source-docs",
+        json={"source_doc_ids": [1, 2], "tag_path": "ネットワーク/SBC"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["message"] == "選択した原本へタグを追加しました。"
 
 
 def test_read_source_doc_detail_returns_success_response(
@@ -165,6 +248,7 @@ def test_read_source_doc_detail_returns_success_response(
             change_note="Sprint 2 seed",
             module_count=2,
             enabled_module_count=1,
+            tag_paths=["ネットワーク"],
             created_by="seed",
             created_at="2026-04-22",
             updated_at="2026-04-22",
@@ -238,6 +322,7 @@ def test_read_source_doc_detail_returns_success_response(
             "change_note": "Sprint 2 seed",
             "module_count": 2,
             "enabled_module_count": 1,
+            "tag_paths": ["ネットワーク"],
             "created_by": "seed",
             "created_at": "2026-04-22",
             "updated_at": "2026-04-22",

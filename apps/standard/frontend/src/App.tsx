@@ -475,12 +475,14 @@ type SourceDocListItemData = {
   module_count: number;
   enabled_module_count: number;
   module_names: string[];
+  tag_paths: string[];
   created_by: string | null;
   updated_at: string;
 };
 
 type SourceDocListData = {
   items: SourceDocListItemData[];
+  tags: string[];
 };
 
 type SourceDocModuleItemData = {
@@ -512,6 +514,7 @@ type SourceDocDetailData = {
   change_note: string | null;
   module_count: number;
   enabled_module_count: number;
+  tag_paths: string[];
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -535,6 +538,7 @@ type SourceDocCancellationState = {
 type SourceDocListState = {
   status: "loading" | "available" | "unavailable";
   items: SourceDocListItemData[];
+  tags?: string[];
   message: string;
 };
 
@@ -891,6 +895,15 @@ function ModuleFolderMembershipList({ item }: { item: ModuleListItemData }) {
       {getModuleFolderPaths(item).map((folderPath) => (
         <span key={folderPath}>{folderPath}</span>
       ))}
+    </div>
+  );
+}
+
+function SourceDocTagMembershipList({ item }: { item: SourceDocListItemData }) {
+  const tagPaths = item.tag_paths?.length ? item.tag_paths : ["未分類"];
+  return (
+    <div className="module-folder-membership-list">
+      {tagPaths.map((tagPath) => <span key={tagPath}>{tagPath}</span>)}
     </div>
   );
 }
@@ -5634,6 +5647,9 @@ function DocumentSearchPage() {
   const initialUpdatedTo = searchParams.get("updated_to") ?? "";
   const initialModuleName = searchParams.get("module_name") ?? "";
   const initialSort = searchParams.get("sort") ?? "key_asc";
+  const initialTagPaths = Array.from(
+    new Set(searchParams.getAll("tag_path").map(normalizeModuleFolderPath)),
+  );
   const [keywordInput, setKeywordInput] = useState(initialKeyword);
   const [statusInput, setStatusInput] = useState(initialStatus);
   const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
@@ -5641,6 +5657,7 @@ function DocumentSearchPage() {
   const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
   const [moduleNameInput, setModuleNameInput] = useState(initialModuleName);
   const [sortInput, setSortInput] = useState(initialSort);
+  const [tagPathInputs, setTagPathInputs] = useState<string[]>(initialTagPaths);
   const keyword = initialKeyword;
   const statusFilter = initialStatus;
   const createdByFilter = initialCreatedBy;
@@ -5648,11 +5665,34 @@ function DocumentSearchPage() {
   const updatedToFilter = initialUpdatedTo;
   const moduleNameFilter = initialModuleName;
   const sortFilter = initialSort;
+  const tagPathFilters = initialTagPaths;
   const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
     status: "loading",
     items: [],
+    tags: [],
     message: "原本一覧を取得しています。",
   });
+  const [selectedSourceDocIds, setSelectedSourceDocIds] = useState<number[]>([]);
+  const [tagCreateInput, setTagCreateInput] = useState("");
+  const [tagRenameInput, setTagRenameInput] = useState(initialTagPaths[0] ?? "未分類");
+  const [tagAssignTarget, setTagAssignTarget] = useState(initialTagPaths[0] ?? "未分類");
+  const [tagCreateState, setTagCreateState] = useState<ModuleFolderMoveState>({
+    status: "idle",
+    message: "新規タグには最低1つの原本を関連付けます。",
+  });
+  const [tagRenameState, setTagRenameState] = useState<ModuleFolderRenameState>({
+    status: "idle",
+    message: "操作対象のタグ名を変更できます。",
+  });
+  const [tagDeleteState, setTagDeleteState] = useState<ModuleFolderRenameState>({
+    status: "idle",
+    message: "操作対象のタグを削除できます。",
+  });
+  const [tagAssignState, setTagAssignState] = useState<ModuleFolderMoveState>({
+    status: "idle",
+    message: "選択した原本へ既存タグを追加できます。",
+  });
+  const [isTagDeleteDialogOpen, setIsTagDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
     setKeywordInput(initialKeyword);
@@ -5662,19 +5702,23 @@ function DocumentSearchPage() {
     setUpdatedToInput(initialUpdatedTo);
     setModuleNameInput(initialModuleName);
     setSortInput(initialSort);
-  }, [initialKeyword, initialStatus, initialCreatedBy, initialUpdatedFrom, initialUpdatedTo, initialModuleName, initialSort]);
+    setTagPathInputs(initialTagPaths);
+    setTagRenameInput(initialTagPaths[0] ?? "未分類");
+    setSelectedSourceDocIds([]);
+  }, [initialKeyword, initialStatus, initialCreatedBy, initialUpdatedFrom, initialUpdatedTo, initialModuleName, initialSort, searchParams]);
 
   useEffect(() => {
     const abortController = new AbortController();
 
     async function fetchSourceDocs(): Promise<void> {
-      setSourceDocListState({ status: "loading", items: [], message: "原本一覧を取得しています。" });
+      setSourceDocListState((current) => ({ status: "loading", items: [], tags: current.tags, message: "原本一覧を取得しています。" }));
 
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/source-docs"), window.location.origin);
 
         if (keyword) endpoint.searchParams.set("keyword", keyword);
         if (statusFilter !== "all") endpoint.searchParams.set("status", statusFilter);
+        tagPathFilters.forEach((tagPath) => endpoint.searchParams.append("tag_path", tagPath));
         if (createdByFilter) endpoint.searchParams.set("created_by", createdByFilter);
         if (updatedFromFilter) endpoint.searchParams.set("updated_from", updatedFromFilter);
         if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
@@ -5685,21 +5729,21 @@ function DocumentSearchPage() {
         const responseBody = (await response.json()) as ApiResponse<SourceDocListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
-          setSourceDocListState({ status: "unavailable", items: [], message: responseBody.message || "原本一覧の取得に失敗しました。HTTP " + response.status });
+          setSourceDocListState({ status: "unavailable", items: [], tags: [], message: responseBody.message || "原本一覧の取得に失敗しました。HTTP " + response.status });
           return;
         }
 
-        setSourceDocListState({ status: "available", items: responseBody.data.items, message: responseBody.message || "原本一覧を取得しました。" });
+        setSourceDocListState({ status: "available", items: responseBody.data.items, tags: responseBody.data.tags ?? [], message: responseBody.message || "原本一覧を取得しました。" });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setSourceDocListState({ status: "unavailable", items: [], message: "APIに接続できませんでした。" });
+        setSourceDocListState({ status: "unavailable", items: [], tags: [], message: "APIに接続できませんでした。" });
       }
     }
 
     void fetchSourceDocs();
 
     return () => abortController.abort();
-  }, [keyword, statusFilter, createdByFilter, updatedFromFilter, updatedToFilter, moduleNameFilter, sortFilter]);
+  }, [keyword, statusFilter, createdByFilter, updatedFromFilter, updatedToFilter, moduleNameFilter, sortFilter, searchParams]);
 
   function navigateWithFilters(filters: {
     keyword: string;
@@ -5709,6 +5753,7 @@ function DocumentSearchPage() {
     updatedTo: string;
     moduleName: string;
     sort: string;
+    tagPaths: string[];
   }): void {
     const params = new URLSearchParams();
     const normalizedKeyword = filters.keyword.trim();
@@ -5717,6 +5762,10 @@ function DocumentSearchPage() {
 
     if (normalizedKeyword) params.set("keyword", normalizedKeyword);
     if (filters.status !== "all") params.set("status", filters.status);
+    filters.tagPaths
+      .map(normalizeModuleFolderPath)
+      .filter((tagPath, index, all) => all.indexOf(tagPath) === index)
+      .forEach((tagPath) => params.append("tag_path", tagPath));
     if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
     if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
     if (filters.updatedTo) params.set("updated_to", filters.updatedTo);
@@ -5728,20 +5777,232 @@ function DocumentSearchPage() {
   }
 
   function handleSubmit(): void {
-    navigateWithFilters({ keyword: keywordInput, status: statusInput, createdBy: createdByInput, updatedFrom: updatedFromInput, updatedTo: updatedToInput, moduleName: moduleNameInput, sort: sortInput });
+    navigateWithFilters({ keyword: keywordInput, status: statusInput, createdBy: createdByInput, updatedFrom: updatedFromInput, updatedTo: updatedToInput, moduleName: moduleNameInput, sort: sortInput, tagPaths: tagPathInputs });
   }
 
   function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
     setStatusInput(nextStatus);
-    navigateWithFilters({ keyword, status: nextStatus, createdBy: createdByFilter, updatedFrom: updatedFromFilter, updatedTo: updatedToFilter, moduleName: moduleNameFilter, sort: sortFilter });
+    navigateWithFilters({ keyword, status: nextStatus, createdBy: createdByFilter, updatedFrom: updatedFromFilter, updatedTo: updatedToFilter, moduleName: moduleNameFilter, sort: sortFilter, tagPaths: tagPathFilters });
+  }
+
+  function toggleTagInput(tagPath: string): void {
+    const normalizedTag = normalizeModuleFolderPath(tagPath);
+    setTagPathInputs((current) =>
+      current.includes(normalizedTag)
+        ? current.filter((currentTag) => currentTag !== normalizedTag)
+        : [...current, normalizedTag],
+    );
+  }
+
+  function handleTagFilterToggle(tagPath: string): void {
+    const normalizedTag = normalizeModuleFolderPath(tagPath);
+    const nextTagPaths = tagPathFilters.includes(normalizedTag)
+      ? tagPathFilters.filter((currentTag) => currentTag !== normalizedTag)
+      : [...tagPathFilters, normalizedTag];
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      createdBy: createdByFilter,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      moduleName: moduleNameFilter,
+      sort: sortFilter,
+      tagPaths: nextTagPaths,
+    });
+  }
+
+  function toggleSourceDocSelection(sourceDocId: number): void {
+    setSelectedSourceDocIds((current) =>
+      current.includes(sourceDocId)
+        ? current.filter((currentId) => currentId !== sourceDocId)
+        : [...current, sourceDocId],
+    );
+  }
+
+  async function requestSourceDocTagMutation(
+    method: "PATCH" | "DELETE",
+    endpoint: string,
+    body: object,
+  ): Promise<ApiResponse<SourceDocListData> | null> {
+    try {
+      const response = await fetch(buildApiUrl(endpoint), {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const responseBody = await readApiResponse<SourceDocListData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        return { ...responseBody, message: responseBody.message || `タグ操作に失敗しました。HTTP ${response.status}` };
+      }
+      setSourceDocListState({
+        status: "available",
+        items: responseBody.data.items,
+        tags: responseBody.data.tags ?? [],
+        message: responseBody.message,
+      });
+      return responseBody;
+    } catch {
+      return { result: "error", data: null, message: "タグ操作中にAPI接続で失敗しました。" };
+    }
+  }
+
+  async function handleCreateTag(): Promise<void> {
+    const newTag = normalizeModuleFolderPath(tagCreateInput);
+    if (!tagCreateInput.trim()) {
+      setTagCreateState({ status: "error", message: "新規タグ名を入力してください。" });
+      return;
+    }
+    if (selectedSourceDocIds.length === 0) {
+      setTagCreateState({ status: "error", message: "最低1つは原本を選択してください。" });
+      return;
+    }
+    if ((sourceDocListState.tags ?? []).some((tag) => normalizeModuleFolderPath(tag) === newTag)) {
+      setTagCreateState({ status: "error", message: "同じ名前のタグが既にあります。既存タグへの追加を使ってください。" });
+      return;
+    }
+
+    setTagCreateState({ status: "submitting", message: "タグを作成し、選択原本へ関連付けています。" });
+    const response = await requestSourceDocTagMutation("PATCH", "/api/v1/source-docs/tags/source-docs", {
+      source_doc_ids: selectedSourceDocIds,
+      tag_path: newTag,
+    });
+    if (!response || response.result !== "success") {
+      setTagCreateState({ status: "error", message: response?.message || "タグ追加に失敗しました。" });
+      return;
+    }
+    setTagCreateState({ status: "success", message: response.message || "タグを追加しました。" });
+    setTagCreateInput("");
+    setTagAssignTarget(newTag);
+    setSelectedSourceDocIds([]);
+  }
+
+  async function handleRenameTag(): Promise<void> {
+    const currentTag = tagPathFilters[0];
+    const newTag = normalizeModuleFolderPath(tagRenameInput);
+    if (tagPathFilters.length !== 1 || !currentTag) {
+      setTagRenameState({ status: "error", message: "変更対象のタグを1つ選択してください。" });
+      return;
+    }
+    if (!tagRenameInput.trim()) {
+      setTagRenameState({ status: "error", message: "新しいタグ名を入力してください。" });
+      return;
+    }
+    if (currentTag === newTag) {
+      setTagRenameState({ status: "error", message: "変更前と変更後のタグ名が同じです。" });
+      return;
+    }
+
+    setTagRenameState({ status: "submitting", message: "タグ名を変更しています。" });
+    const response = await requestSourceDocTagMutation("PATCH", "/api/v1/source-docs/tags", {
+      current_tag_path: currentTag,
+      new_tag_path: newTag,
+    });
+    if (!response || response.result !== "success") {
+      setTagRenameState({ status: "error", message: response?.message || "タグ名の変更に失敗しました。" });
+      return;
+    }
+    setTagRenameState({ status: "success", message: response.message || "タグ名を変更しました。" });
+    setTagRenameInput(newTag);
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      createdBy: createdByFilter,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      moduleName: moduleNameFilter,
+      sort: sortFilter,
+      tagPaths: [newTag],
+    });
+  }
+
+  async function handleDeleteTag(): Promise<void> {
+    const currentTag = tagPathFilters[0];
+    if (tagPathFilters.length !== 1 || !currentTag || currentTag === "未分類") {
+      setTagDeleteState({ status: "error", message: "削除可能なタグを1つ選択してください。" });
+      return;
+    }
+
+    setTagDeleteState({ status: "submitting", message: "タグを削除しています。" });
+    const response = await requestSourceDocTagMutation("DELETE", "/api/v1/source-docs/tags", {
+      tag_path: currentTag,
+    });
+    if (!response || response.result !== "success") {
+      setTagDeleteState({ status: "error", message: response?.message || "タグ削除に失敗しました。" });
+      return;
+    }
+    setIsTagDeleteDialogOpen(false);
+    setTagDeleteState({ status: "success", message: response.message || "タグを削除しました。" });
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      createdBy: createdByFilter,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      moduleName: moduleNameFilter,
+      sort: sortFilter,
+      tagPaths: [],
+    });
+  }
+
+  async function handleAssignSelectedTag(): Promise<void> {
+    if (selectedSourceDocIds.length === 0) {
+      setTagAssignState({ status: "error", message: "タグを追加する原本を選択してください。" });
+      return;
+    }
+    const targetTag = normalizeModuleFolderPath(tagAssignTarget);
+    setTagAssignState({ status: "submitting", message: "選択した原本へタグを追加しています。" });
+    const response = await requestSourceDocTagMutation("PATCH", "/api/v1/source-docs/tags/source-docs", {
+      source_doc_ids: selectedSourceDocIds,
+      tag_path: targetTag,
+    });
+    if (!response || response.result !== "success") {
+      setTagAssignState({ status: "error", message: response?.message || "タグの追加に失敗しました。" });
+      return;
+    }
+    setTagAssignState({ status: "success", message: response.message || "選択した原本へタグを追加しました。" });
+    setSelectedSourceDocIds([]);
   }
 
   const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  const tagOptions = (sourceDocListState.tags?.length ? sourceDocListState.tags : ["未分類"])
+    .map(normalizeModuleFolderPath)
+    .filter((tagPath, index, all) => all.indexOf(tagPath) === index);
+  const tagTreeItems = buildModuleFolderTreeItems(tagOptions);
+  const selectedTagLabel = tagPathFilters.length > 0 ? tagPathFilters.join("、") : "すべて";
+  const activeTag = tagPathFilters.length === 1 ? tagPathFilters[0] : "";
+  const allVisibleSelected = sourceDocListState.items.length > 0
+    && sourceDocListState.items.every((item) => selectedSourceDocIds.includes(item.source_doc_id));
 
   return (
     <Page title={"原本検索"} description={"APIから取得した原本一覧を検索し、関連モジュールと詳細情報を確認できます。"}>
       <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
         <label>{"キーワード"}<input placeholder="例: M1確認用 / MOD-001 / 原本A" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} /></label>
+        <fieldset className="module-tag-filter-field">
+          <legend>タグ</legend>
+          <details className="module-tag-filter-select">
+            <summary>
+              <span>{tagPathInputs.length > 0 ? `${tagPathInputs.length}件選択` : "すべて"}</span>
+              <small>{tagPathInputs.length > 0 ? tagPathInputs.join("、") : "タグを選択"}</small>
+            </summary>
+            <div className="module-tag-filter-menu">
+              <div className="module-tag-filter-options">
+                {tagOptions.map((tagPath) => (
+                  <label key={tagPath}>
+                    <input
+                      type="checkbox"
+                      checked={tagPathInputs.includes(tagPath)}
+                      onChange={() => toggleTagInput(tagPath)}
+                    />
+                    <span>{tagPath}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="module-tag-filter-footer">
+                <small>複数選択時は、すべてのタグを持つ原本を表示します。</small>
+              </div>
+            </div>
+          </details>
+        </fieldset>
         <label>{"承認状態"}<select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>{moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
         <label>{"作成者"}<input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} /></label>
         <label>
@@ -5765,25 +6026,166 @@ function DocumentSearchPage() {
         <div><span>{"検索キーワード"}</span><strong>{keyword || "指定なし"}</strong></div>
         <div><span>{"承認状態"}</span><strong>{statusFilterLabel}</strong></div>
         <div><span>{"利用モジュール"}</span><strong>{moduleNameFilter || "指定なし"}</strong></div>
+        <div><span>{"タグ"}</span><strong>{selectedTagLabel}</strong></div>
         <p>{sourceDocListState.message}</p>
       </section>
 
-      <section className="approval-flow" aria-label="原本承認状態フィルター">
-        {moduleStatusOptions.map((option) => <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>)}
-      </section>
+      <div className="module-browser-layout">
+        <aside className="module-folder-pane" aria-label="原本タグ">
+          <div className="module-folder-pane-header">
+            <span>タグ</span>
+            <strong>{selectedTagLabel}</strong>
+          </div>
+          <button
+            type="button"
+            className={tagPathFilters.length === 0 ? "module-folder-button active" : "module-folder-button"}
+            onClick={() => navigateWithFilters({ keyword, status: statusFilter, createdBy: createdByFilter, updatedFrom: updatedFromFilter, updatedTo: updatedToFilter, moduleName: moduleNameFilter, sort: sortFilter, tagPaths: [] })}
+          >
+            <span aria-hidden="true">▦</span>
+            <span>すべて</span>
+          </button>
+          <div className="module-folder-tree" role="tree" aria-label="原本タグ一覧">
+            {tagTreeItems.map((tag) => (
+              <button
+                key={tag.path}
+                type="button"
+                role="treeitem"
+                aria-level={tag.depth + 1}
+                aria-pressed={tagPathFilters.includes(tag.path)}
+                className={tagPathFilters.includes(tag.path) ? "module-folder-button active" : "module-folder-button"}
+                style={{ "--folder-depth": tag.depth } as CSSProperties}
+                onClick={() => handleTagFilterToggle(tag.path)}
+              >
+                <span aria-hidden="true">{tagPathFilters.includes(tag.path) ? "✓" : tag.hasDirectModule ? "◇" : "▸"}</span>
+                <span>{tag.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="module-folder-delete-panel">
+            <button
+              className="danger"
+              type="button"
+              disabled={!activeTag || activeTag === "未分類" || tagDeleteState.status === "submitting"}
+              onClick={() => setIsTagDeleteDialogOpen(true)}
+            >
+              タグを削除
+            </button>
+            <p className={"module-folder-action-message " + tagDeleteState.status}>
+              {activeTag === "未分類" ? "未分類タグは削除できません。" : tagDeleteState.message}
+            </p>
+          </div>
+        </aside>
 
-      <Toolbar>
-        <button className="secondary" onClick={() => navigate("/documents/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
-        <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">+</span>{"原本登録"}</button>
-      </Toolbar>
-      {sourceDocListState.status === "available" && sourceDocListState.items.length === 0 ? (
-        <section className="empty-state"><h2>{"該当する原本はありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
-      ) : (
-        <DataTable
-          columns={["原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "作成者", "更新日", "操作"]}
-          rows={sourceDocListState.items.map((item) => [item.source_doc_key, item.source_doc_name, formatVersionLabel(item), <ModuleStatusPill status={item.status} label={item.status_label} />, item.module_names.join(", ") || "-", item.enabled_module_count + "/" + item.module_count, item.created_by ?? "-", item.updated_at, <button className="text-button" onClick={() => navigate("/documents/" + item.source_doc_id)}>{"詳細"}</button>])}
-        />
-      )}
+        <section className="module-results-pane">
+          <section className="approval-flow" aria-label="原本承認状態フィルター">
+            {moduleStatusOptions.map((option) => <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>)}
+          </section>
+
+          <Toolbar>
+            <button className="secondary" onClick={() => navigate("/documents/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
+            <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">+</span>{"原本登録"}</button>
+          </Toolbar>
+
+          <section className="module-folder-action-panel" aria-label="原本タグ操作">
+            <div className="module-folder-action-summary">
+              <span>選択中</span>
+              <strong>{selectedSourceDocIds.length}件</strong>
+              <small>一覧のチェック欄から操作する原本を選択します。</small>
+            </div>
+            <div className="module-folder-action-card">
+              <div>
+                <h2>タグ新規追加</h2>
+                <p>新しいタグを作り、選択した原本へ関連付けます。</p>
+              </div>
+              <div className="module-folder-action-controls">
+                <label>
+                  新規タグ名
+                  <input value={tagCreateInput} onChange={(event) => setTagCreateInput(event.target.value)} placeholder="例: ネットワーク/SBC" />
+                </label>
+                <div className="module-folder-action-buttons">
+                  <button className="secondary" type="button" onClick={() => { setTagCreateInput(""); setTagCreateState({ status: "idle", message: "新規タグには最低1つの原本を関連付けます。" }); }}>キャンセル</button>
+                  <button className="primary" type="button" disabled={tagCreateState.status === "submitting"} onClick={() => void handleCreateTag()}>タグを追加</button>
+                </div>
+              </div>
+              <p className={"module-folder-action-message " + tagCreateState.status}>{tagCreateState.message}</p>
+            </div>
+            <div className="module-folder-action-card">
+              <div>
+                <h2>タグ名変更</h2>
+                <p>{activeTag ? `「${activeTag}」の名前を変更します。` : "左の一覧から変更対象を1つ選択します。"}</p>
+              </div>
+              <div className="module-folder-action-controls">
+                <label>
+                  新しいタグ名
+                  <input value={tagRenameInput} disabled={!activeTag} onChange={(event) => setTagRenameInput(event.target.value)} />
+                </label>
+                <button className="secondary" type="button" disabled={!activeTag || tagRenameState.status === "submitting"} onClick={() => void handleRenameTag()}>名前を変更</button>
+              </div>
+              <p className={"module-folder-action-message " + tagRenameState.status}>{tagRenameState.message}</p>
+            </div>
+            <div className="module-folder-action-card">
+              <div>
+                <h2>選択済み原本へタグ追加</h2>
+                <p>既存タグを残したまま、選択した原本へタグを追加します。</p>
+              </div>
+              <div className="module-folder-action-controls">
+                <label>
+                  追加するタグ
+                  <select value={tagAssignTarget} onChange={(event) => setTagAssignTarget(event.target.value)}>
+                    {tagOptions.map((tagPath) => <option key={tagPath} value={tagPath}>{tagPath === "未分類" ? "未分類（他の所属を解除）" : tagPath}</option>)}
+                  </select>
+                </label>
+                <button className="primary" type="button" disabled={selectedSourceDocIds.length === 0 || tagAssignState.status === "submitting"} onClick={() => void handleAssignSelectedTag()}>タグを追加</button>
+              </div>
+              <p className={"module-folder-action-message " + tagAssignState.status}>{tagAssignState.message}</p>
+            </div>
+          </section>
+
+          {sourceDocListState.status === "available" && sourceDocListState.items.length === 0 ? (
+            <section className="empty-state"><h2>{"該当する原本はありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
+          ) : (
+            <DataTable
+              columns={["選択", "原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "タグ", "作成者", "更新日", "操作"]}
+              rows={sourceDocListState.items.map((item) => [
+                <input key={`select-${item.source_doc_id}`} type="checkbox" aria-label={`${item.source_doc_key}を選択`} checked={selectedSourceDocIds.includes(item.source_doc_id)} onChange={() => toggleSourceDocSelection(item.source_doc_id)} />,
+                item.source_doc_key,
+                item.source_doc_name,
+                formatVersionLabel(item),
+                <ModuleStatusPill status={item.status} label={item.status_label} />,
+                item.module_names.join(", ") || "-",
+                item.enabled_module_count + "/" + item.module_count,
+                <SourceDocTagMembershipList item={item} />,
+                item.created_by ?? "-",
+                item.updated_at,
+                <button className="text-button" onClick={() => navigate("/documents/" + item.source_doc_id)}>{"詳細"}</button>,
+              ])}
+            />
+          )}
+          {sourceDocListState.items.length > 0 ? (
+            <button
+              className="secondary module-selection-toggle"
+              type="button"
+              onClick={() => setSelectedSourceDocIds(allVisibleSelected ? [] : sourceDocListState.items.map((item) => item.source_doc_id))}
+            >
+              {allVisibleSelected ? "表示中の選択を解除" : "表示中をすべて選択"}
+            </button>
+          ) : null}
+        </section>
+      </div>
+
+      {isTagDeleteDialogOpen && activeTag ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsTagDeleteDialogOpen(false)}>
+          <section className="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="source-doc-tag-delete-title" onMouseDown={(event) => event.stopPropagation()}>
+            <span className="modal-icon" aria-hidden="true">×</span>
+            <h2 id="source-doc-tag-delete-title">タグを削除しますか？</h2>
+            <p>「{activeTag}」を削除します。他にタグがない原本だけ「未分類」へ移動します。</p>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => setIsTagDeleteDialogOpen(false)}>キャンセル</button>
+              <button className="danger" type="button" disabled={tagDeleteState.status === "submitting"} onClick={() => void handleDeleteTag()}>タグを削除</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </Page>
   );
 }
@@ -6786,6 +7188,7 @@ function DocumentDetailPage() {
               <Fact label="原本名" value={item.source_doc_name} />
               <Fact label="版" value={formatVersionLabel(item)} />
               <Fact label="状態" value={item.status_label} />
+              <Fact label="タグ" value={(item.tag_paths?.length ? item.tag_paths : ["未分類"]).join("、")} />
               <Fact label="作成者" value={item.created_by ?? "-"} />
               <Fact label="更新日" value={item.updated_at} />
             </div>

@@ -15,15 +15,21 @@ from app.core.responses import (
     SourceDocCreateRequest,
     SourceDocDetailData,
     SourceDocListData,
+    SourceDocTagDeleteRequest,
+    SourceDocTagMoveRequest,
+    SourceDocTagRenameRequest,
     SourceDocUpdateRequest,
     success_response,
 )
 from app.db.source_docs import (
     VALID_SOURCE_DOC_STATUSES,
+    add_source_docs_to_tag,
     cancel_source_doc_registration,
     create_source_doc,
+    delete_source_doc_tag,
     get_source_doc_detail,
     list_source_docs,
+    rename_source_doc_tag,
     update_source_doc,
 )
 from app.routers.health import get_app_settings
@@ -37,6 +43,7 @@ def read_source_docs(
     settings: Annotated[AppSettings, Depends(get_app_settings)],
     keyword: Annotated[str | None, Query(min_length=1)] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
+    tag_paths: Annotated[list[str] | None, Query(alias="tag_path", min_length=1)] = None,
     created_by: Annotated[str | None, Query(min_length=1)] = None,
     updated_from: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
     updated_to: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
@@ -57,6 +64,7 @@ def read_source_docs(
             settings,
             keyword=keyword,
             status_filter=normalized_status,
+            tag_paths=tag_paths,
             created_by=created_by,
             updated_from=updated_from,
             updated_to=updated_to,
@@ -72,6 +80,72 @@ def read_source_docs(
     return success_response(data, "原本一覧を取得しました。")
 
 
+@router.patch("/tags", response_model=ApiResponse[SourceDocListData])
+def rename_source_doc_tag_path(
+    request: SourceDocTagRenameRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[SourceDocListData]:
+    """Rename a source document tag path."""
+
+    current_tag = request.current_tag_path.strip()
+    new_tag = request.new_tag_path.strip()
+    if not current_tag or not new_tag:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tag paths must not be empty.")
+
+    try:
+        data = rename_source_doc_tag(settings, current_tag, new_tag)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+
+    return success_response(data, "タグ名を変更しました。")
+
+
+@router.delete("/tags", response_model=ApiResponse[SourceDocListData])
+def delete_source_doc_tag_path(
+    request: SourceDocTagDeleteRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[SourceDocListData]:
+    """Delete a source document tag and apply the uncategorized fallback."""
+
+    target_tag = request.tag_path.strip()
+    if not target_tag:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tag_path must not be empty.")
+    if target_tag == "未分類":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uncategorized tag cannot be deleted.",
+        )
+
+    try:
+        data = delete_source_doc_tag(settings, target_tag)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+
+    return success_response(data, "タグを削除しました。タグがなくなった原本は未分類へ移動しました。")
+
+
+@router.patch("/tags/source-docs", response_model=ApiResponse[SourceDocListData])
+def add_selected_source_docs_to_tag(
+    request: SourceDocTagMoveRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[SourceDocListData]:
+    """Add selected source documents to a tag path."""
+
+    target_tag = request.tag_path.strip()
+    if not request.source_doc_ids or not target_tag:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="source_doc_ids and tag_path are required.",
+        )
+
+    try:
+        data = add_source_docs_to_tag(settings, request.source_doc_ids, target_tag)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+
+    return success_response(data, "選択した原本へタグを追加しました。")
+
+
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
 def read_source_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
     """Return the source document API router foundation status."""
@@ -82,6 +156,9 @@ def read_source_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
         status="foundation-ready",
         planned_endpoints=[
             RouterEndpointData(method="GET", path="/api/v1/source-docs", purpose="原本一覧参照 / 検索"),
+            RouterEndpointData(method="PATCH", path="/api/v1/source-docs/tags", purpose="原本タグ名変更"),
+            RouterEndpointData(method="DELETE", path="/api/v1/source-docs/tags", purpose="原本タグ削除"),
+            RouterEndpointData(method="PATCH", path="/api/v1/source-docs/tags/source-docs", purpose="原本タグ追加"),
             RouterEndpointData(method="GET", path="/api/v1/source-docs/{source_doc_id}", purpose="原本詳細参照"),
             RouterEndpointData(method="POST", path="/api/v1/source-docs", purpose="原本作成"),
             RouterEndpointData(method="PUT", path="/api/v1/source-docs/{source_doc_id}", purpose="原本更新"),

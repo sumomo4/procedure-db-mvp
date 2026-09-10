@@ -47,6 +47,60 @@ def _ensure_source_doc_deletion_columns(cursor: Any) -> None:
     )
 
 
+def _normalize_source_doc_tag_path(tag_path: str | None) -> str:
+    """Normalize source document tag paths while preserving letter case."""
+
+    normalized = (tag_path or "").strip().replace("\\", "/")
+    normalized = "/".join(part.strip() for part in normalized.split("/") if part.strip())
+    return normalized or "未分類"
+
+
+def _ensure_source_doc_tag_table(cursor: Any) -> None:
+    """Ensure source document tag memberships exist on current DB volumes."""
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS proc.blueprint_tag_memberships (
+            blueprint_id bigint NOT NULL REFERENCES proc.blueprints (blueprint_id) ON DELETE CASCADE,
+            tag_path text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (blueprint_id, tag_path)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_blueprint_tag_memberships_tag_path
+            ON proc.blueprint_tag_memberships (tag_path);
+
+        INSERT INTO proc.blueprint_tag_memberships (blueprint_id, tag_path)
+        SELECT b.blueprint_id, '未分類'
+        FROM proc.blueprints b
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM proc.blueprint_tag_memberships membership
+            WHERE membership.blueprint_id = b.blueprint_id
+        )
+        ON CONFLICT (blueprint_id, tag_path) DO NOTHING;
+        """,
+        {},
+    )
+
+
+def _fetch_source_doc_tag_paths(cursor: Any) -> list[str]:
+    """Return tags assigned to active source documents."""
+
+    cursor.execute(
+        """
+        SELECT DISTINCT membership.tag_path
+        FROM proc.blueprint_tag_memberships membership
+        JOIN proc.blueprints b
+            ON b.blueprint_id = membership.blueprint_id
+           AND b.deleted_at IS NULL
+        ORDER BY membership.tag_path ASC;
+        """,
+        {},
+    )
+    return [str(row[0] or "未分類") for row in cursor.fetchall()]
+
+
 def _format_source_doc_version_label(version_major: int | None, version_minor: int | None) -> str:
     """Format a user-facing source document version label."""
 
@@ -141,16 +195,17 @@ def _format_updated_at(value: Any) -> str:
 def _build_source_doc_list_query(
     keyword: str | None,
     status_filter: str | None,
+    tag_paths: list[str] | None,
     created_by: str | None,
     updated_from: str | None,
     updated_to: str | None,
     module_name: str | None,
     sort: str | None,
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, dict[str, object]]:
     """Build the source document list query and parameters."""
 
     conditions: list[str] = ["b.deleted_at IS NULL"]
-    parameters: dict[str, str] = {}
+    parameters: dict[str, object] = {}
 
     if keyword:
         conditions.append(
@@ -180,6 +235,27 @@ def _build_source_doc_list_query(
     if status_filter and status_filter != "all":
         conditions.append("bv.status = %(status_filter)s")
         parameters["status_filter"] = status_filter
+
+    normalized_tag_paths = list(
+        dict.fromkeys(
+            _normalize_source_doc_tag_path(tag_path)
+            for tag_path in (tag_paths or [])
+            if tag_path.strip()
+        )
+    )
+    for index, tag_path in enumerate(normalized_tag_paths):
+        parameter_name = f"tag_path_{index}"
+        conditions.append(
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM proc.blueprint_tag_memberships tag_filter_{index}
+                WHERE tag_filter_{index}.blueprint_id = b.blueprint_id
+                  AND tag_filter_{index}.tag_path = %({parameter_name})s
+            )
+            """
+        )
+        parameters[parameter_name] = tag_path
 
     if created_by:
         conditions.append("COALESCE(bv.created_by, '') ILIKE %(created_by)s")
@@ -245,7 +321,15 @@ def _build_source_doc_list_query(
                 ARRAY[]::text[]
             ) AS module_names,
             bv.created_by,
-            bv.updated_at
+            bv.updated_at,
+            COALESCE(
+                (
+                    SELECT array_agg(tag_membership.tag_path ORDER BY tag_membership.tag_path)
+                    FROM proc.blueprint_tag_memberships tag_membership
+                    WHERE tag_membership.blueprint_id = b.blueprint_id
+                ),
+                ARRAY['未分類']::text[]
+            ) AS tag_paths
         FROM proc.blueprints b
         JOIN proc.blueprint_versions bv
             ON bv.blueprint_id = b.blueprint_id
@@ -316,7 +400,15 @@ def _build_source_doc_detail_query() -> str:
             m.name AS module_name,
             mv.module_version_id,
             mv.version_no AS module_version_no,
-            mv.status AS module_status
+            mv.status AS module_status,
+            COALESCE(
+                (
+                    SELECT array_agg(tag_membership.tag_path ORDER BY tag_membership.tag_path)
+                    FROM proc.blueprint_tag_memberships tag_membership
+                    WHERE tag_membership.blueprint_id = b.blueprint_id
+                ),
+                ARRAY['未分類']::text[]
+            ) AS tag_paths
         FROM proc.blueprints b
         JOIN selected_version sv
             ON sv.blueprint_id = b.blueprint_id
@@ -400,6 +492,7 @@ def _fetch_source_doc_detail_rows(
 
     with connection.cursor() as cursor:
         _ensure_source_doc_deletion_columns(cursor)
+        _ensure_source_doc_tag_table(cursor)
         _ensure_source_doc_version_number_columns(cursor)
         cursor.execute(_build_source_doc_detail_query(), {"source_doc_id": str(source_doc_id)})
         rows = cursor.fetchall()
@@ -483,6 +576,16 @@ def _map_source_doc_detail_rows(
     created_by_index = 10 if has_version_columns else 8
     created_at_index = 11 if has_version_columns else 9
     updated_at_index = 12 if has_version_columns else 10
+    raw_tag_paths = first_row[22] if len(first_row) >= 23 else ["未分類"]
+    if isinstance(raw_tag_paths, (list, tuple)):
+        tag_paths = [
+            _normalize_source_doc_tag_path(str(tag_path))
+            for tag_path in raw_tag_paths
+            if str(tag_path).strip()
+        ]
+    else:
+        tag_paths = [_normalize_source_doc_tag_path(str(raw_tag_paths or "未分類"))]
+    tag_paths = list(dict.fromkeys(tag_paths)) or ["未分類"]
 
     return SourceDocDetailData(
         source_doc_id=first_row[0],
@@ -499,6 +602,7 @@ def _map_source_doc_detail_rows(
         change_note=first_row[change_note_index],
         module_count=len(items),
         enabled_module_count=enabled_module_count,
+        tag_paths=tag_paths,
         created_by=first_row[created_by_index],
         created_at=_format_updated_at(first_row[created_at_index]),
         updated_at=_format_updated_at(first_row[updated_at_index]),
@@ -616,6 +720,7 @@ def list_source_docs(
     settings: AppSettings,
     keyword: str | None = None,
     status_filter: str | None = None,
+    tag_paths: list[str] | None = None,
     created_by: str | None = None,
     updated_from: str | None = None,
     updated_to: str | None = None,
@@ -632,6 +737,7 @@ def list_source_docs(
     query, parameters = _build_source_doc_list_query(
         keyword,
         status_filter,
+        tag_paths,
         created_by,
         updated_from,
         updated_to,
@@ -646,9 +752,11 @@ def list_source_docs(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_source_doc_deletion_columns(cursor)
+                _ensure_source_doc_tag_table(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(query, parameters)
                 rows = cursor.fetchall()
+                tags = _fetch_source_doc_tag_paths(cursor)
     except Exception as exception:
         raise DatabaseConnectionError("Source document list query failed.") from exception
 
@@ -661,6 +769,16 @@ def list_source_docs(
         module_names_index = 11 if has_version_columns else 9
         created_by_index = 12 if has_version_columns else 10
         updated_at_index = 13 if has_version_columns else 11
+        raw_tag_paths = row[14] if len(row) >= 15 else ["未分類"]
+        if isinstance(raw_tag_paths, (list, tuple)):
+            item_tag_paths = [
+                _normalize_source_doc_tag_path(str(tag_path))
+                for tag_path in raw_tag_paths
+                if str(tag_path).strip()
+            ]
+        else:
+            item_tag_paths = [_normalize_source_doc_tag_path(str(raw_tag_paths or "未分類"))]
+        item_tag_paths = list(dict.fromkeys(item_tag_paths)) or ["未分類"]
         version_major, version_minor = _derive_source_doc_version_tuple(
             row[5],
             row[status_index],
@@ -683,12 +801,206 @@ def list_source_docs(
                 module_count=row[module_count_index],
                 enabled_module_count=row[enabled_count_index],
                 module_names=list(row[module_names_index] or []),
+                tag_paths=item_tag_paths,
                 created_by=row[created_by_index],
                 updated_at=_format_updated_at(row[updated_at_index]),
             )
         )
 
-    return SourceDocListData(items=items)
+    return SourceDocListData(items=items, tags=tags)
+
+
+def rename_source_doc_tag(
+    settings: AppSettings,
+    current_tag_path: str,
+    new_tag_path: str,
+) -> SourceDocListData:
+    """Rename a source document tag path and its descendants."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    current_tag = _normalize_source_doc_tag_path(current_tag_path)
+    new_tag = _normalize_source_doc_tag_path(new_tag_path)
+    if current_tag == new_tag:
+        return list_source_docs(settings, tag_paths=[new_tag])
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
+                _ensure_source_doc_tag_table(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO proc.blueprint_tag_memberships (blueprint_id, tag_path)
+                    SELECT
+                        membership.blueprint_id,
+                        CASE
+                            WHEN membership.tag_path = %(current_tag)s THEN %(new_tag)s
+                            ELSE %(new_tag)s || SUBSTRING(
+                                membership.tag_path
+                                FROM LENGTH(%(current_tag)s) + 1
+                            )
+                        END
+                    FROM proc.blueprint_tag_memberships membership
+                    WHERE membership.tag_path = %(current_tag)s
+                       OR LEFT(
+                            membership.tag_path,
+                            LENGTH(%(current_tag)s) + 1
+                          ) = %(current_tag)s || '/'
+                    ON CONFLICT (blueprint_id, tag_path) DO NOTHING;
+                    """,
+                    {"current_tag": current_tag, "new_tag": new_tag},
+                )
+                cursor.execute(
+                    """
+                    DELETE FROM proc.blueprint_tag_memberships
+                    WHERE tag_path = %(current_tag)s
+                       OR LEFT(
+                            tag_path,
+                            LENGTH(%(current_tag)s) + 1
+                          ) = %(current_tag)s || '/';
+                    """,
+                    {"current_tag": current_tag},
+                )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document tag rename failed.") from exception
+
+    return list_source_docs(settings, tag_paths=[new_tag])
+
+
+def delete_source_doc_tag(
+    settings: AppSettings,
+    tag_path: str,
+) -> SourceDocListData:
+    """Delete a tag and assign untagged source documents to uncategorized."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    current_tag = _normalize_source_doc_tag_path(tag_path)
+    if current_tag == "未分類":
+        raise DatabaseConnectionError("The uncategorized tag cannot be deleted.")
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
+                _ensure_source_doc_tag_table(cursor)
+                cursor.execute(
+                    """
+                    DELETE FROM proc.blueprint_tag_memberships
+                    WHERE tag_path = %(current_tag)s
+                       OR LEFT(
+                            tag_path,
+                            LENGTH(%(current_tag)s) + 1
+                          ) = %(current_tag)s || '/';
+                    """,
+                    {"current_tag": current_tag},
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO proc.blueprint_tag_memberships (blueprint_id, tag_path)
+                    SELECT b.blueprint_id, '未分類'
+                    FROM proc.blueprints b
+                    WHERE b.deleted_at IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM proc.blueprint_tag_memberships membership
+                          WHERE membership.blueprint_id = b.blueprint_id
+                      )
+                    ON CONFLICT (blueprint_id, tag_path) DO NOTHING;
+                    """,
+                    {},
+                )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document tag deletion failed.") from exception
+
+    return list_source_docs(settings)
+
+
+def add_source_docs_to_tag(
+    settings: AppSettings,
+    source_doc_ids: list[int],
+    tag_path: str,
+) -> SourceDocListData:
+    """Add selected active source documents to a tag without removing other tags."""
+
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    unique_source_doc_ids = sorted({int(source_doc_id) for source_doc_id in source_doc_ids if int(source_doc_id) > 0})
+    if not unique_source_doc_ids:
+        raise DatabaseConnectionError("No source documents were selected for tag assignment.")
+
+    new_tag = _normalize_source_doc_tag_path(tag_path)
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                _ensure_source_doc_deletion_columns(cursor)
+                _ensure_source_doc_tag_table(cursor)
+                if new_tag == "未分類":
+                    cursor.execute(
+                        """
+                        DELETE FROM proc.blueprint_tag_memberships
+                        WHERE blueprint_id = ANY(%(source_doc_ids)s);
+                        """,
+                        {"source_doc_ids": unique_source_doc_ids},
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.blueprint_tag_memberships (blueprint_id, tag_path)
+                        SELECT blueprint_id, '未分類'
+                        FROM proc.blueprints
+                        WHERE blueprint_id = ANY(%(source_doc_ids)s)
+                          AND deleted_at IS NULL
+                        ON CONFLICT (blueprint_id, tag_path) DO NOTHING;
+                        """,
+                        {"source_doc_ids": unique_source_doc_ids},
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.blueprint_tag_memberships (blueprint_id, tag_path)
+                        SELECT blueprint_id, %(new_tag)s
+                        FROM proc.blueprints
+                        WHERE blueprint_id = ANY(%(source_doc_ids)s)
+                          AND deleted_at IS NULL
+                        ON CONFLICT (blueprint_id, tag_path) DO NOTHING;
+                        """,
+                        {"new_tag": new_tag, "source_doc_ids": unique_source_doc_ids},
+                    )
+                    cursor.execute(
+                        """
+                        DELETE FROM proc.blueprint_tag_memberships
+                        WHERE blueprint_id = ANY(%(source_doc_ids)s)
+                          AND tag_path = '未分類';
+                        """,
+                        {"source_doc_ids": unique_source_doc_ids},
+                    )
+                connection.commit()
+    except Exception as exception:
+        raise DatabaseConnectionError("Source document tag assignment failed.") from exception
+
+    return list_source_docs(settings, tag_paths=[new_tag])
 
 
 def get_source_doc_detail(
@@ -736,6 +1048,7 @@ def create_source_doc(
 
             with connection.cursor() as cursor:
                 _ensure_source_doc_deletion_columns(cursor)
+                _ensure_source_doc_tag_table(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
                 normalized_source_doc_key = _normalize_source_doc_key(payload.source_doc_key)
                 if normalized_source_doc_key is None:
@@ -764,6 +1077,14 @@ def create_source_doc(
                 if inserted_source_doc is None:
                     raise DatabaseConnectionError("Source document create failed.")
                 source_doc_id = int(inserted_source_doc[0])
+                cursor.execute(
+                    """
+                    INSERT INTO proc.blueprint_tag_memberships (blueprint_id, tag_path)
+                    VALUES (%(source_doc_id)s, '未分類')
+                    ON CONFLICT (blueprint_id, tag_path) DO NOTHING;
+                    """,
+                    {"source_doc_id": source_doc_id},
+                )
 
                 cursor.execute(
                     """
@@ -839,6 +1160,7 @@ def update_source_doc(
         ) as connection:
             with connection.cursor() as cursor:
                 _ensure_source_doc_deletion_columns(cursor)
+                _ensure_source_doc_tag_table(cursor)
                 _ensure_source_doc_version_number_columns(cursor)
                 cursor.execute(
                     """

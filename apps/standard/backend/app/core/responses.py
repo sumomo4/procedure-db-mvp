@@ -538,6 +538,7 @@ class SourceDocListItemData(BaseModel):
     module_count: int
     enabled_module_count: int
     module_names: list[str]
+    tag_paths: list[str] = Field(default_factory=lambda: ["未分類"])
     created_by: str | None
     updated_at: str
 
@@ -546,6 +547,27 @@ class SourceDocListData(BaseModel):
     """Source document list response payload."""
 
     items: list[SourceDocListItemData]
+    tags: list[str] = Field(default_factory=list)
+
+
+class SourceDocTagRenameRequest(BaseModel):
+    """Request payload for renaming a source document tag."""
+
+    current_tag_path: str = Field(min_length=1)
+    new_tag_path: str = Field(min_length=1)
+
+
+class SourceDocTagDeleteRequest(BaseModel):
+    """Request payload for deleting a source document tag."""
+
+    tag_path: str = Field(min_length=1)
+
+
+class SourceDocTagMoveRequest(BaseModel):
+    """Request payload for adding source documents to a tag."""
+
+    source_doc_ids: list[int] = Field(min_length=1)
+    tag_path: str = Field(min_length=1)
 
 
 class SourceDocCreateItemInput(BaseModel):
@@ -630,6 +652,7 @@ class SourceDocDetailData(BaseModel):
     change_note: str | None
     module_count: int
     enabled_module_count: int
+    tag_paths: list[str] = Field(default_factory=lambda: ["未分類"])
     created_by: str | None
     created_at: str
     updated_at: str
