@@ -813,7 +813,7 @@ def test_cancel_source_doc_registration_returns_success_response(
             source_doc_key="BP-STD-001",
             source_doc_name="Source doc A",
             cancelled_by=cancelled_by,
-            cancelled_at="2026-09-09T10:30:00+09:00",
+            cancelled_at="2026-09-10T10:30:00+09:00",
             reason=reason,
         )
 

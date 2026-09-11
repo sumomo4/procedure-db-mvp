@@ -553,7 +553,7 @@ def test_cancel_source_doc_registration_marks_initial_unused_draft_deleted(
 ) -> None:
     """An unused initial draft should be logically cancelled with its audit values."""
 
-    cancelled_at = datetime(2026, 9, 9, 10, 30, tzinfo=timezone.utc)
+    cancelled_at = datetime(2026, 9, 10, 10, 30, tzinfo=timezone.utc)
     fake_cursor = install_fake_psycopg(
         monkeypatch,
         FakeCursor(
@@ -577,7 +577,7 @@ def test_cancel_source_doc_registration_marks_initial_unused_draft_deleted(
     assert result.source_doc_key == "BP-STD-001"
     assert result.cancelled_by == "Admin User"
     assert result.reason == "Wrong module composition"
-    assert result.cancelled_at == "2026-09-09T10:30:00+00:00"
+    assert result.cancelled_at == "2026-09-10T10:30:00+00:00"
     executed_queries = "\n".join(query for query, _ in fake_cursor.executions)
     assert "FROM proc.case_documents" in executed_queries
     assert "UPDATE proc.blueprints" in executed_queries
