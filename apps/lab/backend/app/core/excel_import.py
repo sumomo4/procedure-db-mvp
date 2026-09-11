@@ -689,7 +689,8 @@ def build_module_create_request_from_sheet_data(
 
         if (
             work_text is None
-            and all(value is None for value in common_values.values())
+            and common_values["tech_doc_text"] is None
+            and common_values["expected_result"] is None
             and not device_entries
             and not images
         ):
@@ -699,9 +700,9 @@ def build_module_create_request_from_sheet_data(
             ModuleCreateRowInput(
                 row_order=len(normalized_rows) + 1,
                 row_type="step",
-                major_no=common_values["major_no"],
-                middle_no=common_values["middle_no"],
-                minor_no=common_values["minor_no"],
+                major_no=None,
+                middle_no=None,
+                minor_no=None,
                 tech_doc_text=common_values["tech_doc_text"],
                 work_text=work_text,
                 indent_level=indent_level,

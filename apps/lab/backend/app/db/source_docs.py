@@ -17,6 +17,7 @@ from app.core.responses import (
     SourceDocModuleItemData,
 )
 from app.db.modules import MODULE_STATUS_LABELS, _map_device_entries, _map_row_images
+from app.services.source_doc_numbering import SourceDocNumberingRow, assign_source_doc_numbers
 
 
 SOURCE_DOC_STATUS_LABELS = {
@@ -161,6 +162,102 @@ def _ensure_source_doc_version_number_columns(cursor: Any) -> None:
         """,
         {},
     )
+
+
+def _ensure_source_doc_row_number_table(cursor: Any) -> None:
+    """Ensure source-version-specific row numbers exist on existing DB volumes."""
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS proc.blueprint_item_row_numbers (
+            blueprint_item_row_number_id bigserial PRIMARY KEY,
+            blueprint_item_id bigint NOT NULL
+                REFERENCES proc.blueprint_items (blueprint_item_id) ON DELETE CASCADE,
+            module_row_id bigint NOT NULL
+                REFERENCES proc.module_rows (module_row_id),
+            major_no text,
+            middle_no text,
+            minor_no text,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (blueprint_item_id, module_row_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_blueprint_item_row_numbers_item
+            ON proc.blueprint_item_row_numbers (blueprint_item_id);
+        """,
+        {},
+    )
+
+
+def _assign_source_doc_row_numbers(cursor: Any, source_doc_version_id: int) -> None:
+    """Calculate and persist row numbers for one source-document version."""
+
+    _ensure_source_doc_row_number_table(cursor)
+    cursor.execute(
+        """
+        SELECT
+            bi.blueprint_item_id,
+            r.module_row_id,
+            bi.item_order,
+            bi.enabled,
+            r.row_order,
+            r.row_type,
+            r.indent_level,
+            r.work_text
+        FROM proc.blueprint_items bi
+        JOIN proc.module_rows r
+            ON r.module_version_id = bi.module_version_id
+        WHERE bi.blueprint_version_id = %(source_doc_version_id)s
+        ORDER BY bi.item_order, r.row_order;
+        """,
+        {"source_doc_version_id": source_doc_version_id},
+    )
+    numbering_rows = [
+        SourceDocNumberingRow(
+            blueprint_item_id=int(row[0]),
+            module_row_id=int(row[1]),
+            item_order=int(row[2]),
+            enabled=bool(row[3]),
+            row_order=int(row[4]),
+            row_type=str(row[5]),
+            indent_level=int(row[6]) if row[6] is not None else None,
+            work_text=str(row[7]) if row[7] is not None else None,
+        )
+        for row in cursor.fetchall()
+    ]
+
+    for result in assign_source_doc_numbers(numbering_rows):
+        cursor.execute(
+            """
+            INSERT INTO proc.blueprint_item_row_numbers (
+                blueprint_item_id,
+                module_row_id,
+                major_no,
+                middle_no,
+                minor_no
+            )
+            VALUES (
+                %(blueprint_item_id)s,
+                %(module_row_id)s,
+                %(major_no)s,
+                %(middle_no)s,
+                %(minor_no)s
+            )
+            ON CONFLICT (blueprint_item_id, module_row_id)
+            DO UPDATE SET
+                major_no = EXCLUDED.major_no,
+                middle_no = EXCLUDED.middle_no,
+                minor_no = EXCLUDED.minor_no,
+                updated_at = now();
+            """,
+            {
+                "blueprint_item_id": result.blueprint_item_id,
+                "module_row_id": result.module_row_id,
+                "major_no": result.major_no,
+                "middle_no": result.middle_no,
+                "minor_no": result.minor_no,
+            },
+        )
 
 
 def _latest_source_doc_display_version(cursor: Any, source_doc_id: int) -> tuple[int, int]:
@@ -444,9 +541,18 @@ def _build_source_doc_module_rows_query() -> str:
             r.module_row_id,
             r.row_order,
             r.row_type,
-            r.major_no,
-            r.middle_no,
-            r.minor_no,
+            CASE
+                WHEN item_numbers.blueprint_item_row_number_id IS NOT NULL THEN item_numbers.major_no
+                ELSE r.major_no
+            END AS major_no,
+            CASE
+                WHEN item_numbers.blueprint_item_row_number_id IS NOT NULL THEN item_numbers.middle_no
+                ELSE r.middle_no
+            END AS middle_no,
+            CASE
+                WHEN item_numbers.blueprint_item_row_number_id IS NOT NULL THEN item_numbers.minor_no
+                ELSE r.minor_no
+            END AS minor_no,
             r.tech_doc_text,
             r.work_text,
             r.indent_level,
@@ -462,6 +568,9 @@ def _build_source_doc_module_rows_query() -> str:
             ON bi.blueprint_version_id = sv.blueprint_version_id
         JOIN proc.module_rows r
             ON r.module_version_id = bi.module_version_id
+        LEFT JOIN proc.blueprint_item_row_numbers item_numbers
+            ON item_numbers.blueprint_item_id = bi.blueprint_item_id
+           AND item_numbers.module_row_id = r.module_row_id
         LEFT JOIN LATERAL (
             SELECT jsonb_agg(
                 jsonb_build_object(
@@ -494,6 +603,7 @@ def _fetch_source_doc_detail_rows(
         _ensure_source_doc_deletion_columns(cursor)
         _ensure_source_doc_tag_table(cursor)
         _ensure_source_doc_version_number_columns(cursor)
+        _ensure_source_doc_row_number_table(cursor)
         cursor.execute(_build_source_doc_detail_query(), {"source_doc_id": str(source_doc_id)})
         rows = cursor.fetchall()
         cursor.execute(_build_source_doc_module_rows_query(), {"source_doc_id": str(source_doc_id)})
@@ -1120,6 +1230,7 @@ def create_source_doc(
                 source_doc_version_id = int(inserted_version[0])
 
                 _insert_source_doc_items(cursor, source_doc_version_id, payload.items)
+                _assign_source_doc_row_numbers(cursor, source_doc_version_id)
 
             if source_doc_id is None:
                 raise DatabaseConnectionError("Source document create failed.")
@@ -1261,6 +1372,7 @@ def update_source_doc(
                 source_doc_version_id = int(inserted_version[0])
 
                 _insert_source_doc_items(cursor, source_doc_version_id, payload.items)
+                _assign_source_doc_row_numbers(cursor, source_doc_version_id)
 
             detail_rows, module_row_rows = _fetch_source_doc_detail_rows(connection, source_doc_id)
             connection.commit()

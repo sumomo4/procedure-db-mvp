@@ -291,6 +291,21 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_items_blueprint_version_id
 CREATE INDEX IF NOT EXISTS idx_blueprint_items_module_version_id
     ON proc.blueprint_items (module_version_id);
 
+CREATE TABLE IF NOT EXISTS proc.blueprint_item_row_numbers (
+    blueprint_item_row_number_id bigserial PRIMARY KEY,
+    blueprint_item_id bigint NOT NULL REFERENCES proc.blueprint_items (blueprint_item_id) ON DELETE CASCADE,
+    module_row_id bigint NOT NULL REFERENCES proc.module_rows (module_row_id),
+    major_no text,
+    middle_no text,
+    minor_no text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (blueprint_item_id, module_row_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blueprint_item_row_numbers_item
+    ON proc.blueprint_item_row_numbers (blueprint_item_id);
+
 CREATE TABLE IF NOT EXISTS proc.case_documents (
     case_document_id bigserial PRIMARY KEY,
     case_document_key text NOT NULL UNIQUE,
