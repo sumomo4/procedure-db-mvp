@@ -8,6 +8,112 @@
   -webkit-font-smoothing: antialiased;
 }
 
+.case-execution-flow {
+  display: grid;
+  gap: 18px;
+}
+
+.case-execution-flow-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.case-execution-flow-heading h2,
+.case-execution-flow-heading p {
+  margin: 0;
+}
+
+.case-execution-flow-heading p {
+  margin-top: 6px;
+  color: #56636c;
+}
+
+.case-execution-flow-heading > strong {
+  flex: 0 0 auto;
+  padding-left: 14px;
+  border-left: 4px solid currentColor;
+}
+
+.case-execution-ready {
+  color: #287a4b;
+}
+
+.case-execution-not-ready {
+  color: #a66a12;
+}
+
+.case-execution-flow-steps {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  list-style: none;
+}
+
+.case-execution-flow-steps li {
+  min-width: 0;
+  padding: 14px 18px;
+  border-top: 3px solid #aeb9be;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  color: #68767d;
+}
+
+.case-execution-flow-steps li + li {
+  border-left: 1px solid #d6dddf;
+}
+
+.case-execution-flow-steps li.current {
+  border-top-color: #d99a25;
+  color: #172026;
+  background: #fff8e8;
+}
+
+.case-execution-flow-steps li.completed {
+  border-top-color: #2f8a56;
+  color: #173f2a;
+  background: #f1f8f3;
+}
+
+.case-execution-flow-number {
+  width: 28px;
+  height: 28px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+}
+
+.case-execution-flow-steps li > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.case-execution-flow-steps small {
+  color: #56636c;
+}
+
+.case-execution-lock-notice {
+  min-height: 64px;
+  padding: 14px 20px;
+  border-left: 5px solid #d99a25;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #fff8e8;
+}
+
+.case-execution-lock-notice span {
+  color: #56636c;
+}
+
 .case-execution-selector {
   display: grid;
   grid-template-columns: minmax(280px, 640px) 1fr;
@@ -53,6 +159,58 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   padding: 20px 0;
+}
+
+.case-execution-preparation {
+  display: grid;
+  gap: 18px;
+}
+
+.case-execution-preparation-heading,
+.case-execution-preparation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.case-execution-preparation-heading h2,
+.case-execution-preparation-actions p {
+  margin: 0;
+}
+
+.case-execution-preparation-heading span {
+  color: #41505a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.case-execution-preparation-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.case-execution-preparation-form label {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.case-execution-preparation-wide,
+.case-execution-preparation-form label:nth-of-type(4),
+.case-execution-preparation-form label:nth-of-type(5) {
+  grid-column: span 2;
+}
+
+.case-execution-preparation-actions {
+  grid-column: 1 / -1;
+  min-height: 44px;
+}
+
+.case-execution-preparation-actions p {
+  color: #41505a;
 }
 
 .case-execution-toolbar {
@@ -302,6 +460,10 @@
     flex-direction: column;
   }
 
+  .case-execution-preparation-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .case-execution-sheet-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -314,6 +476,38 @@
 
   .case-execution-step-current {
     gap: 4px 10px;
+  }
+
+  .case-execution-flow-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .case-execution-flow-steps li + li {
+    border-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .case-execution-flow-heading,
+  .case-execution-lock-notice {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .case-execution-preparation-form {
+    grid-template-columns: 1fr;
+  }
+
+  .case-execution-preparation-wide,
+  .case-execution-preparation-form label:nth-of-type(4),
+  .case-execution-preparation-form label:nth-of-type(5) {
+    grid-column: auto;
+  }
+
+  .case-execution-preparation-heading,
+  .case-execution-preparation-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 
@@ -662,6 +856,41 @@ textarea {
 .modal-dialog p {
   color: #56636c;
   line-height: 1.7;
+}
+
+.source-doc-cancellation-dialog {
+  width: min(560px, 100%);
+}
+
+.source-doc-cancellation-field {
+  display: grid;
+  gap: 8px;
+  color: #24333b;
+  font-weight: 800;
+}
+
+.source-doc-cancellation-field input,
+.source-doc-cancellation-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #bac7cc;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #17272f;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 500;
+}
+
+.source-doc-cancellation-field textarea {
+  resize: vertical;
+}
+
+.source-doc-cancellation-field input:focus,
+.source-doc-cancellation-field textarea:focus {
+  border-color: #19747d;
+  outline: 2px solid rgba(25, 116, 125, 0.2);
+  outline-offset: 1px;
 }
 
 .modal-actions {
