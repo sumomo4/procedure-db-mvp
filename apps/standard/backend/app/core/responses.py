@@ -1,5 +1,6 @@
 ﻿"""Common API response models and helpers."""
 
+from datetime import date
 from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
@@ -832,6 +833,7 @@ class CaseDocPlaceholderMappingItemData(BaseModel):
     value_column: str = Field(min_length=1)
     source_column: str = Field(min_length=1)
     device_type: str | None = None
+    source_device_type: str | None = None
     key_value: str | None = None
     description: str | None = None
 
@@ -847,6 +849,7 @@ class CaseDocPlaceholderMappingUpsertRequest(BaseModel):
     value_column: str = Field(min_length=1)
     source_column: str = Field(min_length=1)
     device_type: str | None = None
+    source_device_type: str | None = None
     key_value: str | None = None
     description: str | None = None
 
@@ -861,6 +864,19 @@ class CaseDocPlaceholderMappingListData(BaseModel):
     """Placeholder mapping list used by case document generation."""
 
     items: list[CaseDocPlaceholderMappingItemData]
+
+
+class CaseDocPlaceholderSourceFileData(BaseModel):
+    """Selectable columns discovered from one placeholder source file."""
+
+    source_file: str
+    columns: list[str]
+
+
+class CaseDocPlaceholderSourceFileListData(BaseModel):
+    """Source files and columns available to placeholder mappings."""
+
+    items: list[CaseDocPlaceholderSourceFileData]
 
 
 class CaseDocResolveContextData(BaseModel):
@@ -884,6 +900,29 @@ class CaseDocInstanceCreateRequest(CaseDocResolveContextRequest):
     """Request payload for creating a persistent case document instance."""
 
     created_by: str | None = None
+
+
+class CaseDocPreparationData(BaseModel):
+    """Preparation values entered before executing a case document."""
+
+    construction_name: str = ""
+    construction_date: date | None = None
+    construction_executor: str = ""
+    block: str = ""
+    target_fs: str = ""
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+class CaseDocPreparationUpdateRequest(BaseModel):
+    """Request payload for saving preparation values."""
+
+    construction_name: str = Field(min_length=1, max_length=200)
+    construction_date: date
+    construction_executor: str = Field(min_length=1, max_length=200)
+    block: str = Field(min_length=1, max_length=100)
+    target_fs: str = Field(min_length=1, max_length=200)
+    updated_by: str = Field(min_length=1, max_length=200)
 
 
 class CaseDocExecutionHistoryData(BaseModel):
@@ -953,6 +992,7 @@ class CaseDocInstanceDetailData(CaseDocInstanceListItemData):
 
     prefecture: str
     building: str
+    preparation: CaseDocPreparationData = Field(default_factory=CaseDocPreparationData)
     targets: list[CaseDocTargetDeviceSlotData]
     execution_items: list[CaseDocExecutionItemData]
 

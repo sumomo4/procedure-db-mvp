@@ -21,6 +21,8 @@ from app.core.responses import (
     CaseDocPlaceholderMappingItemData,
     CaseDocPlaceholderMappingListData,
     CaseDocPlaceholderMappingUpsertRequest,
+    CaseDocPlaceholderSourceFileData,
+    CaseDocPlaceholderSourceFileListData,
     CaseDocMasterOptionsData,
     CaseDocResolvedPlaceholderData,
     CaseDocResolveContextData,
@@ -225,6 +227,8 @@ def _validate_placeholder_mapping_item(item: CaseDocPlaceholderMappingItemData) 
         raise ValueError(f"device placeholder requires device_type: {item.name}")
     if item.scope == "common" and not item.key_value:
         raise ValueError(f"common placeholder requires key_value: {item.name}")
+    if item.scope == "common" and item.source_device_type:
+        raise ValueError(f"common placeholder cannot use source_device_type: {item.name}")
 
 
 def _validate_placeholder_mappings(mappings: Iterable[CaseDocPlaceholderMappingItemData]) -> list[CaseDocPlaceholderMappingItemData]:
@@ -261,6 +265,8 @@ def _placeholder_mapping_to_dict(item: CaseDocPlaceholderMappingItemData) -> dic
     }
     if item.device_type is not None:
         payload["device_type"] = item.device_type
+    if item.source_device_type is not None:
+        payload["source_device_type"] = item.source_device_type
     payload.update(
         {
             "source_file": item.source_file,
@@ -435,6 +441,47 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
         ]
 
 
+def _read_xlsx_columns(path: Path) -> list[str]:
+    """Return display column names from the first populated row of a workbook."""
+
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    try:
+        for row in workbook.active.iter_rows(values_only=True):
+            columns = _unique_ordered(_cell_to_text(value) for value in row if _cell_to_text(value))
+            if columns:
+                return columns
+    finally:
+        workbook.close()
+    return []
+
+
+def _read_csv_columns(path: Path) -> list[str]:
+    """Return display column names from a CSV header."""
+
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        return _unique_ordered(_cell_to_text(value) for value in (reader.fieldnames or []) if _cell_to_text(value))
+
+
+def _placeholder_sources_from_mappings(
+    mappings: Iterable[CaseDocPlaceholderMappingItemData],
+) -> CaseDocPlaceholderSourceFileListData:
+    """Build a deterministic source catalog when seed data is in use."""
+
+    columns_by_file: dict[str, list[str]] = {}
+    for mapping in mappings:
+        columns = columns_by_file.setdefault(mapping.source_file, [])
+        for column in (mapping.key_column, mapping.value_column):
+            if column not in columns:
+                columns.append(column)
+    return CaseDocPlaceholderSourceFileListData(
+        items=[
+            CaseDocPlaceholderSourceFileData(source_file=source_file, columns=columns_by_file[source_file])
+            for source_file in sorted(columns_by_file, key=str.casefold)
+        ]
+    )
+
+
 def _value_from_aliases(row: dict[str, str], aliases: Iterable[str], field_name: str) -> str:
     for alias in aliases:
         value = row.get(_normalize_key(alias), "").strip()
@@ -465,6 +512,22 @@ def _slot_key_from_column_name(column_name: str) -> str | None:
         return None
     slot_key = f"{numbered_slot_match.group(1)}_{numbered_slot_match.group(2)}".upper()
     return slot_key or None
+
+
+def _source_slot_key_for_mapping(
+    target_assignment: CaseDocHostAssignmentData,
+    mapping: CaseDocPlaceholderMappingItemData,
+) -> str | None:
+    """Map a target slot to the related source-device slot used by an export table."""
+
+    source_device_type = mapping.source_device_type or mapping.device_type
+    if not source_device_type or source_device_type == target_assignment.device_type:
+        return target_assignment.slot_key
+
+    target_prefix = f"{target_assignment.device_type}_"
+    if not target_assignment.slot_key.startswith(target_prefix):
+        return None
+    return f"{source_device_type}_{target_assignment.slot_key.removeprefix(target_prefix)}"
 
 
 def _as_option(value: str) -> CaseDocMasterOptionData:
@@ -687,6 +750,9 @@ class CaseDocMasterRepository(Protocol):
     def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
         """Return placeholder mappings used for case document generation."""
 
+    def list_placeholder_source_files(self) -> CaseDocPlaceholderSourceFileListData:
+        """Return source files and columns selectable for placeholder mappings."""
+
     def validate_placeholder_mapping(
         self,
         payload: CaseDocPlaceholderMappingUpsertRequest,
@@ -722,6 +788,9 @@ class SeedCaseDocMasterRepository:
 
     def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
         return CaseDocPlaceholderMappingListData(items=_load_placeholder_mappings(self.placeholder_mapping_path))
+
+    def list_placeholder_source_files(self) -> CaseDocPlaceholderSourceFileListData:
+        return _placeholder_sources_from_mappings(self._load_placeholder_mappings())
 
     def validate_placeholder_mapping(
         self,
@@ -810,6 +879,26 @@ class ExportFileCaseDocMasterRepository:
 
     def list_placeholder_mappings(self) -> CaseDocPlaceholderMappingListData:
         return CaseDocPlaceholderMappingListData(items=_load_placeholder_mappings(self.placeholder_mapping_path))
+
+    def list_placeholder_source_files(self) -> CaseDocPlaceholderSourceFileListData:
+        if not self.export_dir.exists():
+            raise ValueError(f"case document export directory was not found: {self.export_dir}")
+
+        source_paths = sorted(
+            (
+                path
+                for path in self.export_dir.iterdir()
+                if path.is_file()
+                and not path.name.startswith("~$")
+                and path.suffix.lower() in {".xlsx", ".xlsm", ".csv"}
+            ),
+            key=lambda path: path.name.casefold(),
+        )
+        items: list[CaseDocPlaceholderSourceFileData] = []
+        for path in source_paths:
+            columns = _read_csv_columns(path) if path.suffix.lower() == ".csv" else _read_xlsx_columns(path)
+            items.append(CaseDocPlaceholderSourceFileData(source_file=path.name, columns=columns))
+        return CaseDocPlaceholderSourceFileListData(items=items)
 
     def validate_placeholder_mapping(
         self,
@@ -1023,18 +1112,42 @@ class ExportFileCaseDocMasterRepository:
         mappings: list[CaseDocPlaceholderMappingItemData],
     ) -> list[CaseDocResolvedPlaceholderData]:
         resolved_placeholders: list[CaseDocResolvedPlaceholderData] = []
+        assignments_by_slot_key = {assignment.slot_key: assignment for assignment in host_assignments}
+        assigned_device_types = {assignment.device_type for assignment in host_assignments}
         device_types = _unique_ordered(
             mapping.device_type or ""
             for mapping in mappings
-            if mapping.enabled and mapping.scope == "device" and mapping.device_type
+            if mapping.enabled
+            and mapping.scope == "device"
+            and mapping.device_type
+            and mapping.device_type in assigned_device_types
         )
         for device_type in device_types:
-            resolved_placeholders.extend(
-                _resolve_device_placeholders_from_values(
-                    host_assignments,
-                    self._load_device_values_by_host_name(mappings, device_type),
-                    mappings,
-                    device_type,
-                )
-            )
+            device_mappings = _enabled_device_mappings(mappings, device_type)
+            device_values_by_host_name = self._load_device_values_by_host_name(mappings, device_type)
+            for target_assignment in host_assignments:
+                if target_assignment.device_type != device_type:
+                    continue
+                for mapping in device_mappings:
+                    source_slot_key = _source_slot_key_for_mapping(target_assignment, mapping)
+                    if source_slot_key is None:
+                        continue
+                    source_assignment = assignments_by_slot_key.get(source_slot_key)
+                    if source_assignment is None:
+                        continue
+                    source_values = device_values_by_host_name.get(source_assignment.host_name)
+                    if source_values is None:
+                        continue
+                    value = source_values.get(mapping.source_column)
+                    if not value:
+                        continue
+                    resolved_placeholders.append(
+                        CaseDocResolvedPlaceholderData(
+                            placeholder=mapping.name,
+                            value=value,
+                            source_table=_source_table_from_mapping(mapping),
+                            source_column=mapping.source_column,
+                            host_name=target_assignment.host_name,
+                        )
+                    )
         return resolved_placeholders

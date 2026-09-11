@@ -7,6 +7,7 @@ from app.core.responses import (
     CaseDocPlaceholderMappingItemData,
     CaseDocPlaceholderMappingListData,
     CaseDocPlaceholderMappingUpsertRequest,
+    CaseDocPlaceholderSourceFileListData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -69,6 +70,12 @@ def list_case_doc_placeholder_mappings(settings: AppSettings) -> CaseDocPlacehol
     """Return placeholder mappings used for case document generation."""
 
     return get_case_doc_master_repository(settings).list_placeholder_mappings()
+
+
+def list_case_doc_placeholder_source_files(settings: AppSettings) -> CaseDocPlaceholderSourceFileListData:
+    """Return source files and columns available to placeholder mappings."""
+
+    return get_case_doc_master_repository(settings).list_placeholder_source_files()
 
 
 def validate_case_doc_placeholder_mapping(

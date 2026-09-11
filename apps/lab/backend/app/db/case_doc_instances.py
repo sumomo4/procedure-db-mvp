@@ -16,8 +16,11 @@ from app.core.responses import (
     CaseDocInstanceDetailData,
     CaseDocInstanceListData,
     CaseDocInstanceListItemData,
+    CaseDocPreparationData,
+    CaseDocPreparationUpdateRequest,
     CaseDocResolveContextData,
     CaseDocTargetDeviceSlotData,
+    ModuleRowImageData,
     SourceDocDetailData,
 )
 
@@ -34,6 +37,7 @@ CREATE TABLE IF NOT EXISTS proc.case_documents (
     prefecture text NOT NULL,
     building text NOT NULL,
     context_json jsonb NOT NULL,
+    preparation_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     workbook_path text NOT NULL,
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed')),
     created_by text,
@@ -41,6 +45,9 @@ CREATE TABLE IF NOT EXISTS proc.case_documents (
     updated_at timestamptz NOT NULL DEFAULT now(),
     completed_at timestamptz
 );
+
+ALTER TABLE proc.case_documents
+    ADD COLUMN IF NOT EXISTS preparation_json jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS proc.case_document_targets (
     case_document_target_id bigserial PRIMARY KEY,
@@ -140,10 +147,51 @@ def _summary_from_row(row: dict[str, Any]) -> CaseDocInstanceListItemData:
         checked_count=row["checked_count"],
         skipped_count=row["skipped_count"],
         pending_count=row["pending_count"],
+        resume_item_label=str(row.get("resume_item_label") or "").strip() or None,
         created_by=row["created_by"],
         created_at=_isoformat(row["created_at"]) or "",
         updated_at=_isoformat(row["updated_at"]) or "",
     )
+
+
+def _preparation_from_row(row: dict[str, Any]) -> CaseDocPreparationData:
+    """Return preparation data with the original unit configuration as fallback."""
+
+    raw_preparation = row.get("preparation_json")
+    if not isinstance(raw_preparation, dict):
+        raw_preparation = {}
+    raw_context = row.get("context_json")
+    if not isinstance(raw_context, dict):
+        raw_context = {}
+    raw_unit_config = raw_context.get("unit_config")
+    if not isinstance(raw_unit_config, dict):
+        raw_unit_config = {}
+
+    return CaseDocPreparationData(
+        construction_name=str(raw_preparation.get("construction_name") or ""),
+        construction_date=raw_preparation.get("construction_date"),
+        construction_executor=str(raw_preparation.get("construction_executor") or ""),
+        block=str(raw_preparation.get("block") or raw_unit_config.get("block") or ""),
+        target_fs=str(raw_preparation.get("target_fs") or raw_unit_config.get("fs_cluster_name") or ""),
+        updated_by=raw_preparation.get("updated_by"),
+        updated_at=_isoformat(raw_preparation.get("updated_at")),
+    )
+
+
+def _is_preparation_complete(raw_preparation: Any) -> bool:
+    """Return whether all values required before execution have been saved."""
+
+    if not isinstance(raw_preparation, dict):
+        return False
+    required_fields = (
+        "construction_name",
+        "construction_date",
+        "construction_executor",
+        "block",
+        "target_fs",
+        "updated_at",
+    )
+    return all(str(raw_preparation.get(field) or "").strip() for field in required_fields)
 
 
 CASE_DOC_SUMMARY_SELECT = """
@@ -159,11 +207,49 @@ SELECT
     COUNT(*) FILTER (WHERE cei.status = 'checked')::integer AS checked_count,
     COUNT(*) FILTER (WHERE cei.status = 'skipped')::integer AS skipped_count,
     COUNT(*) FILTER (WHERE cei.status = 'pending')::integer AS pending_count,
+    (
+        SELECT COALESCE(
+            NULLIF(
+                CONCAT_WS(
+                    '.',
+                    NULLIF(BTRIM(next_item.major_no), ''),
+                    NULLIF(BTRIM(next_item.middle_no), ''),
+                    NULLIF(BTRIM(next_item.minor_no), '')
+                ),
+                ''
+            ),
+            (
+                SELECT NULLIF(
+                    CONCAT_WS(
+                        '.',
+                        NULLIF(BTRIM(group_start.major_no), ''),
+                        NULLIF(BTRIM(group_start.middle_no), ''),
+                        NULLIF(BTRIM(group_start.minor_no), '')
+                    ),
+                    ''
+                )
+                FROM proc.case_document_execution_items group_start
+                WHERE group_start.case_document_id = cd.case_document_id
+                  AND group_start.row_order <= next_item.row_order
+                  AND NULLIF(BTRIM(group_start.minor_no), '') IS NOT NULL
+                ORDER BY group_start.row_order DESC, group_start.target_no
+                LIMIT 1
+            ),
+            '番号なし'
+        )
+        FROM proc.case_document_execution_items next_item
+        WHERE next_item.case_document_id = cd.case_document_id
+          AND next_item.status = 'pending'
+        ORDER BY next_item.row_order, next_item.target_no
+        LIMIT 1
+    ) AS resume_item_label,
     cd.created_by,
     cd.created_at,
     cd.updated_at,
     cd.prefecture,
     cd.building,
+    cd.context_json,
+    cd.preparation_json,
     cd.workbook_path
 FROM proc.case_documents cd
 LEFT JOIN proc.case_document_execution_items cei
@@ -185,6 +271,8 @@ GROUP BY
     cd.updated_at,
     cd.prefecture,
     cd.building,
+    cd.context_json,
+    cd.preparation_json,
     cd.workbook_path
 """
 
@@ -225,6 +313,7 @@ def create_case_doc_instance(
                         prefecture,
                         building,
                         context_json,
+                        preparation_json,
                         workbook_path,
                         created_by
                     ) VALUES (
@@ -237,6 +326,7 @@ def create_case_doc_instance(
                         %(prefecture)s,
                         %(building)s,
                         %(context_json)s::jsonb,
+                        %(preparation_json)s::jsonb,
                         %(workbook_path)s,
                         %(created_by)s
                     )
@@ -252,6 +342,18 @@ def create_case_doc_instance(
                         "prefecture": context.unit_config.prefecture,
                         "building": context.unit_config.building,
                         "context_json": json.dumps(context.model_dump(mode="json"), ensure_ascii=False),
+                        "preparation_json": json.dumps(
+                            {
+                                "construction_name": "",
+                                "construction_date": None,
+                                "construction_executor": "",
+                                "block": context.unit_config.block,
+                                "target_fs": context.unit_config.fs_cluster_name,
+                                "updated_by": None,
+                                "updated_at": None,
+                            },
+                            ensure_ascii=False,
+                        ),
                         "workbook_path": str(workbook_path),
                         "created_by": created_by,
                     },
@@ -422,6 +524,59 @@ def get_case_doc_instance_detail(
                 )
                 item_rows = cursor.fetchall()
 
+                module_row_ids = sorted(
+                    {
+                        int(row["module_row_id"])
+                        for row in item_rows
+                        if row["module_row_id"] is not None
+                    }
+                )
+                images_by_module_row_id: dict[int, list[ModuleRowImageData]] = {
+                    module_row_id: [] for module_row_id in module_row_ids
+                }
+                if module_row_ids:
+                    cursor.execute(
+                        """
+                        SELECT
+                            module_row_id,
+                            module_row_image_id,
+                            image_key,
+                            image_path,
+                            anchor_cell,
+                            offset_x_px,
+                            offset_y_px,
+                            width_px,
+                            height_px,
+                            image_order
+                        FROM proc.module_row_images
+                        WHERE module_row_id = ANY(%(module_row_ids)s)
+                        ORDER BY module_row_id, image_order, module_row_image_id;
+                        """,
+                        {"module_row_ids": module_row_ids},
+                    )
+                    for image_row in cursor.fetchall():
+                        images_by_module_row_id[int(image_row["module_row_id"])].append(
+                            ModuleRowImageData(
+                                module_row_image_id=int(image_row["module_row_image_id"]),
+                                image_key=str(image_row["image_key"]),
+                                image_path=str(image_row["image_path"]),
+                                anchor_cell=str(image_row["anchor_cell"]),
+                                offset_x_px=int(image_row["offset_x_px"] or 0),
+                                offset_y_px=int(image_row["offset_y_px"] or 0),
+                                width_px=(
+                                    int(image_row["width_px"])
+                                    if image_row["width_px"] is not None
+                                    else None
+                                ),
+                                height_px=(
+                                    int(image_row["height_px"])
+                                    if image_row["height_px"] is not None
+                                    else None
+                                ),
+                                image_order=int(image_row["image_order"] or 1),
+                            )
+                        )
+
                 item_ids = [row["execution_item_id"] for row in item_rows]
                 history_by_item: dict[int, list[CaseDocExecutionHistoryData]] = {item_id: [] for item_id in item_ids}
                 if item_ids:
@@ -482,6 +637,11 @@ def get_case_doc_instance_detail(
             performed_by=row["performed_by"],
             skip_reason=row["skip_reason"],
             lock_version=row["lock_version"],
+            images=(
+                images_by_module_row_id.get(int(row["module_row_id"]), [])
+                if row["module_row_id"] is not None
+                else []
+            ),
             histories=history_by_item[row["execution_item_id"]],
         )
         for row in item_rows
@@ -490,9 +650,57 @@ def get_case_doc_instance_detail(
         **summary.model_dump(),
         prefecture=summary_row["prefecture"],
         building=summary_row["building"],
+        preparation=_preparation_from_row(summary_row),
         targets=targets,
         execution_items=execution_items,
     )
+
+
+def update_case_doc_preparation(
+    settings: AppSettings,
+    case_document_id: int,
+    payload: CaseDocPreparationUpdateRequest,
+) -> CaseDocInstanceDetailData:
+    """Save preparation values before case document execution."""
+
+    preparation = payload.model_dump(mode="json")
+    preparation["updated_at"] = datetime.now().astimezone().isoformat()
+
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """
+                    UPDATE proc.case_documents
+                    SET preparation_json = %(preparation_json)s::jsonb,
+                        updated_at = now()
+                    WHERE case_document_id = %(case_document_id)s
+                      AND status = 'active'
+                    RETURNING case_document_id;
+                    """,
+                    {
+                        "case_document_id": case_document_id,
+                        "preparation_json": json.dumps(preparation, ensure_ascii=False),
+                    },
+                )
+                if cursor.fetchone() is None:
+                    raise ValueError("案件CSが見つからないか、すでに完了しています。")
+    except ValueError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("案件CSの工事情報保存に失敗しました。") from exception
+
+    detail = get_case_doc_instance_detail(settings, case_document_id)
+    if detail is None:
+        raise DatabaseConnectionError("保存した案件CSの工事情報を取得できませんでした。")
+    return detail
 
 
 def update_case_doc_execution_item(
@@ -515,7 +723,10 @@ def update_case_doc_execution_item(
                 _ensure_schema(cursor)
                 cursor.execute(
                     """
-                    SELECT cei.status, cd.status AS case_document_status
+                    SELECT
+                        cei.status,
+                        cd.status AS case_document_status,
+                        cd.preparation_json
                     FROM proc.case_document_execution_items cei
                     JOIN proc.case_documents cd ON cd.case_document_id = cei.case_document_id
                     WHERE cei.execution_item_id = %(execution_item_id)s
@@ -531,6 +742,8 @@ def update_case_doc_execution_item(
                     raise ValueError("案件CSの実施項目が見つかりませんでした。")
                 if current["case_document_status"] != "active":
                     raise ValueError("完了済みの案件CSは変更できません。")
+                if not _is_preparation_complete(current["preparation_json"]):
+                    raise ValueError("工事情報を入力して保存してから案件CSを実行してください。")
 
                 cursor.execute(
                     """
@@ -608,6 +821,22 @@ def complete_case_doc_instance(settings: AppSettings, case_document_id: int) -> 
         ) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 _ensure_schema(cursor)
+                cursor.execute(
+                    """
+                    SELECT status, preparation_json
+                    FROM proc.case_documents
+                    WHERE case_document_id = %(case_document_id)s;
+                    """,
+                    {"case_document_id": case_document_id},
+                )
+                case_document = cursor.fetchone()
+                if case_document is None:
+                    raise ValueError("案件CSが見つかりませんでした。")
+                if case_document["status"] != "active":
+                    raise ValueError("案件CSが見つからないか、すでに完了しています。")
+                if not _is_preparation_complete(case_document["preparation_json"]):
+                    raise ValueError("工事情報を入力して保存してから案件CSを実行してください。")
+
                 cursor.execute(
                     """
                     SELECT COUNT(*)::integer AS pending_count

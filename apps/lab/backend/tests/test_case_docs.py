@@ -8,7 +8,7 @@ from zipfile import ZipFile
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from app.core.case_doc_generation import (
     TEMPLATE_PATH,
@@ -22,6 +22,8 @@ from app.core.responses import (
     CaseDocExecutionItemData,
     CaseDocHostAssignmentData,
     CaseDocInstanceDetailData,
+    CaseDocPreparationData,
+    CaseDocPreparationUpdateRequest,
     CaseDocTargetDeviceSlotData,
     CaseDocResolveContextData,
     CaseDocResolvedPlaceholderData,
@@ -32,6 +34,7 @@ from app.core.responses import (
     SourceDocDetailData,
     SourceDocModuleItemData,
 )
+from app.db.case_doc_instances import _is_preparation_complete
 
 
 PNG_BYTES = bytes.fromhex(
@@ -245,6 +248,7 @@ def _placeholder_payload(name: str = "TEST_DEVICE_IP") -> dict[str, object]:
         "enabled": False,
         "scope": "device",
         "device_type": "SBC",
+        "source_device_type": "SBC",
         "source_file": "SBC.xlsx",
         "key_column": "host_name",
         "value_column": "command_ip",
@@ -322,7 +326,56 @@ def test_read_case_doc_placeholder_mappings_returns_configured_items(client: Tes
     assert placeholders["SBC_COMMAND_FLOATING_IP"]["source_file"] == "SBC.xlsx"
     assert placeholders["SBC_COMMAND_FLOATING_IP"]["scope"] == "device"
     assert placeholders["SBC_COMMAND_FLOATING_IP"]["device_type"] == "SBC"
+    assert placeholders["TTS_HOST"]["source_device_type"] == "HSS"
+    assert placeholders["TTS_HOST"]["source_file"] == "HSS.xlsx"
     assert placeholders["LOGIN_USER"]["scope"] == "common"
+    frequent_columns = {
+        "GUI_ILO_IP": ("GUI.xlsx", "iLO用"),
+        "MSW_TTS_HOST": ("MSW.xlsx", "TTS-Host"),
+        "FS_MONITOR_A_FLOATING_IP": ("FS.xlsx", "装置監視A用フローティングIPアドレス"),
+        "HFS_HOST_GUEST_IP": ("HFS.xlsx", "ホスト-ゲスト用 IPアドレス"),
+        "SBC_CALL_PROCESS_FLOATING_IPV6": ("SBC.xlsx", "呼処理用フローティングIPアドレス（ｖ６）"),
+        "HSS_TTS_HOST": ("HSS.xlsx", "TTS-Host"),
+        "SCCE_TTS_HOST": ("SCCE.xlsx", "TTS-Host"),
+    }
+    for name, (source_file, value_column) in frequent_columns.items():
+        assert placeholders[name]["enabled"] is True
+        assert placeholders[name]["source_file"] == source_file
+        assert placeholders[name]["value_column"] == value_column
+
+
+def test_read_case_doc_placeholder_sources_returns_seed_mapping_columns(client: TestClient) -> None:
+    """Seed mode should expose source and column candidates from its mappings."""
+
+    response = client.get("/api/v1/case-docs/placeholders/sources")
+
+    assert response.status_code == status.HTTP_200_OK
+    items = {item["source_file"]: item["columns"] for item in response.json()["data"]["items"]}
+    assert "SBC.xlsx" in items
+    assert "ホスト名" in items["SBC.xlsx"]
+    assert "コマンド用フローティングIPアドレス" in items["SBC.xlsx"]
+
+
+def test_read_case_doc_placeholder_sources_reads_export_workbook_columns(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Export mode should return the physical headers of available workbooks."""
+
+    workbook = Workbook()
+    workbook.active.append(["ホスト名", "TTS-Host", "TTS-IP"])
+    workbook.active.append(["hss-test-0", "tts-test", "192.0.2.10"])
+    workbook.save(tmp_path / "HSS.xlsx")
+    test_settings.case_doc_master_source = "export_file"
+    test_settings.case_doc_access_export_dir = str(tmp_path)
+
+    response = client.get("/api/v1/case-docs/placeholders/sources")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"]["items"] == [
+        {"source_file": "HSS.xlsx", "columns": ["ホスト名", "TTS-Host", "TTS-IP"]}
+    ]
 
 
 def test_validate_case_doc_placeholder_mapping_does_not_write(
@@ -366,6 +419,7 @@ def test_create_case_doc_placeholder_mapping_writes_yaml(
     list_response = client.get("/api/v1/case-docs/placeholders")
     placeholders = {item["name"]: item for item in list_response.json()["data"]["items"]}
     assert placeholders["TEST_DEVICE_IP"]["value_column"] == "command_ip"
+    assert placeholders["TEST_DEVICE_IP"]["source_device_type"] == "SBC"
     assert "TEST_DEVICE_IP" in mapping_path.read_text(encoding="utf-8")
 
 
@@ -907,6 +961,89 @@ def test_case_doc_execution_snapshots_map_each_target_to_its_time_cell() -> None
     assert "tech_doc_text" in snapshots[0]
     assert "window_text" in snapshots[0]
     assert "p_text" in snapshots[0]
+
+
+def test_update_case_doc_preparation_route_saves_first_five_fields(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _fake_case_doc_context()
+    captured: dict[str, object] = {}
+
+    def fake_update(
+        settings: AppSettings,
+        case_document_id: int,
+        payload: CaseDocPreparationUpdateRequest,
+    ) -> CaseDocInstanceDetailData:
+        del settings
+        captured["case_document_id"] = case_document_id
+        captured["payload"] = payload
+        payload_data = payload.model_dump(mode="json")
+        return CaseDocInstanceDetailData(
+            case_document_id=case_document_id,
+            case_document_key="CASE-TEST-001",
+            source_doc_id=1,
+            source_doc_key="BP-STD-001",
+            source_doc_name="M1確認用 原本A",
+            unit_config_id=context.unit_config.unit_config_id,
+            status="active",
+            total_count=0,
+            checked_count=0,
+            skipped_count=0,
+            pending_count=0,
+            created_by="pytest",
+            created_at="2026-08-22T00:00:00+09:00",
+            updated_at="2026-08-22T09:00:00+09:00",
+            prefecture=context.unit_config.prefecture,
+            building=context.unit_config.building,
+            preparation=CaseDocPreparationData(
+                **payload_data,
+                updated_at="2026-08-22T09:00:00+09:00",
+            ),
+            targets=context.target_device_slots,
+            execution_items=[],
+        )
+
+    monkeypatch.setattr("app.routers.case_docs.update_case_doc_preparation", fake_update)
+    response = client.put(
+        "/api/v1/case-docs/instances/7/preparation",
+        json={
+            "construction_name": "東京工事",
+            "construction_date": "2026-08-22",
+            "construction_executor": "実施者A",
+            "block": "B001",
+            "target_fs": "FS-CL-TYO-01",
+            "updated_by": "member",
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert captured["case_document_id"] == 7
+    assert response.json()["data"]["preparation"] == {
+        "construction_name": "東京工事",
+        "construction_date": "2026-08-22",
+        "construction_executor": "実施者A",
+        "block": "B001",
+        "target_fs": "FS-CL-TYO-01",
+        "updated_by": "member",
+        "updated_at": "2026-08-22T09:00:00+09:00",
+    }
+
+
+def test_case_doc_preparation_requires_all_saved_values_before_execution() -> None:
+    complete_preparation = {
+        "construction_name": "東京工事",
+        "construction_date": "2026-08-22",
+        "construction_executor": "実施者A",
+        "block": "B001",
+        "target_fs": "FS-CL-TYO-01",
+        "updated_at": "2026-08-22T09:00:00+09:00",
+    }
+
+    assert _is_preparation_complete(complete_preparation) is True
+    assert _is_preparation_complete({**complete_preparation, "target_fs": ""}) is False
+    assert _is_preparation_complete({**complete_preparation, "updated_at": None}) is False
+    assert _is_preparation_complete(None) is False
 
 
 def test_case_doc_evidence_workbook_writes_checked_time_and_skip_fill() -> None:

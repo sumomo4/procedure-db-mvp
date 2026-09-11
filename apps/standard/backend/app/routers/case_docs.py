@@ -21,11 +21,13 @@ from app.core.responses import (
     CaseDocInstanceCreateRequest,
     CaseDocInstanceDetailData,
     CaseDocInstanceListData,
+    CaseDocPreparationUpdateRequest,
     CaseDocMasterOptionsData,
     CaseDocPlaceholderMappingEnabledRequest,
     CaseDocPlaceholderMappingItemData,
     CaseDocPlaceholderMappingListData,
     CaseDocPlaceholderMappingUpsertRequest,
+    CaseDocPlaceholderSourceFileListData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -37,6 +39,7 @@ from app.db.case_docs import (
     create_case_doc_placeholder_mapping,
     list_case_doc_buildings,
     list_case_doc_placeholder_mappings,
+    list_case_doc_placeholder_source_files,
     list_case_doc_prefectures,
     list_case_doc_unit_configs,
     resolve_case_doc_context,
@@ -50,6 +53,7 @@ from app.db.case_doc_instances import (
     get_case_doc_instance_detail,
     list_case_doc_instances,
     read_case_doc_original_workbook,
+    update_case_doc_preparation,
     update_case_doc_execution_item,
 )
 from app.db.source_docs import get_source_doc_detail
@@ -87,6 +91,11 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
                 method="GET",
                 path="/api/v1/case-docs/placeholders",
                 purpose="Case document placeholder mappings used during generation.",
+            ),
+            RouterEndpointData(
+                method="GET",
+                path="/api/v1/case-docs/placeholders/sources",
+                purpose="Selectable source files and columns for placeholder mappings.",
             ),
             RouterEndpointData(
                 method="POST",
@@ -175,6 +184,19 @@ def read_case_doc_placeholder_mappings(
             detail=str(exception),
         ) from exception
     return success_response(data, "Case document placeholder mappings were retrieved.")
+
+
+@router.get("/placeholders/sources", response_model=ApiResponse[CaseDocPlaceholderSourceFileListData])
+def read_case_doc_placeholder_source_files(
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocPlaceholderSourceFileListData]:
+    """Return selectable export files and their column names."""
+
+    try:
+        data = list_case_doc_placeholder_source_files(settings)
+    except (OSError, ValueError) as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    return success_response(data, "Case document placeholder source files were retrieved.")
 
 
 @router.post("/placeholders/validate", response_model=ApiResponse[CaseDocPlaceholderMappingItemData])
@@ -370,6 +392,26 @@ def read_case_doc_instance_detail(
     if data is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="案件CSが見つかりませんでした。")
     return success_response(data, "案件CS実行詳細を取得しました。")
+
+
+@router.put(
+    "/instances/{case_document_id}/preparation",
+    response_model=ApiResponse[CaseDocInstanceDetailData],
+)
+def update_case_doc_preparation_resource(
+    case_document_id: int,
+    payload: CaseDocPreparationUpdateRequest,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceDetailData]:
+    """Save preparation values entered before case document execution."""
+
+    try:
+        data = update_case_doc_preparation(settings, case_document_id, payload)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    return success_response(data, "案件CSの工事情報を保存しました。")
 
 
 @router.patch(

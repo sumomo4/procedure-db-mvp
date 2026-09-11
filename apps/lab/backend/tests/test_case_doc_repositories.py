@@ -29,6 +29,8 @@ def _create_access_export_files(export_dir: Path) -> None:
                 "\u88c5\u7f6e\u8a2d\u7f6e\u30d3\u30eb",
                 "SBC_CL1_0\u7cfb",
                 "SBC_CL1_1\u7cfb",
+                "HSS_CL1_0\u7cfb",
+                "HSS_CL1_1\u7cfb",
                 "GUI_0\u7cfb",
             ],
             [
@@ -39,6 +41,8 @@ def _create_access_export_files(export_dir: Path) -> None:
                 "\u691c\u8a3c\u30d3\u30eb",
                 "sbc-exp-cl1-0",
                 "sbc-exp-cl1-1",
+                "hss-exp-cl1-0",
+                "hss-exp-cl1-1",
                 "gui-exp-0",
             ],
         ],
@@ -53,13 +57,22 @@ def _create_access_export_files(export_dir: Path) -> None:
                 "\u4fdd\u5b88\u30a2\u30e9\u30fc\u30e0\u7528LAN\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
                 "\u30ea\u30e2\u30fc\u30c8\u30b7\u30a7\u30eb\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
                 "NTP\u5411\u3051\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
-                "TTS-Host",
-                "TTS-IP",
-                "TTS-Port",
             ],
-            ["sbc-exp-cl1-0", "172.16.1.10", "172.16.2.10", "172.16.3.10", "172.16.4.10", "172.16.5.10", "tts-exp-01", "172.16.1.200", "23"],
-            ["sbc-exp-cl1-1", "172.16.1.11", "172.16.2.11", "172.16.3.11", "172.16.4.11", "172.16.5.11", "tts-exp-01", "172.16.1.200", "23"],
+            ["sbc-exp-cl1-0", "172.16.1.10", "172.16.2.10", "172.16.3.10", "172.16.4.10", "172.16.5.10"],
+            ["sbc-exp-cl1-1", "172.16.1.11", "172.16.2.11", "172.16.3.11", "172.16.4.11", "172.16.5.11"],
         ],
+    )
+    _write_workbook(
+        export_dir / "HSS.xlsx",
+        [
+            ["\u30db\u30b9\u30c8\u540d", "TTS-Host", "TTS-IP", "TTS-Port"],
+            ["hss-exp-cl1-0", "tts-exp-01", "172.16.1.200", "23"],
+            ["hss-exp-cl1-1", "tts-exp-01", "172.16.1.200", "23"],
+        ],
+    )
+    _write_workbook(
+        export_dir / "GUI.xlsx",
+        [["\u30db\u30b9\u30c8\u540d"], ["gui-exp-0"]],
     )
     _write_workbook(
         export_dir / "case_common_values.xlsx",
@@ -83,6 +96,8 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
                 "\u88c5\u7f6e\u8a2d\u7f6e\u30d3\u30eb",
                 "SBC_CL1_0 \u7cfb",
                 "SBC_CL1_1\u3000\u7cfb",
+                "HSS_CL1_0\u7cfb",
+                "HSS_CL1_1\u7cfb",
                 "GUI_0\u7cfb",
                 "SCCE.1",
                 "SCCE.2",
@@ -94,6 +109,8 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
                 "\u6885\u7530\u30d3\u30eb",
                 "sbc-real-cl1-0",
                 "sbc-real-cl1-1",
+                "hss-real-cl1-0",
+                "hss-real-cl1-1",
                 "gui-real-0",
                 "scce-real-1",
                 "scce-real-2",
@@ -104,6 +121,8 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
                 "\u6771\u4eac\u90fd",
                 "\u54c1\u5ddd\u30d3\u30eb",
                 "sbc-real2-cl1-0",
+                "",
+                "hss-real2-cl1-0",
                 "",
                 "gui-real2-0",
                 "",
@@ -121,14 +140,28 @@ def _create_real_named_access_export_files(export_dir: Path) -> None:
                 "\u4fdd\u5b88\u30a2\u30e9\u30fc\u30e0\u7528LAN\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
                 "\u30ea\u30e2\u30fc\u30c8\u30b7\u30a7\u30eb\u30b3\u30de\u30f3\u30c9\u7528\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
                 "NTP\u5411\u3051\u30d5\u30ed\u30fc\u30c6\u30a3\u30f3\u30b0IP\u30a2\u30c9\u30ec\u30b9",
-                "TTS-Host",
-                "TTS-IP",
-                "TTS-Port",
             ],
-            ["sbc-real-cl1-0", "10.1.1.10", "10.1.2.10", "10.1.3.10", "10.1.4.10", "10.1.5.10", "tts-real-01", "10.1.1.200", "23"],
-            ["sbc-real-cl1-1", "10.1.1.11", "10.1.2.11", "10.1.3.11", "10.1.4.11", "10.1.5.11", "tts-real-01", "10.1.1.200", "23"],
-            ["sbc-real2-cl1-0", "10.2.1.10", "10.2.2.10", "10.2.3.10", "10.2.4.10", "10.2.5.10", "tts-real-02", "10.2.1.200", "23"],
+            ["sbc-real-cl1-0", "10.1.1.10", "10.1.2.10", "10.1.3.10", "10.1.4.10", "10.1.5.10"],
+            ["sbc-real-cl1-1", "10.1.1.11", "10.1.2.11", "10.1.3.11", "10.1.4.11", "10.1.5.11"],
+            ["sbc-real2-cl1-0", "10.2.1.10", "10.2.2.10", "10.2.3.10", "10.2.4.10", "10.2.5.10"],
         ],
+    )
+    _write_workbook(
+        export_dir / "HSS.xlsx",
+        [
+            ["\u30db\u30b9\u30c8\u540d", "TTS-Host", "TTS-IP", "TTS-Port"],
+            ["hss-real-cl1-0", "tts-real-01", "10.1.1.200", "23"],
+            ["hss-real-cl1-1", "tts-real-01", "10.1.1.200", "23"],
+            ["hss-real2-cl1-0", "tts-real-02", "10.2.1.200", "23"],
+        ],
+    )
+    _write_workbook(
+        export_dir / "GUI.xlsx",
+        [["\u30db\u30b9\u30c8\u540d"], ["gui-real-0"], ["gui-real2-0"]],
+    )
+    _write_workbook(
+        export_dir / "SCCE.xlsx",
+        [["\u30db\u30b9\u30c8\u540d"], ["scce-real-1"], ["scce-real-2"]],
     )
 
 
@@ -180,6 +213,8 @@ def test_export_file_repository_resolves_target_sbc_values(tmp_path: Path) -> No
     assert target_placeholders["TTS_HOST"] == "tts-exp-01"
     assert target_placeholders["TTS_IP"] == "172.16.1.200"
     assert target_placeholders["TTS_PORT"] == "23"
+    tts_value = next(item for item in context.resolved_placeholders if item.placeholder == "TTS_HOST" and item.host_name == "sbc-exp-cl1-1")
+    assert tts_value.source_table == "HSS"
 
 
 def test_export_file_repository_accepts_real_file_names_and_header_variants(tmp_path: Path) -> None:

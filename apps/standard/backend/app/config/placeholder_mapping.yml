@@ -49,29 +49,32 @@ placeholders:
   enabled: true
   scope: device
   device_type: SBC
-  source_file: SBC.xlsx
+  source_device_type: HSS
+  source_file: HSS.xlsx
   key_column: ホスト名
   value_column: TTS-Host
   source_column: tts_host
-  description: TTSホスト。MVP仮定義。
+  description: 対象SBCと同じCL・系のHSSに紐づくTTSホスト。
 - name: TTS_IP
   enabled: true
   scope: device
   device_type: SBC
-  source_file: SBC.xlsx
+  source_device_type: HSS
+  source_file: HSS.xlsx
   key_column: ホスト名
   value_column: TTS-IP
   source_column: tts_ip
-  description: TTS IP。MVP仮定義。
+  description: 対象SBCと同じCL・系のHSSに紐づくTTS IP。
 - name: TTS_PORT
   enabled: true
   scope: device
   device_type: SBC
-  source_file: SBC.xlsx
+  source_device_type: HSS
+  source_file: HSS.xlsx
   key_column: ホスト名
   value_column: TTS-Port
   source_column: tts_port
-  description: TTS接続ポート。MVP仮定義。
+  description: 対象SBCと同じCL・系のHSSに紐づくTTS接続ポート。
 - name: LOGIN_USER
   enabled: true
   scope: common
@@ -82,7 +85,7 @@ placeholders:
   source_column: login_user
   description: ログインユーザー名
 - name: GUI_EMS_COMMAND_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: GUI
   source_file: GUI.xlsx
@@ -91,7 +94,7 @@ placeholders:
   source_column: gui_ems_command_ip
   description: GUI/EMSコマンド用IP。MVP仮候補。
 - name: GUI_EMS_ALARM_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: GUI
   source_file: GUI.xlsx
@@ -100,7 +103,7 @@ placeholders:
   source_column: gui_ems_alarm_ip
   description: GUI/EMSアラーム用IP。MVP仮候補。
 - name: GUI_APL_FLOATING_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: GUI
   source_file: GUI.xlsx
@@ -127,7 +130,7 @@ placeholders:
   source_column: gui_bcr02_loopback_ip
   description: GUI/BCR02ループバックIP。MVP仮候補。
 - name: HFS_MONITOR_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HFS
   source_file: HFS.xlsx
@@ -136,7 +139,7 @@ placeholders:
   source_column: hfs_monitor_ip
   description: HFS装置監視用IP。MVP仮候補。
 - name: HFS_COMMAND_INPUT_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HFS
   source_file: HFS.xlsx
@@ -145,7 +148,7 @@ placeholders:
   source_column: hfs_command_input_ip
   description: HFSコマンド投入用IP。MVP仮候補。
 - name: HFS_NTP_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HFS
   source_file: HFS.xlsx
@@ -154,7 +157,7 @@ placeholders:
   source_column: hfs_ntp_ip
   description: HFS NTP向けIP。MVP仮候補。
 - name: HFS_ALARM_SEND_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HFS
   source_file: HFS.xlsx
@@ -163,7 +166,7 @@ placeholders:
   source_column: hfs_alarm_send_ip
   description: HFSアラーム送信用IP。MVP仮候補。
 - name: HFS_ILO_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HFS
   source_file: HFS.xlsx
@@ -172,7 +175,7 @@ placeholders:
   source_column: hfs_ilo_ip
   description: HFS iLO用IP。MVP仮候補。
 - name: HSS_MONITOR_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HSS
   source_file: HSS.xlsx
@@ -181,7 +184,7 @@ placeholders:
   source_column: hss_monitor_ip
   description: HSS装置監視用IP。MVP仮候補。
 - name: HSS_COMMAND_INPUT_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HSS
   source_file: HSS.xlsx
@@ -190,7 +193,7 @@ placeholders:
   source_column: hss_command_input_ip
   description: HSSコマンド投入用IP。MVP仮候補。
 - name: HSS_NTP_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HSS
   source_file: HSS.xlsx
@@ -199,7 +202,7 @@ placeholders:
   source_column: hss_ntp_ip
   description: HSS NTP向けIP。MVP仮候補。
 - name: HSS_ALARM_SEND_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HSS
   source_file: HSS.xlsx
@@ -208,7 +211,7 @@ placeholders:
   source_column: hss_alarm_send_ip
   description: HSSアラーム送信用IP。MVP仮候補。
 - name: HSS_ILO_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: HSS
   source_file: HSS.xlsx
@@ -226,7 +229,7 @@ placeholders:
   source_column: hss_ilo_dgw
   description: HSS iLO用デフォルトゲートウェイ。MVP仮候補。
 - name: FS_MAINT_LAN_FLOATING_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: FS
   source_file: FS.xlsx
@@ -235,7 +238,7 @@ placeholders:
   source_column: fs_maint_lan_floating_ip
   description: FS保守LAN向けフローティングIP。MVP仮候補。
 - name: FS_REMOTE_SHELL_FLOATING_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: FS
   source_file: FS.xlsx
@@ -244,7 +247,7 @@ placeholders:
   source_column: fs_remote_shell_floating_ip
   description: FSリモートシェル接続向けIP。MVP仮候補。
 - name: FS_COMMAND_FLOATING_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: FS
   source_file: FS.xlsx
@@ -253,7 +256,7 @@ placeholders:
   source_column: fs_command_floating_ip
   description: FSコマンド用IP。MVP仮候補。
 - name: MSW_MAINT_MONITOR_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: MSW
   source_file: MSW.xlsx
@@ -262,7 +265,7 @@ placeholders:
   source_column: msw_maint_monitor_ip
   description: MSW保守・装置監視用IP。MVP仮候補。
 - name: RAID_MAINT_MONITOR_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: RAID
   source_file: RAID.xlsx
@@ -280,7 +283,7 @@ placeholders:
   source_column: raid_msw_port_no
   description: RAIDのMSW収容ポート番号。MVP仮候補。
 - name: SCCE_MAINT_MONITOR_IP
-  enabled: false
+  enabled: true
   scope: device
   device_type: SCCE
   source_file: SCCE.xlsx
@@ -468,3 +471,327 @@ placeholders:
   value_column: value
   source_column: work_contact_phone
   description: Contact phone number used in seed source rows.
+- name: GUI_ILO_IP
+  enabled: true
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: iLO用
+  source_column: ilo_ip
+  description: GUI iLO接続用IP。
+- name: GUI_TTS_HOST
+  enabled: true
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: TTS-Host
+  source_column: tts_host
+  description: GUIに紐づくTTSホスト。
+- name: GUI_TTS_IP
+  enabled: true
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: TTS-IP
+  source_column: tts_ip
+  description: GUIに紐づくTTS IP。
+- name: GUI_TTS_PORT
+  enabled: true
+  scope: device
+  device_type: GUI
+  source_file: GUI.xlsx
+  key_column: ホスト名
+  value_column: TTS-Port
+  source_column: tts_port
+  description: GUIに紐づくTTS接続ポート。
+- name: MSW_TTS_HOST
+  enabled: true
+  scope: device
+  device_type: MSW
+  source_file: MSW.xlsx
+  key_column: ホスト名
+  value_column: TTS-Host
+  source_column: tts_host
+  description: MSWに紐づくTTSホスト。
+- name: MSW_TTS_IP
+  enabled: true
+  scope: device
+  device_type: MSW
+  source_file: MSW.xlsx
+  key_column: ホスト名
+  value_column: TTS-IP
+  source_column: tts_ip
+  description: MSWに紐づくTTS IP。
+- name: MSW_TTS_PORT
+  enabled: true
+  scope: device
+  device_type: MSW
+  source_file: MSW.xlsx
+  key_column: ホスト名
+  value_column: TTS-Port
+  source_column: tts_port
+  description: MSWに紐づくTTS接続ポート。
+- name: FS_ETH0
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: eth0
+  source_column: eth0
+  description: FS eth0のIPアドレス。
+- name: FS_ETH1
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: eth1
+  source_column: eth1
+  description: FS eth1のIPアドレス。
+- name: FS_ETH2
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: eth2
+  source_column: eth2
+  description: FS eth2のIPアドレス。
+- name: FS_ETH3
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: eth3
+  source_column: eth3
+  description: FS eth3のIPアドレス。
+- name: FS_MONITOR_A_FLOATING_IP
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: 装置監視A用フローティングIPアドレス
+  source_column: monitor_a_floating_ip
+  description: FS装置監視A用フローティングIP。
+- name: FS_MONITOR_B_FLOATING_IP
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: 装置監視B用フローティングIPアドレス
+  source_column: monitor_b_floating_ip
+  description: FS装置監視B用フローティングIP。
+- name: FS_EXTERNAL_EMS_COMMAND_FLOATING_IP
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: 外部EMS一般コマンド用フローティングIPアドレス
+  source_column: external_ems_command_floating_ip
+  description: FS外部EMS一般コマンド用フローティングIP。
+- name: FS_EXTERNAL_EMS_ALARM_FLOATING_IP
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: 外部EMSアラーム用フローティングIPアドレス
+  source_column: external_ems_alarm_floating_ip
+  description: FS外部EMSアラーム用フローティングIP。
+- name: FS_MAINT_LAN_FLOATING_IP_SBY
+  enabled: true
+  scope: device
+  device_type: FS
+  source_file: FS.xlsx
+  key_column: ホスト名
+  value_column: 保守LANフローティングIPアドレス（SBY用）
+  source_column: maint_lan_floating_ip_sby
+  description: FS SBY用保守LANフローティングIP。
+- name: HFS_HOST_GUEST_IP
+  enabled: true
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: ホスト-ゲスト用 IPアドレス
+  source_column: host_guest_ip
+  description: HFSホスト・ゲスト間通信用IP。
+- name: HFS_TTS_HOST
+  enabled: true
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: TTS-Host
+  source_column: tts_host
+  description: HFSに紐づくTTSホスト。
+- name: HFS_TTS_IP
+  enabled: true
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: TTS-IP
+  source_column: tts_ip
+  description: HFSに紐づくTTS IP。
+- name: HFS_TTS_PORT
+  enabled: true
+  scope: device
+  device_type: HFS
+  source_file: HFS.xlsx
+  key_column: ホスト名
+  value_column: TTS-Port
+  source_column: tts_port
+  description: HFSに紐づくTTS接続ポート。
+- name: SBC_ETH0
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: eth0
+  source_column: eth0
+  description: SBC eth0のIPアドレス。
+- name: SBC_ETH1
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: eth1
+  source_column: eth1
+  description: SBC eth1のIPアドレス。
+- name: SBC_ETH2
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: eth2
+  source_column: eth2
+  description: SBC eth2のIPアドレス。
+- name: SBC_ETH3
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: eth3
+  source_column: eth3
+  description: SBC eth3のIPアドレス。
+- name: SBC_CALL_PROCESS_FLOATING_IPV6
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: 呼処理用フローティングIPアドレス（ｖ６）
+  source_column: call_process_floating_ipv6
+  description: SBC呼処理用フローティングIPv6アドレス。
+- name: SBC_ADDRESS_INFO_DEVICE_FLOATING_IP
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: 住所情報装置向けフローティングIPアドレス
+  source_column: address_info_device_floating_ip
+  description: SBC住所情報装置向けフローティングIP。
+- name: SBC_OPERATION_DATA_TRANSFER_FLOATING_IP
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: 運用データ転送用フローティングIPアドレス
+  source_column: operation_data_transfer_floating_ip
+  description: SBC運用データ転送用フローティングIP。
+- name: SBC_CA_ID
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: CA_ID
+  source_column: ca_id
+  description: SBCのCA ID。
+- name: SBC_CL_ID
+  enabled: true
+  scope: device
+  device_type: SBC
+  source_file: SBC.xlsx
+  key_column: ホスト名
+  value_column: CL_ID
+  source_column: cl_id
+  description: SBCのCL ID。
+- name: HSS_HOST_GUEST_IP
+  enabled: true
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: ホスト-ゲスト用 IPアドレス
+  source_column: host_guest_ip
+  description: HSSホスト・ゲスト間通信用IP。
+- name: HSS_TTS_HOST
+  enabled: true
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: TTS-Host
+  source_column: tts_host
+  description: HSS自身に紐づくTTSホスト。
+- name: HSS_TTS_IP
+  enabled: true
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: TTS-IP
+  source_column: tts_ip
+  description: HSS自身に紐づくTTS IP。
+- name: HSS_TTS_PORT
+  enabled: true
+  scope: device
+  device_type: HSS
+  source_file: HSS.xlsx
+  key_column: ホスト名
+  value_column: TTS-Port
+  source_column: tts_port
+  description: HSS自身に紐づくTTS接続ポート。
+- name: SCCE_TTS_HOST
+  enabled: true
+  scope: device
+  device_type: SCCE
+  source_file: SCCE.xlsx
+  key_column: ホスト名
+  value_column: TTS-Host
+  source_column: tts_host
+  description: SCCEに紐づくTTSホスト。
+- name: SCCE_TTS_IP
+  enabled: true
+  scope: device
+  device_type: SCCE
+  source_file: SCCE.xlsx
+  key_column: ホスト名
+  value_column: TTS-IP
+  source_column: tts_ip
+  description: SCCEに紐づくTTS IP。
+- name: SCCE_TTS_PORT
+  enabled: true
+  scope: device
+  device_type: SCCE
+  source_file: SCCE.xlsx
+  key_column: ホスト名
+  value_column: TTS-Port
+  source_column: tts_port
+  description: SCCEに紐づくTTS接続ポート。

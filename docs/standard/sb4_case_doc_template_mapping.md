@@ -138,6 +138,103 @@
 - 参照元は `source_table` と `source_column` で明示する。
 - 画面表示用には `source_table.source_column` 形式の `source` も返す。
 - 値の変更が必要な場合は、将来的に共通値マスタまたは運用設定画面から変更できるようにする。
+
+## プレースホルダと参照データのリレーション
+
+現在のリレーションは、DBの外部キーではなく、`placeholder_mapping.yml` の設定を介してテンプレート、案件の対象装置、AccessDB抽出Excelの行と列を関連付ける方式である。
+
+### 装置別プレースホルダ
+
+装置別プレースホルダでは、案件で選択したユニット構成から対象装置のホスト名を確定し、そのホスト名を `key_column` と照合して参照行を決める。
+
+```mermaid
+flowchart LR
+    A["案件CSテンプレート<br/>{{SBC_COMMAND_FLOATING_IP}}"]
+    B["プレースホルダ定義<br/>name: SBC_COMMAND_FLOATING_IP"]
+    C["参照ファイル<br/>SBC.xlsx"]
+    D["案件で選択した対象装置<br/>ホスト名: sbc-01"]
+    E["キー列<br/>ホスト名"]
+    F["一致したExcel行<br/>ホスト名 = sbc-01"]
+    G["値列<br/>コマンド用フローティングIPアドレス"]
+    H["解決値<br/>10.10.1.10"]
+    I["生成される案件CS"]
+
+    A -->|プレースホルダ名で対応| B
+    B --> C
+    D -->|検索値| E
+    C --> F
+    E -->|一致する行を検索| F
+    B -->|取得する列を指定| G
+    F --> G
+    G --> H
+    H -->|文字列を置換| I
+```
+
+設定例:
+
+```yaml
+name: SBC_COMMAND_FLOATING_IP
+scope: device
+device_type: SBC
+source_file: SBC.xlsx
+key_column: ホスト名
+value_column: コマンド用フローティングIPアドレス
+source_column: command_floating_ip
+```
+
+| 設定項目 | 役割 |
+| --- | --- |
+| `name` | テンプレート内の `{{SBC_COMMAND_FLOATING_IP}}` と対応するプレースホルダ名 |
+| `scope` | `device` は対象装置ごとに値を解決することを表す |
+| `device_type` | この設定を適用する対象装置種別 |
+| `source_file` | 値を取得するAccessDB抽出Excel |
+| `key_column` | 対象行を検索する列。装置別では主にホスト名を使用する |
+| `value_column` | 一致した行から案件CSへ取り出す値の列 |
+| `source_column` | API内部で解決値を識別・保持する内部名 |
+
+同じ `source_file` と `key_column` は複数のプレースホルダから共有できる。例えば同じホスト名の行から、IPアドレス、ユーザー名、ポート番号など異なる `value_column` をそれぞれ取得できる。
+
+### 共通プレースホルダ
+
+装置に依存しない値では、案件の対象ホスト名を使わず、定義された `key_value` と `key_column` を照合して参照行を決める。
+
+```mermaid
+flowchart LR
+    A["案件CSテンプレート<br/>{{LOGIN_PASSWORD}}"]
+    B["プレースホルダ定義<br/>key_value: LOGIN_PASSWORD"]
+    C["参照ファイル<br/>case_common_values.xlsx"]
+    D["キー列<br/>key"]
+    E["一致したExcel行<br/>key = LOGIN_PASSWORD"]
+    F["値列<br/>value"]
+    G["解決された共通値"]
+    H["生成される案件CS"]
+
+    A --> B
+    B -->|検索値| D
+    C --> E
+    D -->|一致する行を検索| E
+    E --> F
+    F --> G
+    G -->|文字列を置換| H
+```
+
+### 関係の整理
+
+| 関係 | 内容 |
+| --- | --- |
+| テンプレートと定義 | テンプレートの `{{NAME}}` と定義の `name` が1対1で対応する |
+| 参照ファイルと定義 | 1つの参照ファイルを複数のプレースホルダ定義から利用できる |
+| キー列と値列 | キー列で1行を特定し、その行の値列から値を取得する |
+| 対象装置と解決値 | 1つの対象装置から複数のプレースホルダ値を解決できる |
+| 内部名と値列 | 1つの定義内では `source_column` が取得した値の内部識別子になる |
+
+値解決の基本形は次のとおりである。
+
+```text
+装置別: 対象ホスト名 -> key_columnで行検索 -> value_columnから値取得
+共通値: key_value     -> key_columnで行検索 -> value_columnから値取得
+```
+
 ## ホスト名をキーにした値解決方針
 
 案件CSでは、M列の対象装置欄からコマンド欄までの範囲で、作業対象となる装置のホスト名を確定する。

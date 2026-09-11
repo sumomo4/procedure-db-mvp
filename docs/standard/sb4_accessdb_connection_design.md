@@ -51,7 +51,7 @@ AccessDB (`.mdb` / `.accdb`) は、基本的に Windows の Access Database Engi
 ```text
 storage/standard/access_exports/
   .gitignore
-  unit_config.xlsx
+  ユニット構成.xlsx
   SBC.xlsx
   GUI.xlsx
   FS.xlsx
@@ -62,6 +62,10 @@ storage/standard/access_exports/
   SCCE.xlsx
   case_common_values.xlsx または case_common_values.csv
 ```
+
+2026-08-22 時点のMVPは、実務抽出形式として上記9種類の装置・ユニットExcelを使用する。
+各ファイルは先頭の非空行をヘッダーとして読み取り、シート名には依存しない。
+`case_common_values.xlsx` はAccess抽出外のMVP共通値を補うファイルとして併用する。
 
 実データは環境依存・機密情報を含む可能性があるため、`storage/standard/access_exports/.gitignore` でGit管理対象外にする。
 
@@ -158,15 +162,28 @@ CASE_DOC_IMPORT_STRICT=true
 
 ### 6.3 装置マスタ値
 
-装置マスタは `host_name` をキーに引く。
+装置マスタは `ホスト名` をキーに引く。
 
 例:
 
 | 装置種別 | キー | 取得値 |
 | --- | --- | --- |
-| SBC | ホスト名 | コマンド用フローティングIP、TTS情報、CL_ID など |
+| SBC | ホスト名 | コマンド用フローティングIP、CL_ID など |
 | GUI | ホスト名 | EMSコマンド用IP、TTS情報、AGENT_NO など |
 | FS | ホスト名 | eth系アドレス、コマンド用IP など |
+
+実務形式の `SBC.xlsx` にはTTS列がないため、SBC向けの `TTS_HOST`、`TTS_IP`、`TTS_PORT` は、
+ユニット構成上で同じCL・系を持つHSSを参照する。
+
+```text
+対象スロット: SBC_CL1_0
+参照スロット: HSS_CL1_0
+参照ファイル: HSS.xlsx
+```
+
+プレースホルダ設定では、対象装置種別を `device_type: SBC`、参照装置種別を
+`source_device_type: HSS` とする。`source_device_type` を省略した場合は、対象装置と同じ
+装置種別のスロット・ファイルを参照する。
 
 ### 6.4 共通値
 

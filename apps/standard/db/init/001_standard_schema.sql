@@ -291,6 +291,7 @@ CREATE TABLE IF NOT EXISTS proc.case_documents (
     prefecture text NOT NULL,
     building text NOT NULL,
     context_json jsonb NOT NULL,
+    preparation_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     workbook_path text NOT NULL,
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed')),
     created_by text,
@@ -298,6 +299,9 @@ CREATE TABLE IF NOT EXISTS proc.case_documents (
     updated_at timestamptz NOT NULL DEFAULT now(),
     completed_at timestamptz
 );
+
+ALTER TABLE proc.case_documents
+    ADD COLUMN IF NOT EXISTS preparation_json jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS proc.case_document_targets (
     case_document_target_id bigserial PRIMARY KEY,
