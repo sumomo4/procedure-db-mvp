@@ -537,7 +537,7 @@ def test_cancel_module_registration_returns_success_response(
     ) -> ModuleCancellationData:
         assert settings.app_env == "test"
         assert module_id == 4
-        assert cancelled_by == "メンバーユーザー"
+        assert cancelled_by == "pytest authenticated user"
         assert reason == "誤ったExcelを登録したため"
         return ModuleCancellationData(
             module_id=4,
@@ -919,7 +919,7 @@ def test_patch_module_version_status_returns_success_response(
         assert module_id == 1
         assert version_no == 2
         assert to_status == "published"
-        assert changed_by == "承認者ユーザー"
+        assert changed_by == "pytest authenticated user"
         assert note == "OK"
         return build_module_status_detail("published")
 
@@ -1598,7 +1598,7 @@ def test_import_module_workbook_returns_success_response(
 
     def fake_build_module_create_request_from_workbook_bytes(**kwargs: object) -> object:
         assert kwargs["filename"] == "sample.xlsx"
-        assert kwargs["created_by"] == "codex"
+        assert kwargs["created_by"] == "pytest authenticated user"
         assert kwargs["workbook_bytes"] == b"sample-bytes"
         return {
             "module_key": None,

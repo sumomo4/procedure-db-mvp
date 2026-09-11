@@ -33,6 +33,7 @@ from app.db.source_docs import (
     update_source_doc,
 )
 from app.routers.health import get_app_settings
+from app.core.security import CurrentUser
 
 
 router = APIRouter(prefix="/source-docs", tags=["source-docs"])
@@ -196,6 +197,7 @@ def read_source_doc_detail(
 def cancel_source_doc_registration_resource(
     source_doc_id: int,
     payload: SourceDocCancellationRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[SourceDocCancellationData]:
     """Logically cancel an accidental, unused initial draft registration."""
@@ -204,7 +206,7 @@ def cancel_source_doc_registration_resource(
         data = cancel_source_doc_registration(
             settings,
             source_doc_id,
-            payload.cancelled_by,
+            current_user.display_name,
             payload.reason,
             payload.source_doc_key_confirmation,
         )
@@ -231,12 +233,14 @@ def cancel_source_doc_registration_resource(
 @router.post("", response_model=ApiResponse[SourceDocDetailData], status_code=status.HTTP_201_CREATED)
 def create_source_doc_resource(
     payload: SourceDocCreateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[SourceDocDetailData]:
     """Create a source document, its first version, and linked modules."""
 
     try:
-        data = create_source_doc(settings, payload)
+        authenticated_payload = payload.model_copy(update={"created_by": current_user.display_name})
+        data = create_source_doc(settings, authenticated_payload)
     except ValueError as exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -255,12 +259,14 @@ def create_source_doc_resource(
 def update_source_doc_resource(
     source_doc_id: int,
     payload: SourceDocUpdateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[SourceDocDetailData]:
     """Update a source document and create its next version."""
 
     try:
-        data = update_source_doc(settings, source_doc_id, payload)
+        authenticated_payload = payload.model_copy(update={"created_by": current_user.display_name})
+        data = update_source_doc(settings, source_doc_id, authenticated_payload)
     except ValueError as exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

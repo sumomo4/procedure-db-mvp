@@ -1,71 +1,7 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Fragment, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { DevicePager, PreviewFrame, PreviewOverlay } from "./previewUi";
-
-type AuthRole = "member" | "approver" | "admin";
-
-type AuthUser = {
-  username: string;
-  displayName: string;
-  role: AuthRole;
-};
-
-const AUTH_STORAGE_KEY = "mvpAuthUser";
-
-const demoUsers: Record<string, AuthUser & { password: string }> = {
-  member: {
-    username: "member",
-    password: "password",
-    displayName: "メンバーユーザー",
-    role: "member",
-  },
-  approver: {
-    username: "approver",
-    password: "password",
-    displayName: "承認者ユーザー",
-    role: "approver",
-  },
-  admin: {
-    username: "admin",
-    password: "admin",
-    displayName: "管理者ユーザー",
-    role: "admin",
-  },
-};
-
-function getStoredAuthUser(): AuthUser | null {
-  const rawUser = window.localStorage.getItem(AUTH_STORAGE_KEY);
-  if (rawUser === null) {
-    return null;
-  }
-
-  try {
-    const parsedUser = JSON.parse(rawUser) as Partial<AuthUser>;
-    if (
-      typeof parsedUser.username === "string" &&
-      typeof parsedUser.displayName === "string" &&
-      (parsedUser.role === "member" || parsedUser.role === "approver" || parsedUser.role === "admin")
-    ) {
-      return {
-        username: parsedUser.username,
-        displayName: parsedUser.displayName,
-        role: parsedUser.role,
-      };
-    }
-  } catch {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-  }
-
-  return null;
-}
-
-function saveAuthUser(user: AuthUser): void {
-  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-}
-
-function clearAuthUser(): void {
-  window.localStorage.removeItem(AUTH_STORAGE_KEY);
-}
+import { useAuth, type AuthRole } from "./auth";
 
 function getAuthRoleLabel(role: AuthRole): string {
   if (role === "admin") {
@@ -236,6 +172,41 @@ type ApiResponse<TData> = {
   result: ApiResult;
   data: TData | null;
   message: string;
+};
+
+type ManagedUserData = {
+  user_id: number;
+  username: string;
+  display_name: string;
+  role: AuthRole;
+  is_active: boolean;
+  password_change_required: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ManagedUserListData = {
+  items: ManagedUserData[];
+};
+
+type ManagedUserListState = {
+  status: "loading" | "available" | "unavailable";
+  items: ManagedUserData[];
+  message: string;
+};
+
+type ManagedUserMutationState = {
+  status: "idle" | "submitting" | "success" | "error";
+  message: string;
+};
+
+type ManagedUserCreateForm = {
+  username: string;
+  display_name: string;
+  password: string;
+  password_confirmation: string;
+  role: AuthRole;
 };
 
 type HealthCheckState = {
@@ -1021,6 +992,13 @@ function buildApiUrl(path: string): string {
   return path;
 }
 
+function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return window.fetch(input, {
+    ...init,
+    credentials: "include",
+  });
+}
+
 async function selectCaseDocSaveDestination(suggestedName: string): Promise<CaseDocSaveSelection | null> {
   const showSaveFilePicker = (window as WindowWithSaveFilePicker).showSaveFilePicker;
   if (typeof showSaveFilePicker !== "function") {
@@ -1117,9 +1095,25 @@ async function readApiResponse<TData>(response: Response): Promise<ApiResponse<T
 }
 
 function App() {
+  const { status } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <main className="login-screen">
+        <section className="login-panel" aria-live="polite">
+          <div className="login-copy">
+            <h1>手順書DB WebUI</h1>
+            <p>ログイン状態を確認しています。</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <Routes>
       <Route path="/" element={<LoginPage />} />
+      <Route path="/change-password" element={<PasswordChangePage />} />
       <Route element={<Shell />}>
         <Route path="/home" element={<HomePage />} />
         <Route path="/modules/search" element={<ModuleSearchPage />} />
@@ -1134,6 +1128,7 @@ function App() {
         <Route path="/case-docs/executions" element={<CaseDocExecutionPage />} />
         <Route path="/case-docs/executions/:caseDocumentId" element={<CaseDocExecutionPage />} />
         <Route path="/case-docs/placeholders" element={<CaseDocPlaceholdersPage />} />
+        <Route path="/admin/users" element={<UserManagementPage />} />
         <Route path="/approval" element={<ApprovalPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -1144,12 +1139,16 @@ function App() {
 function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser, logout } = useAuth();
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
 
   useEffect(() => {
     if (currentUser === null) {
       navigate("/", { replace: true });
+      return;
+    }
+    if (currentUser.passwordChangeRequired) {
+      navigate("/change-password", { replace: true });
     }
   }, [currentUser, navigate]);
 
@@ -1190,6 +1189,7 @@ function Shell() {
           </NavGroup>
           {currentUser.role === "admin" ? (
             <NavGroup label="管理">
+              <NavItem to="/admin/users" label="ユーザー管理" icon="♙" />
               <NavItem to="/case-docs/placeholders" label="プレースホルダ設定" icon="{}" />
             </NavGroup>
           ) : null}
@@ -1229,10 +1229,9 @@ function Shell() {
               <button
                 className="danger"
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   setIsLogoutDialogOpen(false);
-                  clearAuthUser();
-                  window.localStorage.removeItem("approvalActor");
+                  await logout().catch(() => undefined);
                   navigate("/", { replace: true });
                 }}
               >
@@ -1303,29 +1302,35 @@ function WorkflowNavigation({ pathname }: { pathname: string }) {
 
 function LoginPage() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("member");
-  const [password, setPassword] = useState("password");
+  const { user: currentUser, error: authError, login } = useAuth();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleLogin(event: FormEvent<HTMLFormElement>): void {
+  useEffect(() => {
+    if (currentUser !== null) {
+      navigate(currentUser.passwordChangeRequired ? "/change-password" : "/home", { replace: true });
+    }
+  }, [currentUser, navigate]);
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const normalizedUsername = username.trim();
-    const demoUser = demoUsers[normalizedUsername];
-
-    if (demoUser === undefined || demoUser.password !== password) {
-      setLoginError("ユーザー名またはパスワードが正しくありません。");
+    if (!normalizedUsername || !password) {
+      setLoginError("メールアドレスとパスワードを入力してください。");
       return;
     }
-
-    const authUser: AuthUser = {
-      username: demoUser.username,
-      displayName: demoUser.displayName,
-      role: demoUser.role,
-    };
-    saveAuthUser(authUser);
-    window.localStorage.setItem("approvalActor", authUser.displayName);
-    setLoginError("");
-    navigate("/home");
+    setIsSubmitting(true);
+    try {
+      const authenticatedUser = await login(normalizedUsername, password);
+      setLoginError("");
+      navigate(authenticatedUser.passwordChangeRequired ? "/change-password" : "/home", { replace: true });
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "ログインに失敗しました。");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -1335,18 +1340,17 @@ function LoginPage() {
           <p className="eyebrow">Sprint 1 / SB1-04</p>
           <h1 id="login-title">手順書DB WebUI</h1>
           <p>モジュール登録、検索、原本作成、原本承認状態確認までの主要操作をWebUIから辿れるM1向け画面です。</p>
-          <div className="demo-users">
-            <span>テストユーザー</span>
-            <strong>member / password</strong>
-            <small>参照・作成・編集用</small>
-            <strong>approver / password</strong>
-            <small>承認・差戻し・保管用</small>
-          </div>
+          <p>発行されたメールアドレスとパスワードでログインしてください。</p>
         </div>
         <form className="login-form" onSubmit={handleLogin}>
           <label>
-            ユーザ名
-            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+            メールアドレス
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              inputMode="email"
+            />
           </label>
           <label>
             パスワード
@@ -1357,10 +1361,121 @@ function LoginPage() {
               autoComplete="current-password"
             />
           </label>
-          {loginError ? <p className="login-error">{loginError}</p> : null}
-          <button className="primary" type="submit">
+          {loginError || authError ? <p className="login-error">{loginError || authError}</p> : null}
+          <button className="primary" type="submit" disabled={isSubmitting}>
             <span aria-hidden="true">→</span>
-            ログイン
+            {isSubmitting ? "確認中" : "ログイン"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function PasswordChangePage() {
+  const navigate = useNavigate();
+  const { user: currentUser, changePassword, logout } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirmation, setNewPasswordConfirmation] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (currentUser === null) {
+      navigate("/", { replace: true });
+      return;
+    }
+    if (!currentUser.passwordChangeRequired) {
+      navigate("/home", { replace: true });
+    }
+  }, [currentUser, navigate]);
+
+  if (currentUser === null || !currentUser.passwordChangeRequired) {
+    return null;
+  }
+
+  async function handlePasswordChange(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (newPassword !== newPasswordConfirmation) {
+      setError("確認用パスワードが一致しません。");
+      return;
+    }
+    if (newPassword === currentPassword) {
+      setError("仮パスワードとは異なる新しいパスワードを入力してください。");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError("");
+    try {
+      await changePassword(currentPassword, newPassword);
+      navigate("/home", { replace: true });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "パスワードを変更できませんでした。");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-screen password-change-screen">
+      <section className="login-panel password-change-panel" aria-labelledby="password-change-title">
+        <div className="login-copy">
+          <p className="eyebrow">初回ログイン</p>
+          <h1 id="password-change-title">パスワードを変更してください</h1>
+          <p>{currentUser.displayName}さんのアカウントは、仮パスワードからの変更が必要です。</p>
+          <p>変更が完了すると、通常の操作画面へ進みます。</p>
+        </div>
+        <form className="login-form" onSubmit={(event) => void handlePasswordChange(event)}>
+          <label>
+            現在の仮パスワード
+            <input
+              autoComplete="current-password"
+              required
+              type="password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+            />
+          </label>
+          <label>
+            新しいパスワード
+            <input
+              autoComplete="new-password"
+              minLength={8}
+              required
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+            />
+            <span className="field-hint">8文字以上で入力してください。</span>
+          </label>
+          <label>
+            新しいパスワード（確認）
+            <input
+              autoComplete="new-password"
+              minLength={8}
+              required
+              type="password"
+              value={newPasswordConfirmation}
+              onChange={(event) => setNewPasswordConfirmation(event.target.value)}
+            />
+          </label>
+          {error ? <p className="login-error" role="alert">{error}</p> : null}
+          <button className="primary" type="submit" disabled={isSubmitting}>
+            <span aria-hidden="true">→</span>
+            {isSubmitting ? "変更中" : "変更して続ける"}
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={isSubmitting}
+            onClick={async () => {
+              await logout().catch(() => undefined);
+              navigate("/", { replace: true });
+            }}
+          >
+            ログアウト
           </button>
         </form>
       </section>
@@ -1453,7 +1568,7 @@ type HomeOverviewState = {
 };
 
 function HomePage() {
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const [overview, setOverview] = useState<HomeOverviewState>({
     status: "loading",
     modulesPublished: 0,
@@ -1471,9 +1586,9 @@ function HomePage() {
     async function fetchOverview(): Promise<void> {
       try {
         const [modulesResponse, sourceDocsResponse, caseDocsResponse] = await Promise.all([
-          fetch(buildApiUrl("/api/v1/modules"), { signal: abortController.signal }),
-          fetch(buildApiUrl("/api/v1/source-docs"), { signal: abortController.signal }),
-          fetch(buildApiUrl("/api/v1/case-docs/instances"), { signal: abortController.signal }),
+          apiFetch(buildApiUrl("/api/v1/modules"), { signal: abortController.signal }),
+          apiFetch(buildApiUrl("/api/v1/source-docs"), { signal: abortController.signal }),
+          apiFetch(buildApiUrl("/api/v1/case-docs/instances"), { signal: abortController.signal }),
         ]);
         const [modulesBody, sourceDocsBody, caseDocsBody] = await Promise.all([
           readApiResponse<ModuleListData>(modulesResponse),
@@ -1567,7 +1682,7 @@ function ApiHealthPanel() {
 
     async function fetchHealth(): Promise<void> {
       try {
-        const response = await fetch(buildApiUrl("/api/v1/health"), {
+        const response = await apiFetch(buildApiUrl("/api/v1/health"), {
           signal: abortController.signal,
         });
 
@@ -1614,7 +1729,7 @@ function ApiHealthPanel() {
 
     async function fetchDatabaseHealth(): Promise<void> {
       try {
-        const response = await fetch(buildApiUrl("/api/v1/health/db"), {
+        const response = await apiFetch(buildApiUrl("/api/v1/health/db"), {
           signal: abortController.signal,
         });
 
@@ -1828,7 +1943,7 @@ function ModuleSearchPage() {
         if (updatedToFilter) endpoint.searchParams.set("updated_to", updatedToFilter);
         if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
 
-        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
+        const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
@@ -1977,7 +2092,7 @@ function ModuleSearchPage() {
     setFolderRenameState({ status: "submitting", message: "タグ名を変更しています。" });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/modules/folders"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ current_folder_path: currentFolder, new_folder_path: nextFolder }),
@@ -2017,7 +2132,7 @@ function ModuleSearchPage() {
     setFolderDeleteState({ status: "submitting", message: "タグを削除しています。" });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules/folders"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/modules/folders"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder_path: targetFolder }),
@@ -2065,7 +2180,7 @@ function ModuleSearchPage() {
   }
 
   async function moveSelectedModulesToFolder(targetFolder: string): Promise<ApiResponse<ModuleListData>> {
-    const response = await fetch(buildApiUrl("/api/v1/modules/folders/modules"), {
+    const response = await apiFetch(buildApiUrl("/api/v1/modules/folders/modules"), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ module_ids: selectedModuleIds, folder_path: targetFolder }),
@@ -2513,7 +2628,7 @@ function useModuleDetailState(moduleId: string | undefined, versionNo: string | 
         if (versionNo !== null && versionNo.trim().length > 0) {
           endpoint.searchParams.set("version_no", versionNo);
         }
-        const response = await fetch(endpoint.toString(), {
+        const response = await apiFetch(endpoint.toString(), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ModuleDetailData>;
@@ -2557,7 +2672,7 @@ function useModuleDetailState(moduleId: string | undefined, versionNo: string | 
 
 function ModuleDetailPage() {
   const navigate = useNavigate();
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const { moduleId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedVersionNo = searchParams.get("version_no");
@@ -2614,7 +2729,7 @@ function ModuleDetailPage() {
       });
 
       try {
-        const response = await fetch(buildApiUrl(`/api/v1/modules/${moduleId}/versions`), {
+        const response = await apiFetch(buildApiUrl(`/api/v1/modules/${moduleId}/versions`), {
           signal: abortController.signal,
         });
         const responseBody = await readApiResponse<ModuleVersionListData>(response);
@@ -2719,7 +2834,7 @@ function ModuleDetailPage() {
       const endpoint = new URL(buildApiUrl(`/api/v1/modules/${moduleId}/diff`), window.location.origin);
       endpoint.searchParams.set("from_version", String(diffFromVersionNo));
       endpoint.searchParams.set("to_version", String(diffToVersionNo));
-      const response = await fetch(endpoint.toString());
+      const response = await apiFetch(endpoint.toString());
       const responseBody = await readApiResponse<ModuleDiffData>(response);
 
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
@@ -2764,7 +2879,7 @@ function ModuleDetailPage() {
 
     setCancellationState({ status: "submitting", message: "登録を取り消しています。" });
     try {
-      const response = await fetch(buildApiUrl(`/api/v1/modules/${item.module_id}`), {
+      const response = await apiFetch(buildApiUrl(`/api/v1/modules/${item.module_id}`), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3986,7 +4101,7 @@ function ModuleRegisterPage() {
     });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/modules"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -4060,7 +4175,7 @@ function ModuleRegisterPage() {
     });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules/import-sheet"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/modules/import-sheet"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -4480,7 +4595,7 @@ function ModuleRegisterPageV2() {
   };
 
   const navigate = useNavigate();
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const isAdmin = currentUser?.role === "admin";
   const [searchParams] = useSearchParams();
   const versionSourceModuleId = searchParams.get("module_id");
@@ -4800,7 +4915,7 @@ function ModuleRegisterPageV2() {
     });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules/similarity-check"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/modules/similarity-check"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -4844,7 +4959,7 @@ function ModuleRegisterPageV2() {
 
     try {
       const query = new URLSearchParams({ version_no: String(candidate.version_no) });
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/api/v1/modules/${candidate.module_id}/diff-preview?${query.toString()}`),
         {
           method: "POST",
@@ -4904,7 +5019,7 @@ function ModuleRegisterPageV2() {
       if (createdByInput.trim()) {
         query.set("created_by", createdByInput.trim());
       }
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/api/v1/modules/${candidate.module_id}/diff-preview/download?${query.toString()}`),
         {
           method: "POST",
@@ -5092,7 +5207,7 @@ function ModuleRegisterPageV2() {
       const createPath = query.size > 0
         ? `/api/v1/modules?${query.toString()}`
         : "/api/v1/modules";
-      const response = await fetch(buildApiUrl(createPath), {
+      const response = await apiFetch(buildApiUrl(createPath), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -5188,7 +5303,7 @@ function ModuleRegisterPageV2() {
         query.set("created_by", createdByInput.trim());
       }
 
-      const response = await fetch(`${buildApiUrl("/api/v1/modules/import")}?${query.toString()}`, {
+      const response = await apiFetch(`${buildApiUrl("/api/v1/modules/import")}?${query.toString()}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/octet-stream",
@@ -5235,7 +5350,7 @@ function ModuleRegisterPageV2() {
     });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/modules/import-sheet"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/modules/import-sheet"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -5910,7 +6025,7 @@ function DocumentSearchPage() {
         if (moduleNameFilter) endpoint.searchParams.set("module_name", moduleNameFilter);
         if (sortFilter !== "key_asc") endpoint.searchParams.set("sort", sortFilter);
 
-        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
+        const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<SourceDocListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
@@ -6010,7 +6125,7 @@ function DocumentSearchPage() {
     body: object,
   ): Promise<ApiResponse<SourceDocListData> | null> {
     try {
-      const response = await fetch(buildApiUrl(endpoint), {
+      const response = await apiFetch(buildApiUrl(endpoint), {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -6410,7 +6525,7 @@ function LegacyDocumentEditPage() {
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
         endpoint.searchParams.set("status", "published");
-        const response = await fetch(endpoint.toString(), {
+        const response = await apiFetch(endpoint.toString(), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
@@ -6506,7 +6621,7 @@ function LegacyDocumentEditPage() {
     });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/source-docs"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/source-docs"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -6740,7 +6855,7 @@ function DocumentEditPage() {
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
         endpoint.searchParams.set("status", "published");
-        const response = await fetch(endpoint.toString(), {
+        const response = await apiFetch(endpoint.toString(), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ModuleListData>;
@@ -6797,7 +6912,7 @@ function DocumentEditPage() {
       });
 
       try {
-        const response = await fetch(buildApiUrl(`/api/v1/source-docs/${editSourceDocId}`), {
+        const response = await apiFetch(buildApiUrl(`/api/v1/source-docs/${editSourceDocId}`), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<SourceDocDetailData>;
@@ -6911,7 +7026,7 @@ function DocumentEditPage() {
     });
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(isEditMode && editSourceDocId !== null ? `/api/v1/source-docs/${editSourceDocId}` : "/api/v1/source-docs"),
         {
           method: isEditMode ? "PUT" : "POST",
@@ -7169,7 +7284,7 @@ function useSourceDocDetailState(id: string | undefined): SourceDocDetailState {
 
     async function fetchSourceDocDetail(): Promise<void> {
       try {
-        const response = await fetch(buildApiUrl(`/api/v1/source-docs/${id}`), {
+        const response = await apiFetch(buildApiUrl(`/api/v1/source-docs/${id}`), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<SourceDocDetailData>;
@@ -7213,7 +7328,7 @@ function useSourceDocDetailState(id: string | undefined): SourceDocDetailState {
 
 function DocumentDetailPage() {
   const navigate = useNavigate();
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const { id } = useParams();
   const sourceDocDetailState = useSourceDocDetailState(id);
   const item = sourceDocDetailState.item;
@@ -7273,7 +7388,7 @@ function DocumentDetailPage() {
 
     setCancellationState({ status: "submitting", message: "原本登録を取り消しています。" });
     try {
-      const response = await fetch(buildApiUrl(`/api/v1/source-docs/${item.source_doc_id}`), {
+      const response = await apiFetch(buildApiUrl(`/api/v1/source-docs/${item.source_doc_id}`), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -8003,7 +8118,7 @@ function CaseDocsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedSourceDocId = searchParams.get("source_doc_id") ?? "";
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const [sourceDocListState, setSourceDocListState] = useState<SourceDocListState>({
     status: "loading",
     items: [],
@@ -8051,8 +8166,8 @@ function CaseDocsPage() {
     async function fetchInitialOptions(): Promise<void> {
       try {
         const [sourceDocsResponse, prefecturesResponse] = await Promise.all([
-          fetch(buildApiUrl("/api/v1/source-docs?status=published"), { signal: abortController.signal }),
-          fetch(buildApiUrl("/api/v1/case-docs/master/prefectures"), { signal: abortController.signal }),
+          apiFetch(buildApiUrl("/api/v1/source-docs?status=published"), { signal: abortController.signal }),
+          apiFetch(buildApiUrl("/api/v1/case-docs/master/prefectures"), { signal: abortController.signal }),
         ]);
         const sourceDocsBody = (await sourceDocsResponse.json()) as ApiResponse<SourceDocListData>;
         const prefecturesBody = (await prefecturesResponse.json()) as ApiResponse<CaseDocMasterOptionsData>;
@@ -8106,7 +8221,7 @@ function CaseDocsPage() {
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/buildings"), window.location.origin);
         endpoint.searchParams.set("prefecture", selectedPrefecture);
-        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
+        const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<CaseDocMasterOptionsData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
@@ -8146,7 +8261,7 @@ function CaseDocsPage() {
         const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/unit-config"), window.location.origin);
         endpoint.searchParams.set("prefecture", selectedPrefecture);
         endpoint.searchParams.set("building", selectedBuilding);
-        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
+        const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<CaseDocUnitConfigListData>;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
@@ -8207,7 +8322,7 @@ function CaseDocsPage() {
     setResolveState({ status: "submitting", item: null, message: caseDocText.resolving });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/case-docs/resolve-context"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/case-docs/resolve-context"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -8269,7 +8384,7 @@ function CaseDocsPage() {
     setGenerateState({ status: "submitting", filename: null, message: caseDocText.generating });
 
     try {
-      const response = await fetch(buildApiUrl("/api/v1/case-docs/generate"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/case-docs/generate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -8322,7 +8437,7 @@ function CaseDocsPage() {
 
     setInstanceCreateState({ status: "submitting", filename: null, message: "案件CSを保存しています。" });
     try {
-      const response = await fetch(buildApiUrl("/api/v1/case-docs/instances"), {
+      const response = await apiFetch(buildApiUrl("/api/v1/case-docs/instances"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -8716,7 +8831,7 @@ function CaseDocExecutionTimeCell({
 function CaseDocExecutionPage() {
   const { caseDocumentId } = useParams<{ caseDocumentId: string }>();
   const navigate = useNavigate();
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const [instances, setInstances] = useState<CaseDocInstanceListItemData[]>([]);
   const [selectedId, setSelectedId] = useState(caseDocumentId ?? "");
   const [detail, setDetail] = useState<CaseDocInstanceDetailData | null>(null);
@@ -8742,7 +8857,7 @@ function CaseDocExecutionPage() {
     const abortController = new AbortController();
     async function loadInstances(): Promise<void> {
       try {
-        const response = await fetch(buildApiUrl("/api/v1/case-docs/instances"), { signal: abortController.signal });
+        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/instances"), { signal: abortController.signal });
         const responseBody = await readApiResponse<CaseDocInstanceListData>(response);
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setListMessage(responseBody.message || "案件CS実行一覧の取得に失敗しました。");
@@ -8784,7 +8899,7 @@ function CaseDocExecutionPage() {
     async function loadDetail(): Promise<void> {
       setDetailMessage("案件CS実行詳細を取得しています。");
       try {
-        const response = await fetch(buildApiUrl(`/api/v1/case-docs/instances/${selectedId}`), { signal: abortController.signal });
+        const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/instances/${selectedId}`), { signal: abortController.signal });
         const responseBody = await readApiResponse<CaseDocInstanceDetailData>(response);
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setDetail(null);
@@ -8835,7 +8950,7 @@ function CaseDocExecutionPage() {
         const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/unit-config"), window.location.origin);
         endpoint.searchParams.set("prefecture", prefecture);
         endpoint.searchParams.set("building", building);
-        const response = await fetch(endpoint.toString(), { signal: abortController.signal });
+        const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = await readApiResponse<CaseDocUnitConfigListData>(response);
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setPreparationUnitConfigs([]);
@@ -8914,7 +9029,7 @@ function CaseDocExecutionPage() {
     setIsSavingPreparation(true);
     setPreparationMessage("工事情報を保存しています。");
     try {
-      const response = await fetch(buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/preparation`), {
+      const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/preparation`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -8952,7 +9067,7 @@ function CaseDocExecutionPage() {
     }
     setMutatingItemId(item.execution_item_id);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/items/${item.execution_item_id}`),
         {
           method: "PATCH",
@@ -8992,7 +9107,7 @@ function CaseDocExecutionPage() {
     }
     setIsCompleting(true);
     try {
-      const response = await fetch(buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/complete`), {
+      const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/complete`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ completed_by: currentUser?.displayName ?? "WebUIユーザー" }),
@@ -9022,7 +9137,7 @@ function CaseDocExecutionPage() {
     }
     setIsExporting(true);
     try {
-      const response = await fetch(buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/export`));
+      const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/export`));
       if (!response.ok) {
         setDetailMessage(`証跡Excelの生成に失敗しました。HTTP ${response.status}`);
         return;
@@ -9533,8 +9648,523 @@ function CaseDocExecutionPage() {
   );
 }
 
+function formatManagedUserDateTime(value: string | null): string {
+  if (!value) {
+    return "未ログイン";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function UserManagementPage() {
+  const { user: currentUser } = useAuth();
+  const [listState, setListState] = useState<ManagedUserListState>({
+    status: "loading",
+    items: [],
+    message: "ユーザー一覧を取得しています。",
+  });
+  const [mutationState, setMutationState] = useState<ManagedUserMutationState>({
+    status: "idle",
+    message: "ユーザーの追加、ロール変更、有効・無効の切替を行えます。",
+  });
+  const [reloadTick, setReloadTick] = useState(0);
+  const [roleDrafts, setRoleDrafts] = useState<Record<number, AuthRole>>({});
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [activeChangeTarget, setActiveChangeTarget] = useState<ManagedUserData | null>(null);
+  const [passwordResetTarget, setPasswordResetTarget] = useState<ManagedUserData | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [temporaryPasswordConfirmation, setTemporaryPasswordConfirmation] = useState("");
+  const [createForm, setCreateForm] = useState<ManagedUserCreateForm>({
+    username: "",
+    display_name: "",
+    password: "",
+    password_confirmation: "",
+    role: "member",
+  });
+
+  useEffect(() => {
+    if (currentUser?.role !== "admin") {
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    async function fetchUsers(): Promise<void> {
+      setListState((current) => ({
+        ...current,
+        status: "loading",
+        message: "ユーザー一覧を取得しています。",
+      }));
+      try {
+        const response = await apiFetch(buildApiUrl("/api/v1/auth/users"), {
+          signal: abortController.signal,
+        });
+        const body = (await response.json()) as ApiResponse<ManagedUserListData>;
+        if (!response.ok || body.result !== "success" || body.data === null) {
+          setListState({
+            status: "unavailable",
+            items: [],
+            message: body.message || `ユーザー一覧を取得できませんでした。HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setListState({ status: "available", items: body.data.items, message: body.message });
+        setRoleDrafts(
+          Object.fromEntries(body.data.items.map((item) => [item.user_id, item.role])) as Record<number, AuthRole>,
+        );
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setListState({ status: "unavailable", items: [], message: "ユーザー管理APIへ接続できませんでした。" });
+      }
+    }
+
+    void fetchUsers();
+    return () => abortController.abort();
+  }, [currentUser?.role, reloadTick]);
+
+  if (currentUser?.role !== "admin") {
+    return (
+      <Page title="ユーザー管理" description="アプリケーションを利用するユーザーとロールを管理します。">
+        <section className="empty-state">
+          <h2>表示権限がありません</h2>
+          <p>ユーザー管理は管理者ユーザーでログインした場合のみ表示できます。</p>
+        </section>
+      </Page>
+    );
+  }
+
+  const activeCount = listState.items.filter((item) => item.is_active).length;
+  const adminCount = listState.items.filter((item) => item.is_active && item.role === "admin").length;
+
+  function openCreateDialog(): void {
+    setCreateForm({
+      username: "",
+      display_name: "",
+      password: "",
+      password_confirmation: "",
+      role: "member",
+    });
+    setMutationState({ status: "idle", message: "新しいユーザーの情報を入力してください。" });
+    setIsCreateDialogOpen(true);
+  }
+
+  function openPasswordResetDialog(item: ManagedUserData): void {
+    setPasswordResetTarget(item);
+    setTemporaryPassword("");
+    setTemporaryPasswordConfirmation("");
+    setMutationState({ status: "idle", message: `${item.display_name} の仮パスワードを設定します。` });
+  }
+
+  async function handleCreateUser(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (createForm.password !== createForm.password_confirmation) {
+      setMutationState({ status: "error", message: "確認用パスワードが一致しません。" });
+      return;
+    }
+
+    setMutationState({ status: "submitting", message: "ユーザーを追加しています。" });
+    try {
+      const response = await apiFetch(buildApiUrl("/api/v1/auth/users"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: createForm.username,
+          display_name: createForm.display_name,
+          password: createForm.password,
+          role: createForm.role,
+        }),
+      });
+      const body = (await response.json()) as ApiResponse<ManagedUserData>;
+      if (!response.ok || body.result !== "success" || body.data === null) {
+        setMutationState({ status: "error", message: body.message || `ユーザーを追加できませんでした。HTTP ${response.status}` });
+        return;
+      }
+
+      setIsCreateDialogOpen(false);
+      setMutationState({ status: "success", message: body.message || "ユーザーを追加しました。" });
+      setReloadTick((current) => current + 1);
+    } catch {
+      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+    }
+  }
+
+  async function handleRoleUpdate(item: ManagedUserData): Promise<void> {
+    const nextRole = roleDrafts[item.user_id] ?? item.role;
+    if (nextRole === item.role) {
+      return;
+    }
+
+    setMutationState({ status: "submitting", message: `${item.display_name} のロールを変更しています。` });
+    try {
+      const response = await apiFetch(buildApiUrl(`/api/v1/auth/users/${item.user_id}/role`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: nextRole }),
+      });
+      const body = (await response.json()) as ApiResponse<ManagedUserData>;
+      if (!response.ok || body.result !== "success" || body.data === null) {
+        setRoleDrafts((current) => ({ ...current, [item.user_id]: item.role }));
+        setMutationState({ status: "error", message: body.message || `ロールを変更できませんでした。HTTP ${response.status}` });
+        return;
+      }
+
+      setMutationState({ status: "success", message: body.message || "ロールを変更しました。" });
+      setReloadTick((current) => current + 1);
+    } catch {
+      setRoleDrafts((current) => ({ ...current, [item.user_id]: item.role }));
+      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+    }
+  }
+
+  async function handleActiveStateUpdate(item: ManagedUserData): Promise<void> {
+    setMutationState({
+      status: "submitting",
+      message: `${item.display_name} を${item.is_active ? "無効化" : "有効化"}しています。`,
+    });
+    try {
+      const response = await apiFetch(buildApiUrl(`/api/v1/auth/users/${item.user_id}/active`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: !item.is_active }),
+      });
+      const body = (await response.json()) as ApiResponse<ManagedUserData>;
+      if (!response.ok || body.result !== "success" || body.data === null) {
+        setMutationState({ status: "error", message: body.message || `ユーザー状態を変更できませんでした。HTTP ${response.status}` });
+        return;
+      }
+
+      setMutationState({ status: "success", message: body.message });
+      setReloadTick((current) => current + 1);
+    } catch {
+      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+    } finally {
+      setActiveChangeTarget(null);
+    }
+  }
+
+  async function handlePasswordReset(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (passwordResetTarget === null) {
+      return;
+    }
+    if (temporaryPassword !== temporaryPasswordConfirmation) {
+      setMutationState({ status: "error", message: "確認用パスワードが一致しません。" });
+      return;
+    }
+
+    setMutationState({ status: "submitting", message: "仮パスワードを設定しています。" });
+    try {
+      const response = await apiFetch(
+        buildApiUrl(`/api/v1/auth/users/${passwordResetTarget.user_id}/password`),
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ temporary_password: temporaryPassword }),
+        },
+      );
+      const body = (await response.json()) as ApiResponse<ManagedUserData>;
+      if (!response.ok || body.result !== "success" || body.data === null) {
+        setMutationState({
+          status: "error",
+          message: body.message || `仮パスワードを設定できませんでした。HTTP ${response.status}`,
+        });
+        return;
+      }
+
+      setPasswordResetTarget(null);
+      setTemporaryPassword("");
+      setTemporaryPasswordConfirmation("");
+      setMutationState({ status: "success", message: body.message });
+      setReloadTick((current) => current + 1);
+    } catch {
+      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+    }
+  }
+
+  return (
+    <Page title="ユーザー管理" description="ログインユーザーの追加、ロール変更、有効・無効の切替を行います。">
+      <Toolbar>
+        <button className="primary" type="button" onClick={openCreateDialog}>
+          <span aria-hidden="true">+</span>
+          ユーザー追加
+        </button>
+      </Toolbar>
+
+      <section
+        className={`list-status list-status-${mutationState.status === "error" ? "unavailable" : listState.status}`}
+        aria-live="polite"
+      >
+        <div><span>登録ユーザー</span><strong>{listState.items.length}人</strong></div>
+        <div><span>有効</span><strong>{activeCount}人</strong></div>
+        <div><span>有効な管理者</span><strong>{adminCount}人</strong></div>
+        <p>{mutationState.status === "idle" ? listState.message : mutationState.message}</p>
+      </section>
+
+      <section className="section-band user-management-section">
+        <div className="user-management-heading">
+          <div>
+            <h2>ユーザー一覧</h2>
+            <p>ロールや有効状態を変更すると、対象ユーザーは再ログインが必要になります。</p>
+          </div>
+          <span>{listState.items.length}人</span>
+        </div>
+        {listState.items.length > 0 ? (
+          <DataTable
+            columns={["メールアドレス", "表示名", "状態", "ロール", "パスワード", "最終ログイン", "操作"]}
+            rowClassNames={listState.items.map((item) => item.is_active ? undefined : "user-management-row-inactive")}
+            rows={listState.items.map((item) => {
+              const isSelf = item.user_id === currentUser.userId;
+              const draftRole = roleDrafts[item.user_id] ?? item.role;
+              return [
+                <span className="user-management-username">
+                  <strong>{item.username}</strong>
+                  {isSelf ? <small>ログイン中</small> : null}
+                </span>,
+                item.display_name,
+                <span className={`user-account-status ${item.is_active ? "active" : "inactive"}`}>
+                  {item.is_active ? "有効" : "無効"}
+                </span>,
+                <div className="user-role-editor">
+                  <select
+                    aria-label={`${item.display_name}のロール`}
+                    value={draftRole}
+                    disabled={isSelf || mutationState.status === "submitting"}
+                    onChange={(event) => setRoleDrafts((current) => ({
+                      ...current,
+                      [item.user_id]: event.target.value as AuthRole,
+                    }))}
+                  >
+                    <option value="member">メンバー</option>
+                    <option value="approver">承認者</option>
+                    <option value="admin">管理者</option>
+                  </select>
+                  <button
+                    className="secondary"
+                    type="button"
+                    disabled={isSelf || draftRole === item.role || mutationState.status === "submitting"}
+                    onClick={() => void handleRoleUpdate(item)}
+                  >
+                    変更
+                  </button>
+                </div>,
+                <span className={`user-password-status ${item.password_change_required ? "pending" : "ready"}`}>
+                  {item.password_change_required ? "変更待ち" : "設定済み"}
+                </span>,
+                formatManagedUserDateTime(item.last_login_at),
+                <div className="user-management-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    disabled={isSelf || mutationState.status === "submitting"}
+                    title={isSelf ? "自分自身のパスワードは初回変更画面から変更してください。" : undefined}
+                    onClick={() => openPasswordResetDialog(item)}
+                  >
+                    再設定
+                  </button>
+                  <button
+                    className={item.is_active ? "danger" : "secondary"}
+                    type="button"
+                    disabled={isSelf || mutationState.status === "submitting"}
+                    title={isSelf ? "ログイン中の自分自身は無効化できません。" : undefined}
+                    onClick={() => setActiveChangeTarget(item)}
+                  >
+                    {item.is_active ? "無効化" : "再有効化"}
+                  </button>
+                </div>,
+              ];
+            })}
+          />
+        ) : (
+          <div className="empty-state">
+            <h2>{listState.status === "loading" ? "取得中" : "ユーザーを表示できません"}</h2>
+            <p>{listState.message}</p>
+          </div>
+        )}
+      </section>
+
+      {isCreateDialogOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsCreateDialogOpen(false)}>
+          <section
+            aria-labelledby="user-create-dialog-title"
+            aria-modal="true"
+            className="modal-dialog user-create-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="user-create-dialog-title">ユーザー追加</h2>
+            <form className="user-create-form" onSubmit={(event) => void handleCreateUser(event)}>
+              <label>
+                メールアドレス
+                <input
+                  autoComplete="email"
+                  maxLength={254}
+                  required
+                  type="email"
+                  value={createForm.username}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, username: event.target.value }))}
+                />
+                <span className="field-hint">ログイン時に使用します。大文字・小文字は区別しません。</span>
+              </label>
+              <label>
+                表示名
+                <input
+                  maxLength={200}
+                  required
+                  value={createForm.display_name}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, display_name: event.target.value }))}
+                />
+              </label>
+              <label>
+                ロール
+                <select
+                  value={createForm.role}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, role: event.target.value as AuthRole }))}
+                >
+                  <option value="member">メンバー</option>
+                  <option value="approver">承認者</option>
+                  <option value="admin">管理者</option>
+                </select>
+              </label>
+              <label>
+                パスワード
+                <input
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                  type="password"
+                  value={createForm.password}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
+                />
+                <span className="field-hint">8文字以上で入力してください。</span>
+                <span className="field-hint">登録後、本人が初回ログイン時に変更します。</span>
+              </label>
+              <label>
+                パスワード（確認）
+                <input
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                  type="password"
+                  value={createForm.password_confirmation}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, password_confirmation: event.target.value }))}
+                />
+              </label>
+              {mutationState.status === "error" ? <p className="form-error">{mutationState.message}</p> : null}
+              <div className="modal-actions">
+                <button className="secondary" type="button" onClick={() => setIsCreateDialogOpen(false)}>
+                  キャンセル
+                </button>
+                <button className="primary" type="submit" disabled={mutationState.status === "submitting"}>
+                  追加
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {passwordResetTarget ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setPasswordResetTarget(null)}>
+          <section
+            aria-labelledby="user-password-reset-dialog-title"
+            aria-modal="true"
+            className="modal-dialog user-create-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="user-password-reset-dialog-title">仮パスワード再設定</h2>
+            <p>{passwordResetTarget.display_name}（{passwordResetTarget.username}）</p>
+            <form className="user-create-form" onSubmit={(event) => void handlePasswordReset(event)}>
+              <label>
+                仮パスワード
+                <input
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                  type="password"
+                  value={temporaryPassword}
+                  onChange={(event) => setTemporaryPassword(event.target.value)}
+                />
+                <span className="field-hint">設定後、対象ユーザーは初回ログイン時に変更します。</span>
+              </label>
+              <label>
+                仮パスワード（確認）
+                <input
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                  type="password"
+                  value={temporaryPasswordConfirmation}
+                  onChange={(event) => setTemporaryPasswordConfirmation(event.target.value)}
+                />
+              </label>
+              {mutationState.status === "error" ? <p className="form-error">{mutationState.message}</p> : null}
+              <div className="modal-actions">
+                <button className="secondary" type="button" onClick={() => setPasswordResetTarget(null)}>
+                  キャンセル
+                </button>
+                <button className="primary" type="submit" disabled={mutationState.status === "submitting"}>
+                  再設定
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {activeChangeTarget ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setActiveChangeTarget(null)}>
+          <section
+            aria-labelledby="user-active-dialog-title"
+            aria-modal="true"
+            className="modal-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="user-active-dialog-title">
+              ユーザーを{activeChangeTarget.is_active ? "無効化" : "再有効化"}しますか？
+            </h2>
+            <p>
+              {activeChangeTarget.display_name}（{activeChangeTarget.username}）
+              {activeChangeTarget.is_active
+                ? "は直ちにログインできなくなり、既存セッションも失効します。"
+                : "は再びログインできるようになります。"}
+            </p>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => setActiveChangeTarget(null)}>
+                キャンセル
+              </button>
+              <button
+                className={activeChangeTarget.is_active ? "danger" : "primary"}
+                type="button"
+                disabled={mutationState.status === "submitting"}
+                onClick={() => void handleActiveStateUpdate(activeChangeTarget)}
+              >
+                {activeChangeTarget.is_active ? "無効化" : "再有効化"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </Page>
+  );
+}
+
 function CaseDocPlaceholdersPage() {
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const [placeholderState, setPlaceholderState] = useState<CaseDocPlaceholderMappingListState>({
     status: "loading",
     items: [],
@@ -9568,7 +10198,7 @@ function CaseDocPlaceholdersPage() {
       setPlaceholderState({ status: "loading", items: [], message: caseDocPlaceholderText.loading });
 
       try {
-        const response = await fetch(buildApiUrl("/api/v1/case-docs/placeholders"), {
+        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/placeholders"), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderMappingListData>;
@@ -9612,7 +10242,7 @@ function CaseDocPlaceholdersPage() {
     async function fetchSourceFiles(): Promise<void> {
       setSourceFileState({ status: "loading", items: [], message: caseDocPlaceholderText.sourceOptionsLoading });
       try {
-        const response = await fetch(buildApiUrl("/api/v1/case-docs/placeholders/sources"), {
+        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/placeholders/sources"), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderSourceFileListData>;
@@ -9737,7 +10367,7 @@ function CaseDocPlaceholdersPage() {
     const method = editorMode === "create" ? "POST" : "PUT";
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await apiFetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -9764,7 +10394,7 @@ function CaseDocPlaceholdersPage() {
     setMutationState({ status: "submitting", message: caseDocPlaceholderText.updatingStatus });
 
     try {
-      const response = await fetch(buildApiUrl(`/api/v1/case-docs/placeholders/${encodeURIComponent(item.name)}/enabled`), {
+      const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/placeholders/${encodeURIComponent(item.name)}/enabled`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: !item.enabled }),
@@ -10026,7 +10656,7 @@ function ModuleApprovalStatusPage() {
     status: "idle",
     message: "実行できる操作を選ぶと状態変更APIを呼び出します。",
   });
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const approvalActor = currentUser?.displayName ?? "";
   const currentRoleLabel = currentUser ? getAuthRoleLabel(currentUser.role) : "未ログイン";
   const currentRoleDescription = currentUser ? getAuthRoleDescription(currentUser.role) : "ログインしてください。";
@@ -10046,7 +10676,7 @@ function ModuleApprovalStatusPage() {
       });
 
       try {
-        const response = await fetch(buildApiUrl("/api/v1/modules"), {
+        const response = await apiFetch(buildApiUrl("/api/v1/modules"), {
           signal: abortController.signal,
         });
         const responseBody = await readApiResponse<ModuleListData>(response);
@@ -10123,7 +10753,7 @@ function ModuleApprovalStatusPage() {
       });
 
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           buildApiUrl(`/api/v1/modules/${targetModule.module_id}/versions/${targetModule.version_no}/status`),
           { signal: abortController.signal },
         );
@@ -10235,7 +10865,7 @@ function ModuleApprovalStatusPage() {
     });
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/api/v1/modules/${selectedSummary.module_id}/versions/${selectedSummary.version_no}/status`),
         {
           method: "PATCH",
@@ -10555,7 +11185,7 @@ function ApprovalPage() {
     status: "idle",
     message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
   });
-  const currentUser = getStoredAuthUser();
+  const { user: currentUser } = useAuth();
   const approvalActor = currentUser?.displayName ?? "";
   const currentRoleLabel = currentUser ? getAuthRoleLabel(currentUser.role) : "未ログイン";
   const currentRoleDescription = currentUser ? getAuthRoleDescription(currentUser.role) : "ログインしてください。";
@@ -10575,7 +11205,7 @@ function ApprovalPage() {
       });
 
       try {
-        const response = await fetch(buildApiUrl("/api/v1/statuses"), {
+        const response = await apiFetch(buildApiUrl("/api/v1/statuses"), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ApprovalStatusListData>;
@@ -10646,7 +11276,7 @@ function ApprovalPage() {
       });
 
       try {
-        const response = await fetch(buildApiUrl(`/api/v1/statuses/${selectedTargetId}`), {
+        const response = await apiFetch(buildApiUrl(`/api/v1/statuses/${selectedTargetId}`), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<ApprovalStatusDetailData>;
@@ -10764,7 +11394,7 @@ function ApprovalPage() {
     });
 
     try {
-      const response = await fetch(buildApiUrl(`/api/v1/statuses/${selectedItem.target_id}`), {
+      const response = await apiFetch(buildApiUrl(`/api/v1/statuses/${selectedItem.target_id}`), {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -11426,6 +12056,7 @@ function routeTitle(path: string) {
     "/case-docs": "新規案件化",
     "/case-docs/executions": "案件CS実行 / 完了",
     "/case-docs/placeholders": "プレースホルダ設定",
+    "/admin/users": "ユーザー管理",
     "/approval": "原本承認管理",
   };
   if (path.startsWith("/modules/") && path !== "/modules/search" && path !== "/modules/list" && path !== "/modules/approval") {

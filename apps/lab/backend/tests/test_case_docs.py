@@ -1013,7 +1013,7 @@ def test_update_case_doc_preparation_route_saves_first_five_fields(
             "construction_executor": "実施者A",
             "block": "B001",
             "target_fs": "FS-CL-TYO-01",
-            "updated_by": "member",
+            "updated_by": "forged member",
         },
     )
 
@@ -1025,7 +1025,7 @@ def test_update_case_doc_preparation_route_saves_first_five_fields(
         "construction_executor": "実施者A",
         "block": "B001",
         "target_fs": "FS-CL-TYO-01",
-        "updated_by": "member",
+        "updated_by": "pytest authenticated user",
         "updated_at": "2026-08-22T09:00:00+09:00",
     }
 

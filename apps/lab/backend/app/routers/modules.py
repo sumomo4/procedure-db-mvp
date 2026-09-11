@@ -54,6 +54,7 @@ from app.db.modules import (
     update_module_version_status,
 )
 from app.routers.health import get_app_settings
+from app.core.security import CurrentUser, require_approval_transition
 from app.services.module_similarity import (
     check_similar_modules,
     validate_similarity_confirmation_token,
@@ -299,10 +300,10 @@ def read_module_diff_preview(
 def download_module_diff_preview(
     module_id: int,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
+    current_user: CurrentUser,
     version_no: Annotated[int, Query(ge=1)],
     payload: bytes = Body(),
     filename: Annotated[str, Query(min_length=1)] = "",
-    created_by: Annotated[str | None, Query()] = None,
     sheet_name: Annotated[str | None, Query()] = None,
 ) -> StreamingResponse:
     """Download a two-sheet diff based on the imported workbook layout."""
@@ -311,7 +312,7 @@ def download_module_diff_preview(
         imported = build_module_create_request_from_workbook_bytes(
             workbook_bytes=payload,
             filename=filename,
-            created_by=created_by,
+            created_by=current_user.display_name,
             sheet_name=sheet_name,
             image_storage_dir=settings.module_image_storage_dir,
         )
@@ -404,17 +405,19 @@ def patch_module_version_status(
     module_id: int,
     version_no: int,
     payload: ApprovalStatusUpdateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ApprovalStatusDetailData]:
     """Update approval status for one module version."""
 
+    require_approval_transition(current_user, payload.status)
     try:
         data = update_module_version_status(
             settings,
             module_id,
             version_no,
             payload.status,
-            payload.changed_by,
+            current_user.display_name,
             payload.note,
         )
     except ValueError as exception:
@@ -477,6 +480,7 @@ def read_module_detail(
 def cancel_module_registration_resource(
     module_id: int,
     payload: ModuleCancellationRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ModuleCancellationData]:
     """Logically cancel an accidental, unused initial draft registration."""
@@ -485,7 +489,7 @@ def cancel_module_registration_resource(
         data = cancel_module_registration(
             settings,
             module_id,
-            payload.cancelled_by,
+            current_user.display_name,
             payload.reason,
         )
     except ValueError as exception:
@@ -568,13 +572,15 @@ def check_module_similarity_resource(
 @router.post("", response_model=ApiResponse[ModuleDetailData], status_code=status.HTTP_201_CREATED)
 def create_module_resource(
     payload: ModuleCreateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
     similarity_confirmation_token: Annotated[str | None, Query(max_length=4096)] = None,
 ) -> ApiResponse[ModuleDetailData] | JSONResponse:
     """Create a module, its first version, and module rows."""
 
     try:
-        similarity_result = check_similar_modules(settings, payload)
+        authenticated_payload = payload.model_copy(update={"created_by": current_user.display_name})
+        similarity_result = check_similar_modules(settings, authenticated_payload)
         if not validate_similarity_confirmation_token(
             settings,
             similarity_result,
@@ -592,7 +598,7 @@ def create_module_resource(
                 status_code=status.HTTP_409_CONFLICT,
                 content=response.model_dump(mode="json"),
             )
-        data = create_module(settings, payload)
+        data = create_module(settings, authenticated_payload)
     except ValueError as exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -610,6 +616,7 @@ def create_module_resource(
 @router.post("/import-sheet", response_model=ApiResponse[ModuleCreateRequest])
 def normalize_module_sheet_resource(
     payload: ExcelImportSheetRequest,
+    current_user: CurrentUser,
 ) -> ApiResponse[ModuleCreateRequest]:
     """Normalize one Excel sheet worth of input into ``ModuleCreateRequest``.
 
@@ -626,7 +633,7 @@ def normalize_module_sheet_resource(
             change_note=payload.change_note,
             source_xlsx_path=payload.source_xlsx_path,
             source_sha256=payload.source_sha256,
-            created_by=payload.created_by,
+            created_by=current_user.display_name,
             device_header_cells=[header.model_dump() for header in payload.device_header_cells],
             row_cells=[row.model_dump() for row in payload.row_cells],
         )
@@ -642,9 +649,9 @@ def normalize_module_sheet_resource(
 @router.post("/import", response_model=ApiResponse[ModuleCreateRequest])
 def import_module_workbook_resource(
     settings: Annotated[AppSettings, Depends(get_app_settings)],
+    current_user: CurrentUser,
     payload: bytes = Body(),
     filename: Annotated[str, Query(min_length=1)] = "",
-    created_by: Annotated[str | None, Query()] = None,
     sheet_name: Annotated[str | None, Query()] = None,
 ) -> ApiResponse[ModuleCreateRequest]:
     """Normalize one uploaded workbook into ``ModuleCreateRequest``.
@@ -657,7 +664,7 @@ def import_module_workbook_resource(
         data = build_module_create_request_from_workbook_bytes(
             workbook_bytes=payload,
             filename=filename,
-            created_by=created_by,
+            created_by=current_user.display_name,
             sheet_name=sheet_name,
             image_storage_dir=settings.module_image_storage_dir,
         )

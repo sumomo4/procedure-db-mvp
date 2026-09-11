@@ -7,3 +7,6 @@ def test_schema_does_not_insert_runtime_sample_data() -> None:
 
     assert "INSERT INTO proc.modules (module_key, name, description)" not in schema_sql
     assert "INSERT INTO proc.blueprints (blueprint_key, name, description)" not in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS proc.app_users" in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS proc.auth_sessions" in schema_sql
+    assert "member / password" not in schema_sql

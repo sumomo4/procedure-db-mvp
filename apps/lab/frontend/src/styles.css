@@ -2723,6 +2723,161 @@ th {
   grid-column: 1 / -1;
 }
 
+.user-management-section {
+  display: grid;
+  gap: 18px;
+}
+
+.user-management-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.user-management-heading h2,
+.user-management-heading p {
+  margin: 0;
+}
+
+.user-management-heading p {
+  margin-top: 5px;
+}
+
+.user-management-heading > span {
+  flex: 0 0 auto;
+  color: #1f6f78;
+  font-weight: 900;
+}
+
+.user-management-section .table-wrap table {
+  min-width: 1180px;
+}
+
+.user-management-row-inactive td {
+  background: #f3f1ed;
+  color: #6c7479;
+}
+
+.user-management-username {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.user-management-username small {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e7f0f1;
+  color: #1f6f78;
+  font-weight: 800;
+}
+
+.user-account-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.user-account-status.active {
+  background: #e4f2ea;
+  color: #1f6840;
+}
+
+.user-account-status.inactive {
+  background: #ece8e2;
+  color: #56636c;
+}
+
+.user-password-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.user-password-status.ready {
+  background: #e7f0f1;
+  color: #1f6f78;
+}
+
+.user-password-status.pending {
+  background: #fff0cf;
+  color: #815600;
+}
+
+.user-role-editor {
+  display: grid;
+  grid-template-columns: minmax(126px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.user-role-editor select,
+.user-role-editor button {
+  margin: 0;
+}
+
+.user-management-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+}
+
+.user-management-actions button {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.user-create-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.user-create-form {
+  display: grid;
+  gap: 14px;
+}
+
+.user-create-form label {
+  display: grid;
+  gap: 6px;
+  color: #24343b;
+  font-weight: 800;
+}
+
+.user-create-form .field-hint {
+  font-weight: 500;
+}
+
+.user-create-form .form-error {
+  margin: 0;
+}
+
+.password-change-panel {
+  width: min(900px, 100%);
+}
+
+@media (max-width: 720px) {
+  .user-management-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .user-role-editor {
+    grid-template-columns: 1fr;
+    min-width: 150px;
+  }
+}
+
 .register-form {
   display: grid;
   gap: 18px;
@@ -4577,6 +4732,44 @@ th {
   .login-copy h1,
   .page-header h1 {
     font-size: 30px;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    overflow-x: hidden;
+  }
+
+  .login-panel {
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .login-copy,
+  .login-form {
+    min-width: 0;
+  }
+
+  .login-copy p {
+    overflow-wrap: anywhere;
+  }
+
+  .login-form {
+    width: 100%;
+    max-width: 100%;
+    padding: 24px 18px;
+  }
+
+  .login-form input,
+  .login-form button {
+    min-width: 0;
+    max-width: 100%;
   }
 }
 

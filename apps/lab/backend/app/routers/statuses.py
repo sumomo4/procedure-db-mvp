@@ -17,6 +17,7 @@ from app.core.responses import (
 )
 from app.db.statuses import get_status_detail, list_statuses, update_status
 from app.routers.health import get_app_settings
+from app.core.security import CurrentUser, require_approval_transition
 
 
 router = APIRouter(prefix="/statuses", tags=["statuses"])
@@ -84,16 +85,18 @@ def read_status_detail(
 def patch_status_detail(
     target_id: int,
     payload: ApprovalStatusUpdateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ApprovalStatusDetailData]:
     """Update one approval target status."""
 
+    require_approval_transition(current_user, payload.status)
     try:
         data = update_status(
             settings,
             target_id,
             payload.status,
-            payload.changed_by,
+            current_user.display_name,
             payload.note,
         )
     except ValueError as exception:
