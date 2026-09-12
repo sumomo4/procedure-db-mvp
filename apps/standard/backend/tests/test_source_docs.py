@@ -805,7 +805,7 @@ def test_cancel_source_doc_registration_returns_success_response(
     ) -> SourceDocCancellationData | None:
         assert settings.app_env == "test"
         assert source_doc_id == 1
-        assert cancelled_by == "Admin User"
+        assert cancelled_by == "pytest authenticated user"
         assert reason == "Wrong module composition"
         assert source_doc_key_confirmation == "BP-STD-001"
         return SourceDocCancellationData(

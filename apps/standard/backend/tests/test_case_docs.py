@@ -242,6 +242,52 @@ def _write_placeholder_mapping(path: Path) -> None:
     )
 
 
+def _write_placeholder_preview_exports(export_dir: Path, mapping_path: Path) -> None:
+    unit_config_workbook = Workbook()
+    unit_config_sheet = unit_config_workbook.active
+    unit_config_sheet.append(
+        [
+            "FSクラスタ名",
+            "ブロック",
+            "装置設置府県",
+            "装置設置ビル",
+            "SBC_CL1_0系",
+        ]
+    )
+    unit_config_sheet.append(["FS-CL-A", "B001", "東京都", "Aビル", "sbc-a-0"])
+    unit_config_sheet.append(["FS-CL-B", "B002", "大阪府", "Bビル", "sbc-b-0"])
+    unit_config_workbook.save(export_dir / "ユニット構成.xlsx")
+
+    sbc_workbook = Workbook()
+    sbc_sheet = sbc_workbook.active
+    sbc_sheet.title = "SBC"
+    sbc_sheet.append(["ホスト名", "コマンド用IP"])
+    sbc_sheet.append(["sbc-a-0", "192.0.2.10"])
+    sbc_sheet.append(["sbc-b-0", "192.0.2.20"])
+    sbc_workbook.save(export_dir / "SBC.xlsx")
+
+    mapping_path.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "placeholders:",
+                "- name: SBC_COMMAND_IP",
+                "  enabled: true",
+                "  scope: device",
+                "  device_type: SBC",
+                "  source_device_type: SBC",
+                "  source_file: SBC.xlsx",
+                "  key_column: ホスト名",
+                "  value_column: コマンド用IP",
+                "  source_column: command_ip",
+                "  description: test command IP",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _placeholder_payload(name: str = "TEST_DEVICE_IP") -> dict[str, object]:
     return {
         "name": name,
@@ -378,6 +424,148 @@ def test_read_case_doc_placeholder_sources_reads_export_workbook_columns(
     ]
 
 
+def test_read_case_doc_placeholder_source_preview_filters_device_rows(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Device source rows should follow unit configuration filter selections."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_preview_exports(tmp_path, mapping_path)
+    test_settings.case_doc_master_source = "export_file"
+    test_settings.case_doc_access_export_dir = str(tmp_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+
+    response = client.get(
+        "/api/v1/case-docs/placeholders/source-preview",
+        params={"source_file": "SBC.xlsx", "fs_cluster_name": "FS-CL-A"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()["data"]
+    assert data["source_file"] == "SBC.xlsx"
+    assert data["sheet_name"] == "SBC"
+    assert data["columns"] == ["ホスト名", "コマンド用IP"]
+    assert data["rows"] == [{"row_number": 2, "values": ["sbc-a-0", "192.0.2.10"]}]
+    assert data["total_count"] == 1
+    assert data["filterable"] is True
+    assert data["applied_filters"] == {
+        "fs_cluster_name": "FS-CL-A",
+        "block": None,
+        "prefecture": None,
+    }
+    assert data["filter_options"] == {
+        "fs_cluster_names": ["FS-CL-A", "FS-CL-B"],
+        "blocks": ["B001"],
+        "prefectures": ["東京都"],
+    }
+    assert [mapping["name"] for mapping in data["mappings"]] == ["SBC_COMMAND_IP"]
+
+
+def test_read_case_doc_placeholder_source_preview_pages_unfiltered_rows(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """Preview pagination should not load every source row into one response."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_preview_exports(tmp_path, mapping_path)
+    test_settings.case_doc_master_source = "export_file"
+    test_settings.case_doc_access_export_dir = str(tmp_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+
+    response = client.get(
+        "/api/v1/case-docs/placeholders/source-preview",
+        params={"source_file": "SBC.xlsx", "page": 2, "page_size": 1},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()["data"]
+    assert data["total_count"] == 2
+    assert data["total_pages"] == 2
+    assert data["rows"] == [{"row_number": 3, "values": ["sbc-b-0", "192.0.2.20"]}]
+
+
+def test_read_case_doc_placeholder_source_preview_filters_unit_config_rows(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """The unit configuration source should be filtered by its own columns."""
+
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_preview_exports(tmp_path, mapping_path)
+    test_settings.case_doc_master_source = "export_file"
+    test_settings.case_doc_access_export_dir = str(tmp_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+
+    response = client.get(
+        "/api/v1/case-docs/placeholders/source-preview",
+        params={
+            "source_file": "ユニット構成.xlsx",
+            "block": "B002",
+            "prefecture": "大阪府",
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()["data"]
+    assert data["total_count"] == 1
+    assert data["rows"] == [
+        {
+            "row_number": 3,
+            "values": ["FS-CL-B", "B002", "大阪府", "Bビル", "sbc-b-0"],
+        }
+    ]
+
+
+def test_read_case_doc_placeholder_source_preview_rejects_filters_for_common_values(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """A source with no unit configuration relation should reject device filters."""
+
+    common_workbook = Workbook()
+    common_workbook.active.append(["key", "value"])
+    common_workbook.active.append(["LOGIN_USER", "operator"])
+    common_workbook.save(tmp_path / "case_common_values.xlsx")
+    mapping_path = tmp_path / "placeholder_mapping.yml"
+    _write_placeholder_mapping(mapping_path)
+    test_settings.case_doc_master_source = "export_file"
+    test_settings.case_doc_access_export_dir = str(tmp_path)
+    test_settings.case_doc_placeholder_mapping_path = str(mapping_path)
+
+    response = client.get(
+        "/api/v1/case-docs/placeholders/source-preview",
+        params={"source_file": "case_common_values.xlsx", "block": "B001"},
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "does not support unit configuration filters" in response.json()["message"]
+
+
+def test_read_case_doc_placeholder_source_preview_rejects_parent_path(
+    client: TestClient,
+    test_settings: AppSettings,
+    tmp_path: Path,
+) -> None:
+    """The preview API must only read files directly under the configured export directory."""
+
+    test_settings.case_doc_master_source = "export_file"
+    test_settings.case_doc_access_export_dir = str(tmp_path)
+
+    response = client.get(
+        "/api/v1/case-docs/placeholders/source-preview",
+        params={"source_file": "../SBC.xlsx"},
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["message"] == "placeholder source file name is invalid."
+
+
 def test_validate_case_doc_placeholder_mapping_does_not_write(
     client: TestClient,
     test_settings: AppSettings,
@@ -437,6 +625,9 @@ def test_create_case_doc_placeholder_mapping_rejects_duplicate_name(
     response = client.post("/api/v1/case-docs/placeholders", json=_placeholder_payload("LOGIN_USER"))
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["message"] == (
+        "プレースホルダ名「LOGIN_USER」はすでに登録されています。別の名前を入力してください。"
+    )
 
 
 def test_update_case_doc_placeholder_mapping_writes_yaml(
@@ -1013,7 +1204,7 @@ def test_update_case_doc_preparation_route_saves_first_five_fields(
             "construction_executor": "実施者A",
             "block": "B001",
             "target_fs": "FS-CL-TYO-01",
-            "updated_by": "member",
+            "updated_by": "forged member",
         },
     )
 
@@ -1025,7 +1216,7 @@ def test_update_case_doc_preparation_route_saves_first_five_fields(
         "construction_executor": "実施者A",
         "block": "B001",
         "target_fs": "FS-CL-TYO-01",
-        "updated_by": "member",
+        "updated_by": "pytest authenticated user",
         "updated_at": "2026-08-22T09:00:00+09:00",
     }
 

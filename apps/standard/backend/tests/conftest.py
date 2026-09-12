@@ -6,6 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import AppSettings
+from app.core.auth import AuthUserData
+from app.core.security import get_current_user
 from app.main import create_app
 from app.routers.health import get_app_settings
 
@@ -42,6 +44,12 @@ def client(test_settings: AppSettings) -> Generator[TestClient]:
 
     application = create_app()
     application.dependency_overrides[get_app_settings] = lambda: test_settings
+    application.dependency_overrides[get_current_user] = lambda: AuthUserData(
+        user_id=1,
+        username="pytest-admin",
+        display_name="pytest authenticated user",
+        role="admin",
+    )
 
     with TestClient(application) as test_client:
         yield test_client

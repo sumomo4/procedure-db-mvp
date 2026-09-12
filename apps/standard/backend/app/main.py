@@ -1,13 +1,14 @@
 """FastAPI entry point for the standard API."""
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.responses import error_response
-from app.routers import case_docs, health, modules, source_docs, statuses
+from app.core.security import require_password_change_completed
+from app.routers import auth, case_docs, health, modules, source_docs, statuses
 
 
 def create_app() -> FastAPI:
@@ -27,14 +28,32 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=list(settings.cors_allow_origins),
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
     application.include_router(health.router, prefix=settings.api_prefix)
-    application.include_router(modules.router, prefix=settings.api_prefix)
-    application.include_router(source_docs.router, prefix=settings.api_prefix)
-    application.include_router(statuses.router, prefix=settings.api_prefix)
-    application.include_router(case_docs.router, prefix=settings.api_prefix)
+    application.include_router(auth.router, prefix=settings.api_prefix)
+    protected_dependencies = [Depends(require_password_change_completed)]
+    application.include_router(
+        modules.router,
+        prefix=settings.api_prefix,
+        dependencies=protected_dependencies,
+    )
+    application.include_router(
+        source_docs.router,
+        prefix=settings.api_prefix,
+        dependencies=protected_dependencies,
+    )
+    application.include_router(
+        statuses.router,
+        prefix=settings.api_prefix,
+        dependencies=protected_dependencies,
+    )
+    application.include_router(
+        case_docs.router,
+        prefix=settings.api_prefix,
+        dependencies=protected_dependencies,
+    )
 
     @application.exception_handler(HTTPException)
     async def http_exception_handler(

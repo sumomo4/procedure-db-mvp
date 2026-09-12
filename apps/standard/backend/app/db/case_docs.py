@@ -8,6 +8,7 @@ from app.core.responses import (
     CaseDocPlaceholderMappingListData,
     CaseDocPlaceholderMappingUpsertRequest,
     CaseDocPlaceholderSourceFileListData,
+    CaseDocPlaceholderSourcePreviewData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -76,6 +77,27 @@ def list_case_doc_placeholder_source_files(settings: AppSettings) -> CaseDocPlac
     """Return source files and columns available to placeholder mappings."""
 
     return get_case_doc_master_repository(settings).list_placeholder_source_files()
+
+
+def get_case_doc_placeholder_source_preview(
+    settings: AppSettings,
+    source_file: str,
+    fs_cluster_name: str | None,
+    block: str | None,
+    prefecture: str | None,
+    page: int,
+    page_size: int,
+) -> CaseDocPlaceholderSourcePreviewData:
+    """Return a filtered and paginated placeholder source table."""
+
+    return get_case_doc_master_repository(settings).get_placeholder_source_preview(
+        source_file,
+        fs_cluster_name,
+        block,
+        prefecture,
+        page,
+        page_size,
+    )
 
 
 def validate_case_doc_placeholder_mapping(

@@ -279,7 +279,7 @@ def test_patch_status_detail_returns_success_response(
         assert settings.app_env == "test"
         assert target_id == 1
         assert to_status == "published"
-        assert changed_by == "webui"
+        assert changed_by == "pytest authenticated user"
         assert note == "画面操作"
         return _build_detail("published")
 

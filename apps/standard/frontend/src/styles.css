@@ -653,6 +653,21 @@ textarea:disabled {
   font-weight: 800;
 }
 
+.auth-page-link {
+  min-height: 42px;
+  border-top: 1px solid #d8dee0;
+  padding-top: 16px;
+  color: #1f6f78;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.auth-page-link:hover {
+  color: #15545b;
+}
+
 label {
   display: grid;
   gap: 8px;
@@ -2205,6 +2220,254 @@ textarea {
   justify-content: flex-end;
 }
 
+.placeholder-source-preview-section {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.placeholder-source-preview-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.placeholder-source-preview-heading h2,
+.placeholder-source-preview-heading p {
+  margin: 0;
+}
+
+.placeholder-source-preview-heading > div {
+  display: grid;
+  gap: 6px;
+}
+
+.placeholder-source-preview-heading span,
+.placeholder-source-preview-heading p {
+  color: #64727a;
+  font-size: 13px;
+}
+
+.placeholder-source-preview-heading p {
+  max-width: 520px;
+  text-align: right;
+}
+
+.placeholder-source-preview-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(160px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.placeholder-source-preview-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  color: #4d5c66;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.placeholder-source-preview-filters button {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.placeholder-source-preview-message {
+  min-height: 88px;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  border: 1px dashed #9dc3c8;
+  color: #56636c;
+  text-align: center;
+}
+
+.placeholder-source-preview-error {
+  border-color: #d7a79f;
+  color: #9f3f2f;
+  background: #fff8f6;
+}
+
+.placeholder-source-table-wrap {
+  width: 100%;
+  max-height: 560px;
+  overflow: auto;
+  border: 1px solid #b9c8ce;
+  background: #ffffff;
+}
+
+.placeholder-source-table-wrap table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.placeholder-source-table-wrap thead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.placeholder-source-table-wrap th,
+.placeholder-source-table-wrap td {
+  min-width: 160px;
+  max-width: 320px;
+  padding: 9px 10px;
+  border-right: 1px solid #c8d4d8;
+  border-bottom: 1px solid #c8d4d8;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.placeholder-source-table-wrap tr > :first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 68px;
+  width: 68px;
+  max-width: 68px;
+  text-align: center;
+}
+
+.placeholder-source-table-wrap thead tr > :first-child {
+  z-index: 5;
+}
+
+.placeholder-source-table-wrap thead th {
+  background: #dbeaf0;
+  color: #213943;
+  font-weight: 800;
+  text-align: left;
+}
+
+.placeholder-source-table-wrap tbody th {
+  background: #eef3f4;
+  color: #53636b;
+}
+
+.placeholder-source-table-wrap tbody td {
+  background: #ffffff;
+  color: #253840;
+  white-space: pre-wrap;
+}
+
+.placeholder-source-mapping-row th {
+  background: #f1edf7;
+  color: #514262;
+}
+
+.placeholder-source-mapping-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.placeholder-source-mapping-chip {
+  width: auto;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid #8970a6;
+  border-radius: 4px;
+  background: #f4effa;
+  color: #4d3864;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.placeholder-source-mapping-chip:hover {
+  border-color: #5f4779;
+  background: #e8ddf3;
+}
+
+.placeholder-source-add-mapping {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #648d96;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #1f6f79;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.placeholder-source-add-mapping:hover {
+  border-color: #1f6f79;
+  background: #e8f3f4;
+}
+
+.placeholder-source-add-mapping:focus-visible {
+  outline: 2px solid #1f6f79;
+  outline-offset: 2px;
+}
+
+.placeholder-source-mapping-empty {
+  color: #8a9499;
+}
+
+.placeholder-source-table-wrap tbody td.placeholder-source-mapped-cell {
+  background: #faf7fd;
+}
+
+.placeholder-source-mapped-cell > span {
+  display: block;
+  margin-top: 6px;
+}
+
+.placeholder-source-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: #4d5c66;
+}
+
+.placeholder-source-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.placeholder-source-pagination button {
+  min-width: 92px;
+}
+
+.placeholder-source-pagination strong {
+  min-width: 72px;
+  text-align: center;
+}
+
+.placeholder-editor-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid #1f7882;
+  background: #eef6f6;
+  color: #405159;
+  font-size: 13px;
+}
+
+.placeholder-editor-source span {
+  color: #63727a;
+}
+
+.placeholder-editor-source strong {
+  overflow-wrap: anywhere;
+}
+
 
 .placeholder-filter-panel {
   display: grid;
@@ -2285,7 +2548,7 @@ textarea {
 .placeholder-editor-error {
   grid-column: 1 / -1;
   margin: 0;
-  color: #9f3f2f;
+  color: #c62828;
   font-weight: 700;
 }
 
@@ -2351,6 +2614,11 @@ textarea {
 
 .list-status-unavailable {
   border-left: 5px solid #b84d3a;
+}
+
+.list-status-unavailable p {
+  color: #c62828;
+  font-weight: 700;
 }
 
 .empty-state {
@@ -2539,6 +2807,192 @@ th {
 
 .form-grid .wide {
   grid-column: 1 / -1;
+}
+
+.user-management-section {
+  display: grid;
+  gap: 18px;
+}
+
+.user-management-status {
+  grid-template-columns: repeat(4, minmax(120px, auto)) minmax(220px, 1fr);
+}
+
+.user-management-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.user-management-heading h2,
+.user-management-heading p {
+  margin: 0;
+}
+
+.user-management-heading p {
+  margin-top: 5px;
+}
+
+.user-management-heading > span {
+  flex: 0 0 auto;
+  color: #1f6f78;
+  font-weight: 900;
+}
+
+.user-management-section .table-wrap table {
+  min-width: 1180px;
+}
+
+.user-management-row-inactive td {
+  background: #f3f1ed;
+  color: #6c7479;
+}
+
+.user-management-row-deleted td {
+  background: #f5efee;
+  color: #6d5550;
+}
+
+.user-list-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid #d6cdbc;
+}
+
+.user-list-tabs button {
+  min-height: 42px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  padding: 0 14px;
+  color: #56636c;
+  background: transparent;
+}
+
+.user-list-tabs button.active {
+  border-bottom-color: #1f7a83;
+  color: #14555d;
+  background: #edf7f8;
+}
+
+.user-management-username {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.user-management-username small {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e7f0f1;
+  color: #1f6f78;
+  font-weight: 800;
+}
+
+.user-account-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.user-account-status.active {
+  background: #e4f2ea;
+  color: #1f6840;
+}
+
+.user-account-status.inactive {
+  background: #ece8e2;
+  color: #56636c;
+}
+
+.user-password-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.user-password-status.ready {
+  background: #e7f0f1;
+  color: #1f6f78;
+}
+
+.user-password-status.pending {
+  background: #fff0cf;
+  color: #815600;
+}
+
+.user-role-editor {
+  display: grid;
+  grid-template-columns: minmax(126px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.user-role-editor select,
+.user-role-editor button {
+  margin: 0;
+}
+
+.user-management-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 250px;
+}
+
+.user-management-actions button {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.user-create-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.user-create-form {
+  display: grid;
+  gap: 14px;
+}
+
+.user-create-form label {
+  display: grid;
+  gap: 6px;
+  color: #24343b;
+  font-weight: 800;
+}
+
+.user-create-form .field-hint {
+  font-weight: 500;
+}
+
+.user-create-form .form-error {
+  margin: 0;
+}
+
+.password-change-panel {
+  width: min(900px, 100%);
+}
+
+@media (max-width: 720px) {
+  .user-management-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .user-role-editor {
+    grid-template-columns: 1fr;
+    min-width: 150px;
+  }
 }
 
 .register-form {
@@ -4322,6 +4776,7 @@ th {
   .list-status,
   .search-form,
   .form-grid,
+  .placeholder-source-preview-filters,
   .placeholder-filter-panel,
   .placeholder-editor-form,
   .register-step-grid,
@@ -4331,6 +4786,15 @@ th {
   .module-diff-selector-grid,
   .module-diff-comparison {
     grid-template-columns: 1fr;
+  }
+
+  .placeholder-source-preview-heading {
+    flex-direction: column;
+  }
+
+  .placeholder-source-preview-heading p {
+    max-width: none;
+    text-align: left;
   }
 
   .module-diff-card-header {
@@ -4395,6 +4859,54 @@ th {
   .login-copy h1,
   .page-header h1 {
     font-size: 30px;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    overflow-x: hidden;
+  }
+
+  .login-panel {
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .login-copy,
+  .login-form {
+    min-width: 0;
+  }
+
+  .login-copy p {
+    overflow-wrap: anywhere;
+  }
+
+  .login-form {
+    width: 100%;
+    max-width: 100%;
+    padding: 24px 18px;
+  }
+
+  .login-form input,
+  .login-form button {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .placeholder-source-pagination,
+  .placeholder-source-pagination > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .placeholder-source-pagination button {
+    width: 100%;
   }
 }
 

@@ -28,6 +28,7 @@ from app.core.responses import (
     CaseDocPlaceholderMappingListData,
     CaseDocPlaceholderMappingUpsertRequest,
     CaseDocPlaceholderSourceFileListData,
+    CaseDocPlaceholderSourcePreviewData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -37,6 +38,7 @@ from app.core.responses import (
 )
 from app.db.case_docs import (
     create_case_doc_placeholder_mapping,
+    get_case_doc_placeholder_source_preview,
     list_case_doc_buildings,
     list_case_doc_placeholder_mappings,
     list_case_doc_placeholder_source_files,
@@ -58,6 +60,7 @@ from app.db.case_doc_instances import (
 )
 from app.db.source_docs import get_source_doc_detail
 from app.routers.health import get_app_settings
+from app.core.security import AdminUser, CurrentUser
 
 
 router = APIRouter(prefix="/case-docs", tags=["case-docs"])
@@ -96,6 +99,11 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
                 method="GET",
                 path="/api/v1/case-docs/placeholders/sources",
                 purpose="Selectable source files and columns for placeholder mappings.",
+            ),
+            RouterEndpointData(
+                method="GET",
+                path="/api/v1/case-docs/placeholders/source-preview",
+                purpose="Filtered source rows for the visual placeholder editor.",
             ),
             RouterEndpointData(
                 method="POST",
@@ -172,10 +180,12 @@ def read_case_doc_unit_configs(
 
 @router.get("/placeholders", response_model=ApiResponse[CaseDocPlaceholderMappingListData])
 def read_case_doc_placeholder_mappings(
+    admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingListData]:
     """Return placeholder mappings used for case document generation."""
 
+    del admin_user
     try:
         data = list_case_doc_placeholder_mappings(settings)
     except ValueError as exception:
@@ -188,10 +198,12 @@ def read_case_doc_placeholder_mappings(
 
 @router.get("/placeholders/sources", response_model=ApiResponse[CaseDocPlaceholderSourceFileListData])
 def read_case_doc_placeholder_source_files(
+    admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocPlaceholderSourceFileListData]:
     """Return selectable export files and their column names."""
 
+    del admin_user
     try:
         data = list_case_doc_placeholder_source_files(settings)
     except (OSError, ValueError) as exception:
@@ -199,13 +211,44 @@ def read_case_doc_placeholder_source_files(
     return success_response(data, "Case document placeholder source files were retrieved.")
 
 
+@router.get("/placeholders/source-preview", response_model=ApiResponse[CaseDocPlaceholderSourcePreviewData])
+def read_case_doc_placeholder_source_preview(
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    source_file: Annotated[str, Query(min_length=1)],
+    fs_cluster_name: Annotated[str | None, Query()] = None,
+    block: Annotated[str | None, Query()] = None,
+    prefecture: Annotated[str | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ApiResponse[CaseDocPlaceholderSourcePreviewData]:
+    """Return one export table filtered through unit configuration data."""
+
+    del admin_user
+    try:
+        data = get_case_doc_placeholder_source_preview(
+            settings,
+            source_file,
+            fs_cluster_name,
+            block,
+            prefecture,
+            page,
+            page_size,
+        )
+    except (OSError, ValueError) as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    return success_response(data, "Case document placeholder source preview was retrieved.")
+
+
 @router.post("/placeholders/validate", response_model=ApiResponse[CaseDocPlaceholderMappingItemData])
 def validate_case_doc_placeholder_mapping_payload(
     payload: CaseDocPlaceholderMappingUpsertRequest,
+    admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Validate a placeholder mapping without saving it."""
 
+    del admin_user
     try:
         data = validate_case_doc_placeholder_mapping(settings, payload)
     except ValueError as exception:
@@ -223,10 +266,12 @@ def validate_case_doc_placeholder_mapping_payload(
 )
 def create_case_doc_placeholder_mapping_payload(
     payload: CaseDocPlaceholderMappingUpsertRequest,
+    admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Create a placeholder mapping used for case document generation."""
 
+    del admin_user
     try:
         data = create_case_doc_placeholder_mapping(settings, payload)
     except ValueError as exception:
@@ -241,10 +286,12 @@ def create_case_doc_placeholder_mapping_payload(
 def update_case_doc_placeholder_mapping_payload(
     name: str,
     payload: CaseDocPlaceholderMappingUpsertRequest,
+    admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Update a placeholder mapping used for case document generation."""
 
+    del admin_user
     try:
         data = update_case_doc_placeholder_mapping(settings, name, payload)
     except ValueError as exception:
@@ -259,10 +306,12 @@ def update_case_doc_placeholder_mapping_payload(
 def set_case_doc_placeholder_mapping_enabled_payload(
     name: str,
     payload: CaseDocPlaceholderMappingEnabledRequest,
+    admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Enable or disable a placeholder mapping used for case document generation."""
 
+    del admin_user
     try:
         data = set_case_doc_placeholder_mapping_enabled(settings, name, payload)
     except ValueError as exception:
@@ -336,12 +385,14 @@ def generate_case_doc(
 )
 def create_case_doc_instance_resource(
     payload: CaseDocInstanceCreateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocInstanceDetailData]:
     """Generate and persist an executable case document instance."""
 
     try:
-        context = resolve_case_doc_context(settings, payload)
+        authenticated_payload = payload.model_copy(update={"created_by": current_user.display_name})
+        context = resolve_case_doc_context(settings, authenticated_payload)
         source_doc = get_source_doc_detail(settings, payload.source_doc_id)
         if source_doc is None:
             raise ValueError("原本が見つかりませんでした。")
@@ -353,7 +404,7 @@ def create_case_doc_instance_resource(
             context,
             workbook_bytes,
             execution_items,
-            payload.created_by,
+            current_user.display_name,
         )
     except ValueError as exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
@@ -401,12 +452,14 @@ def read_case_doc_instance_detail(
 def update_case_doc_preparation_resource(
     case_document_id: int,
     payload: CaseDocPreparationUpdateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocInstanceDetailData]:
     """Save preparation values entered before case document execution."""
 
     try:
-        data = update_case_doc_preparation(settings, case_document_id, payload)
+        authenticated_payload = payload.model_copy(update={"updated_by": current_user.display_name})
+        data = update_case_doc_preparation(settings, case_document_id, authenticated_payload)
     except ValueError as exception:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
     except DatabaseConnectionError as exception:
@@ -422,12 +475,19 @@ def update_case_doc_execution_item_resource(
     case_document_id: int,
     execution_item_id: int,
     payload: CaseDocExecutionUpdateRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocInstanceDetailData]:
     """Check, skip, or reset one case document time cell."""
 
     try:
-        data = update_case_doc_execution_item(settings, case_document_id, execution_item_id, payload)
+        authenticated_payload = payload.model_copy(update={"performed_by": current_user.display_name})
+        data = update_case_doc_execution_item(
+            settings,
+            case_document_id,
+            execution_item_id,
+            authenticated_payload,
+        )
     except ValueError as exception:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
     except DatabaseConnectionError as exception:
@@ -442,11 +502,12 @@ def update_case_doc_execution_item_resource(
 def complete_case_doc_instance_resource(
     case_document_id: int,
     payload: CaseDocInstanceCompleteRequest,
+    current_user: CurrentUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[CaseDocInstanceDetailData]:
     """Mark a case document instance as completed."""
 
-    del payload
+    del payload, current_user
     try:
         data = complete_case_doc_instance(settings, case_document_id)
     except ValueError as exception:

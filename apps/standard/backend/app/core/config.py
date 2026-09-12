@@ -19,6 +19,9 @@ DEFAULT_MODULE_SIMILARITY_CANDIDATE_LIMIT = 50
 DEFAULT_MODULE_SIMILARITY_RESULT_LIMIT = 10
 DEFAULT_MODULE_SIMILARITY_CONFIRMATION_SECRET = "standard-similarity-confirmation-secret"
 DEFAULT_MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS = 900
+DEFAULT_AUTH_SESSION_TTL_SECONDS = 8 * 60 * 60
+DEFAULT_AUTH_LOGIN_MAX_FAILURES = 5
+DEFAULT_AUTH_LOGIN_LOCK_SECONDS = 15 * 60
 
 
 class AppSettings(BaseModel):
@@ -70,6 +73,12 @@ class AppSettings(BaseModel):
         default=DEFAULT_MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS,
         ge=60,
     )
+    auth_cookie_name: str = Field(default="mvp_standard_session", min_length=1)
+    auth_cookie_secure: bool = Field(default=False)
+    auth_session_ttl_seconds: int = Field(default=DEFAULT_AUTH_SESSION_TTL_SECONDS, ge=300)
+    auth_login_max_failures: int = Field(default=DEFAULT_AUTH_LOGIN_MAX_FAILURES, ge=1)
+    auth_login_lock_seconds: int = Field(default=DEFAULT_AUTH_LOGIN_LOCK_SECONDS, ge=60)
+    auth_bootstrap_users_json: str = Field(default="")
 
     @property
     def database_url(self) -> str:
@@ -209,4 +218,19 @@ def get_settings() -> AppSettings:
             "MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS",
             DEFAULT_MODULE_SIMILARITY_CONFIRMATION_TTL_SECONDS,
         ),
+        auth_cookie_name=os.environ.get("AUTH_COOKIE_NAME", "mvp_standard_session"),
+        auth_cookie_secure=os.environ.get("AUTH_COOKIE_SECURE", "false").lower() == "true",
+        auth_session_ttl_seconds=_get_int_from_env(
+            "AUTH_SESSION_TTL_SECONDS",
+            DEFAULT_AUTH_SESSION_TTL_SECONDS,
+        ),
+        auth_login_max_failures=_get_int_from_env(
+            "AUTH_LOGIN_MAX_FAILURES",
+            DEFAULT_AUTH_LOGIN_MAX_FAILURES,
+        ),
+        auth_login_lock_seconds=_get_int_from_env(
+            "AUTH_LOGIN_LOCK_SECONDS",
+            DEFAULT_AUTH_LOGIN_LOCK_SECONDS,
+        ),
+        auth_bootstrap_users_json=os.environ.get("AUTH_BOOTSTRAP_USERS_JSON", ""),
     )
