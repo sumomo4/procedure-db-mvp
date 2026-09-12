@@ -242,7 +242,7 @@ def _validate_placeholder_mappings(mappings: Iterable[CaseDocPlaceholderMappingI
     for item in validated:
         _validate_placeholder_mapping_item(item)
         if item.name in seen:
-            raise ValueError(f"placeholder mapping name is duplicated: {item.name}")
+            raise ValueError(f"プレースホルダ名「{item.name}」はすでに登録されています。別の名前を入力してください。")
         seen.add(item.name)
     return validated
 
@@ -320,7 +320,7 @@ def _create_placeholder_mapping(
     mappings = _load_placeholder_mappings(mapping_path)
     item = _to_placeholder_mapping_item(payload)
     if any(existing.name == item.name for existing in mappings):
-        raise ValueError(f"placeholder mapping name is duplicated: {item.name}")
+        raise ValueError(f"プレースホルダ名「{item.name}」はすでに登録されています。別の名前を入力してください。")
     _validate_placeholder_mapping_item(item)
     mappings.append(item)
     _write_placeholder_mappings(mapping_path, mappings)

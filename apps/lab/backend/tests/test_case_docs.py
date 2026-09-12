@@ -625,6 +625,9 @@ def test_create_case_doc_placeholder_mapping_rejects_duplicate_name(
     response = client.post("/api/v1/case-docs/placeholders", json=_placeholder_payload("LOGIN_USER"))
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["message"] == (
+        "プレースホルダ名「LOGIN_USER」はすでに登録されています。別の名前を入力してください。"
+    )
 
 
 def test_update_case_doc_placeholder_mapping_writes_yaml(
