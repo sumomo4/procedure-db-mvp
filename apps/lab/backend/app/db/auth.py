@@ -40,16 +40,25 @@ CREATE TABLE IF NOT EXISTS proc.app_users (
     failed_login_count integer NOT NULL DEFAULT 0 CHECK (failed_login_count >= 0),
     locked_until timestamptz,
     last_login_at timestamptz,
+    deleted_at timestamptz,
+    deleted_by text,
+    delete_reason text,
     password_changed_at timestamptz NOT NULL DEFAULT now(),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 ALTER TABLE proc.app_users
-    ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
+    ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+    ADD COLUMN IF NOT EXISTS deleted_by text,
+    ADD COLUMN IF NOT EXISTS delete_reason text;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_username_lower
     ON proc.app_users (lower(username));
+
+CREATE INDEX IF NOT EXISTS idx_app_users_deleted_at
+    ON proc.app_users (deleted_at);
 
 CREATE TABLE IF NOT EXISTS proc.auth_sessions (
     auth_session_id bigserial PRIMARY KEY,
@@ -88,8 +97,11 @@ def _managed_user_from_row(row: tuple[Any, ...]) -> AuthManagedUserData:
         is_active=bool(row[4]),
         password_change_required=bool(row[5]),
         last_login_at=row[6],
-        created_at=row[7],
-        updated_at=row[8],
+        deleted_at=row[7],
+        deleted_by=row[8],
+        delete_reason=row[9],
+        created_at=row[10],
+        updated_at=row[11],
     )
 
 
@@ -101,6 +113,9 @@ _MANAGED_USER_COLUMNS = """
     is_active,
     must_change_password,
     last_login_at,
+    deleted_at,
+    deleted_by,
+    delete_reason,
     created_at,
     updated_at
 """
@@ -219,6 +234,7 @@ def authenticate_user(settings: AppSettings, username: str, password: str) -> Au
                         must_change_password
                     FROM proc.app_users
                     WHERE lower(username) = lower(%(username)s)
+                      AND deleted_at IS NULL
                     FOR UPDATE
                     """,
                     {"username": normalized_username},
@@ -353,6 +369,7 @@ def get_auth_session_user(settings: AppSettings, token: str) -> AuthUserData | N
                       AND s.revoked_at IS NULL
                       AND s.expires_at > now()
                       AND u.is_active = true
+                      AND u.deleted_at IS NULL
                     """,
                     {"token_hash": token_hash},
                 )
@@ -427,7 +444,7 @@ def list_managed_users(settings: AppSettings) -> list[AuthManagedUserData]:
                     f"""
                     SELECT {_MANAGED_USER_COLUMNS}
                     FROM proc.app_users
-                    ORDER BY is_active DESC, lower(username), user_id
+                    ORDER BY deleted_at NULLS FIRST, is_active DESC, lower(username), user_id
                     """
                 )
                 return [_managed_user_from_row(row) for row in cursor.fetchall()]
@@ -442,6 +459,7 @@ def create_managed_user(
     display_name: str,
     password: str,
     role: AuthRole,
+    require_password_change: bool = True,
 ) -> AuthManagedUserData:
     """Create one application user with an Argon2id password hash."""
 
@@ -475,7 +493,7 @@ def create_managed_user(
                         %(display_name)s,
                         %(password_hash)s,
                         %(role)s,
-                        true
+                        %(require_password_change)s
                     )
                     RETURNING {_MANAGED_USER_COLUMNS}
                     """,
@@ -484,6 +502,7 @@ def create_managed_user(
                         "display_name": normalized_display_name,
                         "password_hash": _password_hasher().hash(password),
                         "role": role,
+                        "require_password_change": require_password_change,
                     },
                 )
                 return _managed_user_from_row(cursor.fetchone())
@@ -519,6 +538,7 @@ def update_managed_user_role(
                     SELECT role
                     FROM proc.app_users
                     WHERE user_id = %(user_id)s
+                      AND deleted_at IS NULL
                     FOR UPDATE
                     """,
                     {"user_id": user_id},
@@ -590,6 +610,7 @@ def update_managed_user_active_state(
                     SELECT is_active
                     FROM proc.app_users
                     WHERE user_id = %(user_id)s
+                      AND deleted_at IS NULL
                     FOR UPDATE
                     """,
                     {"user_id": user_id},
@@ -639,6 +660,170 @@ def update_managed_user_active_state(
         raise DatabaseConnectionError("User active state update failed.") from exception
 
 
+def delete_managed_user(
+    settings: AppSettings,
+    *,
+    user_id: int,
+    reason: str,
+    acting_user_id: int,
+    deleted_by: str,
+) -> AuthManagedUserData:
+    """Logically delete a user and revoke every active session."""
+
+    ensure_auth_storage(settings)
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    normalized_reason = reason.strip()
+    if not normalized_reason:
+        raise ValueError("削除理由を入力してください。")
+    if user_id == acting_user_id:
+        raise ManagedUserConflictError("自分自身のアカウントは削除できません。")
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT role, is_active, deleted_at
+                    FROM proc.app_users
+                    WHERE user_id = %(user_id)s
+                    FOR UPDATE
+                    """,
+                    {"user_id": user_id},
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ManagedUserNotFoundError()
+                if row[2] is not None:
+                    raise ManagedUserConflictError("このユーザーはすでに削除されています。")
+
+                if row[0] == "admin" and bool(row[1]):
+                    cursor.execute(
+                        """
+                        SELECT count(*)
+                        FROM proc.app_users
+                        WHERE role = 'admin'
+                          AND is_active = true
+                          AND deleted_at IS NULL
+                          AND user_id <> %(user_id)s
+                        """,
+                        {"user_id": user_id},
+                    )
+                    if int(cursor.fetchone()[0]) == 0:
+                        raise ManagedUserConflictError("最後の有効な管理者は削除できません。")
+
+                cursor.execute(
+                    """
+                    UPDATE proc.app_users
+                    SET
+                        is_active = false,
+                        deleted_at = now(),
+                        deleted_by = %(deleted_by)s,
+                        delete_reason = %(reason)s,
+                        failed_login_count = 0,
+                        locked_until = NULL,
+                        updated_at = now()
+                    WHERE user_id = %(user_id)s
+                    """,
+                    {
+                        "deleted_by": deleted_by.strip(),
+                        "reason": normalized_reason,
+                        "user_id": user_id,
+                    },
+                )
+                cursor.execute(
+                    """
+                    UPDATE proc.auth_sessions
+                    SET revoked_at = now()
+                    WHERE user_id = %(user_id)s AND revoked_at IS NULL
+                    """,
+                    {"user_id": user_id},
+                )
+                cursor.execute(
+                    f"""
+                    SELECT {_MANAGED_USER_COLUMNS}
+                    FROM proc.app_users
+                    WHERE user_id = %(user_id)s
+                    """,
+                    {"user_id": user_id},
+                )
+                return _managed_user_from_row(cursor.fetchone())
+    except (ManagedUserConflictError, ManagedUserNotFoundError, ValueError):
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("User logical deletion failed.") from exception
+
+
+def restore_managed_user(
+    settings: AppSettings,
+    *,
+    user_id: int,
+) -> AuthManagedUserData:
+    """Restore a logically deleted user in the disabled state."""
+
+    ensure_auth_storage(settings)
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT deleted_at
+                    FROM proc.app_users
+                    WHERE user_id = %(user_id)s
+                    FOR UPDATE
+                    """,
+                    {"user_id": user_id},
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ManagedUserNotFoundError()
+                if row[0] is None:
+                    raise ManagedUserConflictError("このユーザーは削除されていません。")
+
+                cursor.execute(
+                    """
+                    UPDATE proc.app_users
+                    SET
+                        is_active = false,
+                        deleted_at = NULL,
+                        deleted_by = NULL,
+                        delete_reason = NULL,
+                        failed_login_count = 0,
+                        locked_until = NULL,
+                        updated_at = now()
+                    WHERE user_id = %(user_id)s
+                    """,
+                    {"user_id": user_id},
+                )
+                cursor.execute(
+                    f"""
+                    SELECT {_MANAGED_USER_COLUMNS}
+                    FROM proc.app_users
+                    WHERE user_id = %(user_id)s
+                    """,
+                    {"user_id": user_id},
+                )
+                return _managed_user_from_row(cursor.fetchone())
+    except (ManagedUserConflictError, ManagedUserNotFoundError):
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("User restoration failed.") from exception
+
+
 def change_user_password(
     settings: AppSettings,
     *,
@@ -666,6 +851,7 @@ def change_user_password(
                     SELECT username, display_name, role, password_hash, is_active
                     FROM proc.app_users
                     WHERE user_id = %(user_id)s
+                      AND deleted_at IS NULL
                     FOR UPDATE
                     """,
                     {"user_id": user_id},
@@ -747,7 +933,10 @@ def reset_managed_user_password(
                 cursor.execute(
                     """
                     SELECT EXISTS (
-                        SELECT 1 FROM proc.app_users WHERE user_id = %(user_id)s
+                        SELECT 1
+                        FROM proc.app_users
+                        WHERE user_id = %(user_id)s
+                          AND deleted_at IS NULL
                     )
                     """,
                     {"user_id": user_id},

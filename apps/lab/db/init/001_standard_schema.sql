@@ -30,16 +30,25 @@ CREATE TABLE IF NOT EXISTS proc.app_users (
     failed_login_count integer NOT NULL DEFAULT 0 CHECK (failed_login_count >= 0),
     locked_until timestamptz,
     last_login_at timestamptz,
+    deleted_at timestamptz,
+    deleted_by text,
+    delete_reason text,
     password_changed_at timestamptz NOT NULL DEFAULT now(),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 ALTER TABLE proc.app_users
-    ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
+    ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+    ADD COLUMN IF NOT EXISTS deleted_by text,
+    ADD COLUMN IF NOT EXISTS delete_reason text;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_username_lower
     ON proc.app_users (lower(username));
+
+CREATE INDEX IF NOT EXISTS idx_app_users_deleted_at
+    ON proc.app_users (deleted_at);
 
 CREATE TABLE IF NOT EXISTS proc.auth_sessions (
     auth_session_id bigserial PRIMARY KEY,

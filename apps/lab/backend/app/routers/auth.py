@@ -10,9 +10,11 @@ from app.core.auth import (
     AuthManagedUserData,
     AuthManagedUserListData,
     AuthPasswordChangeRequest,
+    AuthSelfRegistrationRequest,
     AuthUserActiveUpdateRequest,
     AuthUserCreateRequest,
     AuthUserData,
+    AuthUserDeleteRequest,
     AuthUserPasswordResetRequest,
     AuthUserRoleUpdateRequest,
     CurrentPasswordMismatchError,
@@ -31,9 +33,11 @@ from app.db.auth import (
     change_user_password,
     create_auth_session,
     create_managed_user,
+    delete_managed_user,
     list_managed_users,
     revoke_auth_session,
     reset_managed_user_password,
+    restore_managed_user,
     update_managed_user_active_state,
     update_managed_user_role,
 )
@@ -101,6 +105,53 @@ def login(
     _set_auth_cookie(response, request, settings, token)
     response.headers["Cache-Control"] = "no-store"
     return success_response(user, "ログインしました。")
+
+
+@router.post("/register", response_model=ApiResponse[AuthUserData], status_code=status.HTTP_201_CREATED)
+def register(
+    payload: AuthSelfRegistrationRequest,
+    request: Request,
+    response: Response,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[AuthUserData]:
+    """Allow a new user to create and sign in to a member account."""
+
+    validate_request_origin(request, settings)
+    try:
+        registered = create_managed_user(
+            settings,
+            username=payload.username,
+            display_name=payload.display_name,
+            password=payload.password,
+            role="member",
+            require_password_change=False,
+        )
+        token = create_auth_session(settings, registered.user_id)
+    except DuplicateUsernameError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="同じメールアドレスがすでに登録されています。",
+        ) from exception
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exception),
+        ) from exception
+
+    _set_auth_cookie(response, request, settings, token)
+    response.headers["Cache-Control"] = "no-store"
+    return success_response(
+        AuthUserData(
+            user_id=registered.user_id,
+            username=registered.username,
+            display_name=registered.display_name,
+            role=registered.role,
+            password_change_required=registered.password_change_required,
+        ),
+        "ユーザー登録が完了しました。",
+    )
 
 
 @router.get("/me", response_model=ApiResponse[AuthUserData])
@@ -288,6 +339,60 @@ def update_user_active_state(
         ) from exception
     message = "ユーザーを有効化しました。" if user.is_active else "ユーザーを無効化しました。"
     return success_response(user, message)
+
+
+@router.delete("/users/{user_id}", response_model=ApiResponse[AuthManagedUserData])
+def delete_user(
+    user_id: int,
+    payload: AuthUserDeleteRequest,
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[AuthManagedUserData]:
+    """Logically delete one user as an administrator."""
+
+    try:
+        user = delete_managed_user(
+            settings,
+            user_id=user_id,
+            reason=payload.reason,
+            acting_user_id=admin_user.user_id,
+            deleted_by=admin_user.display_name,
+        )
+    except ManagedUserNotFoundError as exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ユーザーが見つかりません。") from exception
+    except ManagedUserConflictError as exception:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exception),
+        ) from exception
+    return success_response(user, "ユーザーを削除しました。対象ユーザーの既存セッションは失効しました。")
+
+
+@router.post("/users/{user_id}/restore", response_model=ApiResponse[AuthManagedUserData])
+def restore_user(
+    user_id: int,
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[AuthManagedUserData]:
+    """Restore one logically deleted user as an administrator."""
+
+    del admin_user
+    try:
+        user = restore_managed_user(settings, user_id=user_id)
+    except ManagedUserNotFoundError as exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ユーザーが見つかりません。") from exception
+    except ManagedUserConflictError as exception:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exception),
+        ) from exception
+    return success_response(user, "ユーザーを無効状態で復元しました。内容を確認して再有効化してください。")
 
 
 @router.patch("/users/{user_id}/password", response_model=ApiResponse[AuthManagedUserData])

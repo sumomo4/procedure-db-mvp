@@ -17,7 +17,7 @@ ROLE_RANK: dict[AuthRole, int] = {
 class AuthLoginRequest(BaseModel):
     """Credentials accepted by the login endpoint."""
 
-    username: str = Field(min_length=1, max_length=100)
+    username: str = Field(min_length=1, max_length=254)
     password: str = Field(min_length=1, max_length=512)
 
 
@@ -34,7 +34,7 @@ class AuthUserData(BaseModel):
 class AuthBootstrapUser(BaseModel):
     """Lab-only user definition used to initialize an empty user table."""
 
-    username: str = Field(min_length=1, max_length=100)
+    username: str = Field(min_length=1, max_length=254)
     password: str = Field(min_length=1, max_length=512)
     display_name: str = Field(min_length=1, max_length=200)
     role: AuthRole
@@ -50,6 +50,9 @@ class AuthManagedUserData(BaseModel):
     is_active: bool
     password_change_required: bool
     last_login_at: datetime | None = None
+    deleted_at: datetime | None = None
+    deleted_by: str | None = None
+    delete_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -60,8 +63,8 @@ class AuthManagedUserListData(BaseModel):
     items: list[AuthManagedUserData]
 
 
-class AuthUserCreateRequest(BaseModel):
-    """Request for creating one application user."""
+class AuthSelfRegistrationRequest(BaseModel):
+    """Credentials and profile for a new application user."""
 
     username: str = Field(
         min_length=3,
@@ -70,6 +73,11 @@ class AuthUserCreateRequest(BaseModel):
     )
     display_name: str = Field(min_length=1, max_length=200)
     password: str = Field(min_length=8, max_length=512)
+
+
+class AuthUserCreateRequest(AuthSelfRegistrationRequest):
+    """Administrator request for creating a user with a selected role."""
+
     role: AuthRole
 
 
@@ -83,6 +91,12 @@ class AuthUserActiveUpdateRequest(BaseModel):
     """Request for enabling or disabling one user account."""
 
     is_active: bool
+
+
+class AuthUserDeleteRequest(BaseModel):
+    """Administrator request for logically deleting one user."""
+
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class AuthPasswordChangeRequest(BaseModel):

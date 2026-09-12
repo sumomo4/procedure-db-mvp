@@ -897,6 +897,46 @@ class CaseDocPlaceholderSourceFileListData(BaseModel):
     items: list[CaseDocPlaceholderSourceFileData]
 
 
+class CaseDocPlaceholderSourceFiltersData(BaseModel):
+    """Unit configuration filters applied to a placeholder source preview."""
+
+    fs_cluster_name: str | None = None
+    block: str | None = None
+    prefecture: str | None = None
+
+
+class CaseDocPlaceholderSourceFilterOptionsData(BaseModel):
+    """Faceted unit configuration filter options for a source preview."""
+
+    fs_cluster_names: list[str]
+    blocks: list[str]
+    prefectures: list[str]
+
+
+class CaseDocPlaceholderSourcePreviewRowData(BaseModel):
+    """One physical row displayed in a placeholder source preview."""
+
+    row_number: int = Field(ge=1)
+    values: list[str]
+
+
+class CaseDocPlaceholderSourcePreviewData(BaseModel):
+    """Paginated source table used by the visual placeholder editor."""
+
+    source_file: str
+    sheet_name: str | None = None
+    columns: list[str]
+    rows: list[CaseDocPlaceholderSourcePreviewRowData]
+    total_count: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+    total_pages: int = Field(ge=0)
+    filterable: bool
+    applied_filters: CaseDocPlaceholderSourceFiltersData
+    filter_options: CaseDocPlaceholderSourceFilterOptionsData
+    mappings: list[CaseDocPlaceholderMappingItemData]
+
+
 class CaseDocResolveContextData(BaseModel):
     """Resolved context used to generate a case document."""
 

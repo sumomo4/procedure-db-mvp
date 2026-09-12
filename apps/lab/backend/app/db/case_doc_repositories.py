@@ -7,6 +7,7 @@ case_docs module owns repository selection.
 import csv
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -21,8 +22,12 @@ from app.core.responses import (
     CaseDocPlaceholderMappingItemData,
     CaseDocPlaceholderMappingListData,
     CaseDocPlaceholderMappingUpsertRequest,
+    CaseDocPlaceholderSourceFilterOptionsData,
     CaseDocPlaceholderSourceFileData,
     CaseDocPlaceholderSourceFileListData,
+    CaseDocPlaceholderSourceFiltersData,
+    CaseDocPlaceholderSourcePreviewData,
+    CaseDocPlaceholderSourcePreviewRowData,
     CaseDocMasterOptionsData,
     CaseDocResolvedPlaceholderData,
     CaseDocResolveContextData,
@@ -406,6 +411,90 @@ def _cell_to_text(value: object) -> str:
     return str(value).strip()
 
 
+@dataclass(frozen=True, slots=True)
+class _PlaceholderSourceTableRow:
+    row_number: int
+    values: list[str]
+    lookup: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class _PlaceholderSourceTable:
+    sheet_name: str | None
+    columns: list[str]
+    rows: list[_PlaceholderSourceTableRow]
+
+
+def _to_placeholder_source_table_row(
+    row_number: int,
+    raw_values: Iterable[object],
+    column_indexes: list[int],
+    columns: list[str],
+) -> _PlaceholderSourceTableRow:
+    raw_list = list(raw_values)
+    values = [_cell_to_text(raw_list[index]) if index < len(raw_list) else "" for index in column_indexes]
+    lookup = {_normalize_key(column): value for column, value in zip(columns, values, strict=True)}
+    return _PlaceholderSourceTableRow(row_number=row_number, values=values, lookup=lookup)
+
+
+def _read_xlsx_source_table(path: Path) -> _PlaceholderSourceTable:
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    try:
+        sheet = workbook.active
+        rows = sheet.iter_rows(values_only=True)
+        header_row_number = 0
+        header_values: tuple[object, ...] = ()
+        for row_number, values in enumerate(rows, start=1):
+            if any(_cell_to_text(value) for value in values):
+                header_row_number = row_number
+                header_values = values
+                break
+
+        if not header_values:
+            return _PlaceholderSourceTable(sheet_name=sheet.title, columns=[], rows=[])
+
+        column_indexes = [index for index, value in enumerate(header_values) if _cell_to_text(value)]
+        columns = [_cell_to_text(header_values[index]) for index in column_indexes]
+        table_rows: list[_PlaceholderSourceTableRow] = []
+        for row_number, values in enumerate(rows, start=header_row_number + 1):
+            table_row = _to_placeholder_source_table_row(row_number, values, column_indexes, columns)
+            if any(table_row.values):
+                table_rows.append(table_row)
+        return _PlaceholderSourceTable(sheet_name=sheet.title, columns=columns, rows=table_rows)
+    finally:
+        workbook.close()
+
+
+def _read_csv_source_table(path: Path) -> _PlaceholderSourceTable:
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        rows = csv.reader(file)
+        header_row_number = 0
+        header_values: list[str] = []
+        for row_number, values in enumerate(rows, start=1):
+            if any(_cell_to_text(value) for value in values):
+                header_row_number = row_number
+                header_values = values
+                break
+
+        if not header_values:
+            return _PlaceholderSourceTable(sheet_name=None, columns=[], rows=[])
+
+        column_indexes = [index for index, value in enumerate(header_values) if _cell_to_text(value)]
+        columns = [_cell_to_text(header_values[index]) for index in column_indexes]
+        table_rows: list[_PlaceholderSourceTableRow] = []
+        for row_number, values in enumerate(rows, start=header_row_number + 1):
+            table_row = _to_placeholder_source_table_row(row_number, values, column_indexes, columns)
+            if any(table_row.values):
+                table_rows.append(table_row)
+        return _PlaceholderSourceTable(sheet_name=None, columns=columns, rows=table_rows)
+
+
+def _read_placeholder_source_table(path: Path) -> _PlaceholderSourceTable:
+    if path.suffix.lower() == ".csv":
+        return _read_csv_source_table(path)
+    return _read_xlsx_source_table(path)
+
+
 def _read_xlsx_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         raise ValueError(f"case document export file was not found: {path.name}")
@@ -543,6 +632,76 @@ def _unique_ordered(values: Iterable[str]) -> list[str]:
             seen.add(normalized)
             ordered.append(normalized)
     return ordered
+
+
+def _clean_optional_filter(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _unit_config_matches_filters(
+    unit_config: dict[str, object],
+    filters: CaseDocPlaceholderSourceFiltersData,
+    *,
+    exclude: str | None = None,
+) -> bool:
+    expected_values = {
+        "fs_cluster_name": filters.fs_cluster_name,
+        "block": filters.block,
+        "prefecture": filters.prefecture,
+    }
+    return all(
+        field_name == exclude
+        or expected_value is None
+        or str(unit_config[field_name]) == expected_value
+        for field_name, expected_value in expected_values.items()
+    )
+
+
+def _placeholder_source_filter_options(
+    unit_configs: list[dict[str, object]],
+    filters: CaseDocPlaceholderSourceFiltersData,
+) -> CaseDocPlaceholderSourceFilterOptionsData:
+    def values_for(field_name: str) -> list[str]:
+        return sorted(
+            _unique_ordered(
+                str(unit_config[field_name])
+                for unit_config in unit_configs
+                if _unit_config_matches_filters(unit_config, filters, exclude=field_name)
+            ),
+            key=str.casefold,
+        )
+
+    return CaseDocPlaceholderSourceFilterOptionsData(
+        fs_cluster_names=values_for("fs_cluster_name"),
+        blocks=values_for("block"),
+        prefectures=values_for("prefecture"),
+    )
+
+
+def _unit_config_has_device_type(unit_config: dict[str, object], device_types: set[str]) -> bool:
+    hosts = unit_config.get("hosts")
+    if not isinstance(hosts, dict):
+        return False
+    return any(
+        isinstance(host, dict) and str(host.get("device_type", "")).upper() in device_types
+        for host in hosts.values()
+    )
+
+
+def _unit_config_host_names(unit_config: dict[str, object], device_types: set[str]) -> set[str]:
+    hosts = unit_config.get("hosts")
+    if not isinstance(hosts, dict):
+        return set()
+    return {
+        str(host["host_name"])
+        for host in hosts.values()
+        if isinstance(host, dict)
+        and str(host.get("device_type", "")).upper() in device_types
+        and host.get("host_name")
+    }
 
 
 def _sort_unit_configs(unit_configs: Iterable[dict[str, object]]) -> list[dict[str, object]]:
@@ -753,6 +912,17 @@ class CaseDocMasterRepository(Protocol):
     def list_placeholder_source_files(self) -> CaseDocPlaceholderSourceFileListData:
         """Return source files and columns selectable for placeholder mappings."""
 
+    def get_placeholder_source_preview(
+        self,
+        source_file: str,
+        fs_cluster_name: str | None,
+        block: str | None,
+        prefecture: str | None,
+        page: int,
+        page_size: int,
+    ) -> CaseDocPlaceholderSourcePreviewData:
+        """Return one filtered and paginated placeholder source table."""
+
     def validate_placeholder_mapping(
         self,
         payload: CaseDocPlaceholderMappingUpsertRequest,
@@ -791,6 +961,18 @@ class SeedCaseDocMasterRepository:
 
     def list_placeholder_source_files(self) -> CaseDocPlaceholderSourceFileListData:
         return _placeholder_sources_from_mappings(self._load_placeholder_mappings())
+
+    def get_placeholder_source_preview(
+        self,
+        source_file: str,
+        fs_cluster_name: str | None,
+        block: str | None,
+        prefecture: str | None,
+        page: int,
+        page_size: int,
+    ) -> CaseDocPlaceholderSourcePreviewData:
+        del source_file, fs_cluster_name, block, prefecture, page, page_size
+        raise ValueError("placeholder source preview requires export_file master data.")
 
     def validate_placeholder_mapping(
         self,
@@ -899,6 +1081,149 @@ class ExportFileCaseDocMasterRepository:
             columns = _read_csv_columns(path) if path.suffix.lower() == ".csv" else _read_xlsx_columns(path)
             items.append(CaseDocPlaceholderSourceFileData(source_file=path.name, columns=columns))
         return CaseDocPlaceholderSourceFileListData(items=items)
+
+    def get_placeholder_source_preview(
+        self,
+        source_file: str,
+        fs_cluster_name: str | None,
+        block: str | None,
+        prefecture: str | None,
+        page: int,
+        page_size: int,
+    ) -> CaseDocPlaceholderSourcePreviewData:
+        if page < 1 or page_size < 1:
+            raise ValueError("placeholder source preview pagination is invalid.")
+        if not source_file.strip() or "/" in source_file or "\\" in source_file or Path(source_file).name != source_file:
+            raise ValueError("placeholder source file name is invalid.")
+
+        export_dir = self.export_dir.resolve()
+        source_path = (self.export_dir / source_file).resolve()
+        if source_path.parent != export_dir:
+            raise ValueError("placeholder source file must be directly under the export directory.")
+        if source_path.suffix.lower() not in {".xlsx", ".xlsm", ".csv"} or not source_path.is_file():
+            raise ValueError(f"placeholder source file was not found: {source_file}")
+
+        filters = CaseDocPlaceholderSourceFiltersData(
+            fs_cluster_name=_clean_optional_filter(fs_cluster_name),
+            block=_clean_optional_filter(block),
+            prefecture=_clean_optional_filter(prefecture),
+        )
+        filters_requested = any((filters.fs_cluster_name, filters.block, filters.prefecture))
+        table = _read_placeholder_source_table(source_path)
+        mappings = [
+            mapping
+            for mapping in self._load_placeholder_mappings()
+            if mapping.source_file.casefold() == source_path.name.casefold()
+        ]
+
+        unit_config_names = {name.casefold() for name in UNIT_CONFIG_FILE_NAMES}
+        common_source_names = {
+            COMMON_VALUES_XLSX_FILE_NAME.casefold(),
+            COMMON_VALUES_CSV_FILE_NAME.casefold(),
+        }
+        is_unit_config_source = source_path.name.casefold() in unit_config_names
+        is_common_source = source_path.name.casefold() in common_source_names
+
+        relevant_unit_configs: list[dict[str, object]] = []
+        source_device_types: set[str] = set()
+        if is_unit_config_source:
+            relevant_unit_configs = self._load_unit_configs()
+        elif not is_common_source:
+            source_device_types = {
+                str(mapping.source_device_type or mapping.device_type).upper()
+                for mapping in mappings
+                if mapping.scope == "device" and (mapping.source_device_type or mapping.device_type)
+            }
+            source_device_types.add(source_path.stem.upper())
+            relevant_unit_configs = [
+                unit_config
+                for unit_config in self._load_unit_configs()
+                if _unit_config_has_device_type(unit_config, source_device_types)
+            ]
+
+        filterable = is_unit_config_source or bool(relevant_unit_configs)
+        if filters_requested and not filterable:
+            raise ValueError("selected placeholder source does not support unit configuration filters.")
+
+        filtered_rows = table.rows
+        if filters_requested and is_unit_config_source:
+            filtered_rows = [
+                row
+                for row in table.rows
+                if (
+                    filters.fs_cluster_name is None
+                    or _optional_value_from_aliases(
+                        row.lookup,
+                        UNIT_CONFIG_COLUMN_ALIASES["fs_cluster_name"],
+                    )
+                    == filters.fs_cluster_name
+                )
+                and (
+                    filters.block is None
+                    or _optional_value_from_aliases(row.lookup, UNIT_CONFIG_COLUMN_ALIASES["block"])
+                    == filters.block
+                )
+                and (
+                    filters.prefecture is None
+                    or _optional_value_from_aliases(row.lookup, UNIT_CONFIG_COLUMN_ALIASES["prefecture"])
+                    == filters.prefecture
+                )
+            ]
+        elif filters_requested:
+            selected_unit_configs = [
+                unit_config
+                for unit_config in relevant_unit_configs
+                if _unit_config_matches_filters(unit_config, filters)
+            ]
+            selected_host_names = set().union(
+                *(
+                    _unit_config_host_names(unit_config, source_device_types)
+                    for unit_config in selected_unit_configs
+                )
+            )
+            key_columns = _unique_ordered(
+                [mapping.key_column for mapping in mappings if mapping.scope == "device"]
+                + ["host_name", _u(r"\u30db\u30b9\u30c8\u540d")]
+            )
+            filtered_rows = [
+                row
+                for row in table.rows
+                if _optional_value_from_aliases(row.lookup, key_columns) in selected_host_names
+            ]
+
+        total_count = len(filtered_rows)
+        total_pages = (total_count + page_size - 1) // page_size
+        start = (page - 1) * page_size
+        paginated_rows = filtered_rows[start : start + page_size]
+        empty_filter_options = CaseDocPlaceholderSourceFilterOptionsData(
+            fs_cluster_names=[],
+            blocks=[],
+            prefectures=[],
+        )
+        return CaseDocPlaceholderSourcePreviewData(
+            source_file=source_path.name,
+            sheet_name=table.sheet_name,
+            columns=table.columns,
+            rows=[
+                CaseDocPlaceholderSourcePreviewRowData(
+                    row_number=row.row_number,
+                    values=row.values,
+                )
+                for row in paginated_rows
+            ],
+            total_count=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            filterable=filterable,
+            applied_filters=filters,
+            filter_options=(
+                _placeholder_source_filter_options(relevant_unit_configs, filters)
+                if filterable
+                else empty_filter_options
+            ),
+            mappings=mappings,
+        )
 
     def validate_placeholder_mapping(
         self,

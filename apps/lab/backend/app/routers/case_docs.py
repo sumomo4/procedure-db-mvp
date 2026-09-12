@@ -28,6 +28,7 @@ from app.core.responses import (
     CaseDocPlaceholderMappingListData,
     CaseDocPlaceholderMappingUpsertRequest,
     CaseDocPlaceholderSourceFileListData,
+    CaseDocPlaceholderSourcePreviewData,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
@@ -37,6 +38,7 @@ from app.core.responses import (
 )
 from app.db.case_docs import (
     create_case_doc_placeholder_mapping,
+    get_case_doc_placeholder_source_preview,
     list_case_doc_buildings,
     list_case_doc_placeholder_mappings,
     list_case_doc_placeholder_source_files,
@@ -97,6 +99,11 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
                 method="GET",
                 path="/api/v1/case-docs/placeholders/sources",
                 purpose="Selectable source files and columns for placeholder mappings.",
+            ),
+            RouterEndpointData(
+                method="GET",
+                path="/api/v1/case-docs/placeholders/source-preview",
+                purpose="Filtered source rows for the visual placeholder editor.",
             ),
             RouterEndpointData(
                 method="POST",
@@ -202,6 +209,35 @@ def read_case_doc_placeholder_source_files(
     except (OSError, ValueError) as exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
     return success_response(data, "Case document placeholder source files were retrieved.")
+
+
+@router.get("/placeholders/source-preview", response_model=ApiResponse[CaseDocPlaceholderSourcePreviewData])
+def read_case_doc_placeholder_source_preview(
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    source_file: Annotated[str, Query(min_length=1)],
+    fs_cluster_name: Annotated[str | None, Query()] = None,
+    block: Annotated[str | None, Query()] = None,
+    prefecture: Annotated[str | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ApiResponse[CaseDocPlaceholderSourcePreviewData]:
+    """Return one export table filtered through unit configuration data."""
+
+    del admin_user
+    try:
+        data = get_case_doc_placeholder_source_preview(
+            settings,
+            source_file,
+            fs_cluster_name,
+            block,
+            prefecture,
+            page,
+            page_size,
+        )
+    except (OSError, ValueError) as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    return success_response(data, "Case document placeholder source preview was retrieved.")
 
 
 @router.post("/placeholders/validate", response_model=ApiResponse[CaseDocPlaceholderMappingItemData])

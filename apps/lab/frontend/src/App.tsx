@@ -182,6 +182,9 @@ type ManagedUserData = {
   is_active: boolean;
   password_change_required: boolean;
   last_login_at: string | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -765,6 +768,51 @@ type CaseDocPlaceholderSourceFileListState = {
 };
 
 
+type CaseDocPlaceholderSourceFiltersData = {
+  fs_cluster_name: string | null;
+  block: string | null;
+  prefecture: string | null;
+};
+
+type CaseDocPlaceholderSourceFilterOptionsData = {
+  fs_cluster_names: string[];
+  blocks: string[];
+  prefectures: string[];
+};
+
+type CaseDocPlaceholderSourcePreviewRowData = {
+  row_number: number;
+  values: string[];
+};
+
+type CaseDocPlaceholderSourcePreviewData = {
+  source_file: string;
+  sheet_name: string | null;
+  columns: string[];
+  rows: CaseDocPlaceholderSourcePreviewRowData[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  filterable: boolean;
+  applied_filters: CaseDocPlaceholderSourceFiltersData;
+  filter_options: CaseDocPlaceholderSourceFilterOptionsData;
+  mappings: CaseDocPlaceholderMappingItemData[];
+};
+
+type CaseDocPlaceholderSourcePreviewState = {
+  status: "idle" | "loading" | "available" | "unavailable";
+  data: CaseDocPlaceholderSourcePreviewData | null;
+  message: string;
+};
+
+type CaseDocPlaceholderSourcePreviewFilters = {
+  fs_cluster_name: string;
+  block: string;
+  prefecture: string;
+};
+
+
 type CaseDocPlaceholderStatusFilter = "all" | "enabled" | "disabled";
 
 type CaseDocPlaceholderEditorMode = "create" | "edit";
@@ -1113,6 +1161,7 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<LoginPage />} />
+      <Route path="/register" element={<SelfRegistrationPage />} />
       <Route path="/change-password" element={<PasswordChangePage />} />
       <Route element={<Shell />}>
         <Route path="/home" element={<HomePage />} />
@@ -1340,7 +1389,7 @@ function LoginPage() {
           <p className="eyebrow">Sprint 1 / SB1-04</p>
           <h1 id="login-title">手順書DB WebUI</h1>
           <p>モジュール登録、検索、原本作成、原本承認状態確認までの主要操作をWebUIから辿れるM1向け画面です。</p>
-          <p>発行されたメールアドレスとパスワードでログインしてください。</p>
+          <p>登録済みのメールアドレスとパスワードでログインしてください。</p>
         </div>
         <form className="login-form" onSubmit={handleLogin}>
           <label>
@@ -1366,6 +1415,109 @@ function LoginPage() {
             <span aria-hidden="true">→</span>
             {isSubmitting ? "確認中" : "ログイン"}
           </button>
+          <NavLink className="auth-page-link" to="/register">初めて利用する方は新規ユーザー登録</NavLink>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function SelfRegistrationPage() {
+  const navigate = useNavigate();
+  const { user: currentUser, register } = useAuth();
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [registrationError, setRegistrationError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (currentUser !== null) {
+      navigate(currentUser.passwordChangeRequired ? "/change-password" : "/home", { replace: true });
+    }
+  }, [currentUser, navigate]);
+
+  async function handleRegistration(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!username.trim() || !displayName.trim() || !password) {
+      setRegistrationError("すべての項目を入力してください。");
+      return;
+    }
+    if (password !== passwordConfirmation) {
+      setRegistrationError("確認用パスワードが一致しません。");
+      return;
+    }
+    setIsSubmitting(true);
+    setRegistrationError("");
+    try {
+      await register(username.trim(), displayName.trim(), password);
+      navigate("/home", { replace: true });
+    } catch (error) {
+      setRegistrationError(error instanceof Error ? error.message : "ユーザー登録に失敗しました。");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-screen">
+      <section className="login-panel" aria-labelledby="self-registration-title">
+        <div className="login-copy">
+          <p className="eyebrow">手順書DB / M1</p>
+          <h1 id="self-registration-title">新規ユーザー登録</h1>
+          <p>メールアドレスとパスワードを設定してください。登録後はメンバーとして利用できます。</p>
+        </div>
+        <form className="login-form" onSubmit={(event) => void handleRegistration(event)}>
+          <label>
+            メールアドレス
+            <input
+              autoComplete="email"
+              maxLength={254}
+              required
+              type="email"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </label>
+          <label>
+            表示名
+            <input
+              autoComplete="name"
+              maxLength={200}
+              required
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </label>
+          <label>
+            パスワード
+            <input
+              autoComplete="new-password"
+              minLength={8}
+              required
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </label>
+          <label>
+            パスワード（確認）
+            <input
+              autoComplete="new-password"
+              minLength={8}
+              required
+              type="password"
+              value={passwordConfirmation}
+              onChange={(event) => setPasswordConfirmation(event.target.value)}
+            />
+          </label>
+          {registrationError ? <p className="login-error" role="alert">{registrationError}</p> : null}
+          <button className="primary" type="submit" disabled={isSubmitting}>
+            <span aria-hidden="true">＋</span>
+            {isSubmitting ? "登録中" : "登録して利用を開始"}
+          </button>
+          <NavLink className="auth-page-link" to="/">ログインへ戻る</NavLink>
         </form>
       </section>
     </main>
@@ -7988,8 +8140,8 @@ const caseDocText = {
 };
 
 const caseDocPlaceholderText = {
-  title: "プレースホルダ一覧",
-  description: "案件CS生成で利用できるプレースホルダと参照元を確認します。",
+  title: "プレースホルダ設定",
+  description: "案件CS生成で利用するプレースホルダと参照データを管理します。",
   loading: "プレースホルダ定義を取得しています。",
   loaded: "プレースホルダ定義を取得しました。",
   failed: "プレースホルダ定義の取得に失敗しました。",
@@ -8039,6 +8191,19 @@ const caseDocPlaceholderText = {
   sourceOptionsUnavailable: "参照候補を取得できないため、手入力に切り替えています。",
   selectSourceFile: "参照ファイルを選択してください",
   selectColumn: "列名を選択してください",
+  sourcePreviewTitle: "参照データ",
+  sourcePreviewLoading: "参照データを取得しています。",
+  sourcePreviewLoaded: "参照データを取得しました。",
+  sourcePreviewUnavailable: "参照データを取得できませんでした。",
+  sourcePreviewEmpty: "条件に一致するデータはありません。",
+  fsClusterName: "FSクラスタ名",
+  block: "ブロック",
+  prefecture: "装置設置府県",
+  resetFilters: "条件をリセット",
+  rowNumber: "行",
+  configuredPlaceholders: "設定済み",
+  previousPage: "前へ",
+  nextPage: "次へ",
   mutationReady: "追加、編集、有効/無効切替を実行できます。",
   backToCaseDocs: "案件化へ戻る",
   emptyTitle: "プレースホルダ定義がありません",
@@ -8097,6 +8262,15 @@ function toGeneratedCaseDocPlaceholderSourceColumn(form: CaseDocPlaceholderFormS
 
   return normalizedName || "placeholder_value";
 }
+
+function normalizeCaseDocPlaceholderColumnName(value: string): string {
+  return value.replace(/[\s　]+/g, "").toLocaleLowerCase();
+}
+
+function formatCaseDocPlaceholderName(name: string): string {
+  return `{{${name}}}`;
+}
+
 function toCaseDocPlaceholderPayload(form: CaseDocPlaceholderFormState): CaseDocPlaceholderMappingItemData {
   const scope = form.scope;
   return {
@@ -9679,9 +9853,13 @@ function UserManagementPage() {
   });
   const [reloadTick, setReloadTick] = useState(0);
   const [roleDrafts, setRoleDrafts] = useState<Record<number, AuthRole>>({});
+  const [userListView, setUserListView] = useState<"available" | "deleted">("available");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [activeChangeTarget, setActiveChangeTarget] = useState<ManagedUserData | null>(null);
   const [passwordResetTarget, setPasswordResetTarget] = useState<ManagedUserData | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ManagedUserData | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [restoreTarget, setRestoreTarget] = useState<ManagedUserData | null>(null);
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [temporaryPasswordConfirmation, setTemporaryPasswordConfirmation] = useState("");
   const [createForm, setCreateForm] = useState<ManagedUserCreateForm>({
@@ -9746,8 +9924,11 @@ function UserManagementPage() {
     );
   }
 
-  const activeCount = listState.items.filter((item) => item.is_active).length;
-  const adminCount = listState.items.filter((item) => item.is_active && item.role === "admin").length;
+  const availableUsers = listState.items.filter((item) => item.deleted_at === null);
+  const deletedUsers = listState.items.filter((item) => item.deleted_at !== null);
+  const visibleUsers = userListView === "available" ? availableUsers : deletedUsers;
+  const activeCount = availableUsers.filter((item) => item.is_active).length;
+  const adminCount = availableUsers.filter((item) => item.is_active && item.role === "admin").length;
 
   function openCreateDialog(): void {
     setCreateForm({
@@ -9855,6 +10036,64 @@ function UserManagementPage() {
     }
   }
 
+  function openDeleteDialog(item: ManagedUserData): void {
+    setDeleteTarget(item);
+    setDeleteReason("");
+    setMutationState({ status: "idle", message: `${item.display_name} を削除します。` });
+  }
+
+  async function handleDeleteUser(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (deleteTarget === null) {
+      return;
+    }
+    if (!deleteReason.trim()) {
+      setMutationState({ status: "error", message: "削除理由を入力してください。" });
+      return;
+    }
+
+    setMutationState({ status: "submitting", message: `${deleteTarget.display_name} を削除しています。` });
+    try {
+      const response = await apiFetch(buildApiUrl(`/api/v1/auth/users/${deleteTarget.user_id}`), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: deleteReason.trim() }),
+      });
+      const body = (await response.json()) as ApiResponse<ManagedUserData>;
+      if (!response.ok || body.result !== "success" || body.data === null) {
+        setMutationState({ status: "error", message: body.message || `ユーザーを削除できませんでした。HTTP ${response.status}` });
+        return;
+      }
+
+      setDeleteTarget(null);
+      setDeleteReason("");
+      setMutationState({ status: "success", message: body.message });
+      setReloadTick((current) => current + 1);
+    } catch {
+      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+    }
+  }
+
+  async function handleRestoreUser(item: ManagedUserData): Promise<void> {
+    setMutationState({ status: "submitting", message: `${item.display_name} を復元しています。` });
+    try {
+      const response = await apiFetch(buildApiUrl(`/api/v1/auth/users/${item.user_id}/restore`), {
+        method: "POST",
+      });
+      const body = (await response.json()) as ApiResponse<ManagedUserData>;
+      if (!response.ok || body.result !== "success" || body.data === null) {
+        setMutationState({ status: "error", message: body.message || `ユーザーを復元できませんでした。HTTP ${response.status}` });
+        return;
+      }
+
+      setRestoreTarget(null);
+      setMutationState({ status: "success", message: body.message });
+      setReloadTick((current) => current + 1);
+    } catch {
+      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+    }
+  }
+
   async function handlePasswordReset(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (passwordResetTarget === null) {
@@ -9895,7 +10134,7 @@ function UserManagementPage() {
   }
 
   return (
-    <Page title="ユーザー管理" description="ログインユーザーの追加、ロール変更、有効・無効の切替を行います。">
+    <Page title="ユーザー管理" description="ユーザーの権限、利用状態、削除済みアカウントを管理します。">
       <Toolbar>
         <button className="primary" type="button" onClick={openCreateDialog}>
           <span aria-hidden="true">+</span>
@@ -9904,12 +10143,13 @@ function UserManagementPage() {
       </Toolbar>
 
       <section
-        className={`list-status list-status-${mutationState.status === "error" ? "unavailable" : listState.status}`}
+        className={`list-status user-management-status list-status-${mutationState.status === "error" ? "unavailable" : listState.status}`}
         aria-live="polite"
       >
-        <div><span>登録ユーザー</span><strong>{listState.items.length}人</strong></div>
+        <div><span>登録ユーザー</span><strong>{availableUsers.length}人</strong></div>
         <div><span>有効</span><strong>{activeCount}人</strong></div>
         <div><span>有効な管理者</span><strong>{adminCount}人</strong></div>
+        <div><span>削除済み</span><strong>{deletedUsers.length}人</strong></div>
         <p>{mutationState.status === "idle" ? listState.message : mutationState.message}</p>
       </section>
 
@@ -9917,80 +10157,131 @@ function UserManagementPage() {
         <div className="user-management-heading">
           <div>
             <h2>ユーザー一覧</h2>
-            <p>ロールや有効状態を変更すると、対象ユーザーは再ログインが必要になります。</p>
+            <p>{userListView === "available" ? "利用中・無効化中のユーザーです。" : "論理削除されたユーザーです。"}</p>
           </div>
-          <span>{listState.items.length}人</span>
+          <span>{visibleUsers.length}人</span>
         </div>
-        {listState.items.length > 0 ? (
-          <DataTable
-            columns={["メールアドレス", "表示名", "状態", "ロール", "パスワード", "最終ログイン", "操作"]}
-            rowClassNames={listState.items.map((item) => item.is_active ? undefined : "user-management-row-inactive")}
-            rows={listState.items.map((item) => {
-              const isSelf = item.user_id === currentUser.userId;
-              const draftRole = roleDrafts[item.user_id] ?? item.role;
-              return [
-                <span className="user-management-username">
-                  <strong>{item.username}</strong>
-                  {isSelf ? <small>ログイン中</small> : null}
-                </span>,
+        <div className="user-list-tabs" role="tablist" aria-label="ユーザー表示区分">
+          <button
+            aria-selected={userListView === "available"}
+            className={userListView === "available" ? "active" : ""}
+            role="tab"
+            type="button"
+            onClick={() => setUserListView("available")}
+          >
+            利用ユーザー {availableUsers.length}
+          </button>
+          <button
+            aria-selected={userListView === "deleted"}
+            className={userListView === "deleted" ? "active" : ""}
+            role="tab"
+            type="button"
+            onClick={() => setUserListView("deleted")}
+          >
+            削除済み {deletedUsers.length}
+          </button>
+        </div>
+        {visibleUsers.length > 0 ? (
+          userListView === "available" ? (
+            <DataTable
+              columns={["メールアドレス", "表示名", "状態", "ロール", "パスワード", "最終ログイン", "操作"]}
+              rowClassNames={availableUsers.map((item) => item.is_active ? undefined : "user-management-row-inactive")}
+              rows={availableUsers.map((item) => {
+                const isSelf = item.user_id === currentUser.userId;
+                const draftRole = roleDrafts[item.user_id] ?? item.role;
+                return [
+                  <span className="user-management-username">
+                    <strong>{item.username}</strong>
+                    {isSelf ? <small>ログイン中</small> : null}
+                  </span>,
+                  item.display_name,
+                  <span className={`user-account-status ${item.is_active ? "active" : "inactive"}`}>
+                    {item.is_active ? "有効" : "無効"}
+                  </span>,
+                  <div className="user-role-editor">
+                    <select
+                      aria-label={`${item.display_name}のロール`}
+                      value={draftRole}
+                      disabled={isSelf || mutationState.status === "submitting"}
+                      onChange={(event) => setRoleDrafts((current) => ({
+                        ...current,
+                        [item.user_id]: event.target.value as AuthRole,
+                      }))}
+                    >
+                      <option value="member">メンバー</option>
+                      <option value="approver">承認者</option>
+                      <option value="admin">管理者</option>
+                    </select>
+                    <button
+                      className="secondary"
+                      type="button"
+                      disabled={isSelf || draftRole === item.role || mutationState.status === "submitting"}
+                      onClick={() => void handleRoleUpdate(item)}
+                    >
+                      変更
+                    </button>
+                  </div>,
+                  <span className={`user-password-status ${item.password_change_required ? "pending" : "ready"}`}>
+                    {item.password_change_required ? "変更待ち" : "設定済み"}
+                  </span>,
+                  formatManagedUserDateTime(item.last_login_at),
+                  <div className="user-management-actions">
+                    <button
+                      className="secondary"
+                      type="button"
+                      disabled={isSelf || mutationState.status === "submitting"}
+                      title={isSelf ? "自分自身のパスワードは初回変更画面から変更してください。" : undefined}
+                      onClick={() => openPasswordResetDialog(item)}
+                    >
+                      再設定
+                    </button>
+                    <button
+                      className={item.is_active ? "danger" : "secondary"}
+                      type="button"
+                      disabled={isSelf || mutationState.status === "submitting"}
+                      title={isSelf ? "ログイン中の自分自身は無効化できません。" : undefined}
+                      onClick={() => setActiveChangeTarget(item)}
+                    >
+                      {item.is_active ? "無効化" : "再有効化"}
+                    </button>
+                    <button
+                      className="danger"
+                      type="button"
+                      disabled={isSelf || mutationState.status === "submitting"}
+                      title={isSelf ? "ログイン中の自分自身は削除できません。" : undefined}
+                      onClick={() => openDeleteDialog(item)}
+                    >
+                      削除
+                    </button>
+                  </div>,
+                ];
+              })}
+            />
+          ) : (
+            <DataTable
+              columns={["メールアドレス", "表示名", "削除日時", "削除者", "削除理由", "操作"]}
+              rowClassNames={deletedUsers.map(() => "user-management-row-deleted")}
+              rows={deletedUsers.map((item) => [
+                <strong>{item.username}</strong>,
                 item.display_name,
-                <span className={`user-account-status ${item.is_active ? "active" : "inactive"}`}>
-                  {item.is_active ? "有効" : "無効"}
-                </span>,
-                <div className="user-role-editor">
-                  <select
-                    aria-label={`${item.display_name}のロール`}
-                    value={draftRole}
-                    disabled={isSelf || mutationState.status === "submitting"}
-                    onChange={(event) => setRoleDrafts((current) => ({
-                      ...current,
-                      [item.user_id]: event.target.value as AuthRole,
-                    }))}
-                  >
-                    <option value="member">メンバー</option>
-                    <option value="approver">承認者</option>
-                    <option value="admin">管理者</option>
-                  </select>
-                  <button
-                    className="secondary"
-                    type="button"
-                    disabled={isSelf || draftRole === item.role || mutationState.status === "submitting"}
-                    onClick={() => void handleRoleUpdate(item)}
-                  >
-                    変更
-                  </button>
-                </div>,
-                <span className={`user-password-status ${item.password_change_required ? "pending" : "ready"}`}>
-                  {item.password_change_required ? "変更待ち" : "設定済み"}
-                </span>,
-                formatManagedUserDateTime(item.last_login_at),
-                <div className="user-management-actions">
-                  <button
-                    className="secondary"
-                    type="button"
-                    disabled={isSelf || mutationState.status === "submitting"}
-                    title={isSelf ? "自分自身のパスワードは初回変更画面から変更してください。" : undefined}
-                    onClick={() => openPasswordResetDialog(item)}
-                  >
-                    再設定
-                  </button>
-                  <button
-                    className={item.is_active ? "danger" : "secondary"}
-                    type="button"
-                    disabled={isSelf || mutationState.status === "submitting"}
-                    title={isSelf ? "ログイン中の自分自身は無効化できません。" : undefined}
-                    onClick={() => setActiveChangeTarget(item)}
-                  >
-                    {item.is_active ? "無効化" : "再有効化"}
-                  </button>
-                </div>,
-              ];
-            })}
-          />
+                formatManagedUserDateTime(item.deleted_at),
+                item.deleted_by ?? "-",
+                item.delete_reason ?? "-",
+                <button
+                  className="secondary"
+                  type="button"
+                  disabled={mutationState.status === "submitting"}
+                  onClick={() => setRestoreTarget(item)}
+                >
+                  復元
+                </button>,
+              ])}
+            />
+          )
         ) : (
           <div className="empty-state">
-            <h2>{listState.status === "loading" ? "取得中" : "ユーザーを表示できません"}</h2>
-            <p>{listState.message}</p>
+            <h2>{listState.status === "loading" ? "取得中" : userListView === "available" ? "利用ユーザーはいません" : "削除済みユーザーはいません"}</h2>
+            <p>{listState.status === "loading" ? listState.message : "該当するユーザーはありません。"}</p>
           </div>
         )}
       </section>
@@ -10159,6 +10450,70 @@ function UserManagementPage() {
           </section>
         </div>
       ) : null}
+
+      {deleteTarget ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setDeleteTarget(null)}>
+          <section
+            aria-labelledby="user-delete-dialog-title"
+            aria-modal="true"
+            className="modal-dialog user-create-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="user-delete-dialog-title">ユーザーを削除しますか？</h2>
+            <p>{deleteTarget.display_name}（{deleteTarget.username}）</p>
+            <form className="user-create-form" onSubmit={(event) => void handleDeleteUser(event)}>
+              <label>
+                削除理由
+                <textarea
+                  maxLength={500}
+                  required
+                  rows={4}
+                  value={deleteReason}
+                  onChange={(event) => setDeleteReason(event.target.value)}
+                />
+              </label>
+              {mutationState.status === "error" ? <p className="form-error" role="alert">{mutationState.message}</p> : null}
+              <div className="modal-actions">
+                <button className="secondary" type="button" onClick={() => setDeleteTarget(null)}>
+                  キャンセル
+                </button>
+                <button className="danger" type="submit" disabled={mutationState.status === "submitting"}>
+                  削除
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {restoreTarget ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setRestoreTarget(null)}>
+          <section
+            aria-labelledby="user-restore-dialog-title"
+            aria-modal="true"
+            className="modal-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="user-restore-dialog-title">ユーザーを復元しますか？</h2>
+            <p>{restoreTarget.display_name}（{restoreTarget.username}）を無効状態で復元します。</p>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => setRestoreTarget(null)}>
+                キャンセル
+              </button>
+              <button
+                className="primary"
+                type="button"
+                disabled={mutationState.status === "submitting"}
+                onClick={() => void handleRestoreUser(restoreTarget)}
+              >
+                復元
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </Page>
   );
 }
@@ -10174,6 +10529,18 @@ function CaseDocPlaceholdersPage() {
     status: "loading",
     items: [],
     message: caseDocPlaceholderText.sourceOptionsLoading,
+  });
+  const [previewSourceFile, setPreviewSourceFile] = useState("");
+  const [previewFilters, setPreviewFilters] = useState<CaseDocPlaceholderSourcePreviewFilters>({
+    fs_cluster_name: "",
+    block: "",
+    prefecture: "",
+  });
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewState, setPreviewState] = useState<CaseDocPlaceholderSourcePreviewState>({
+    status: "idle",
+    data: null,
+    message: caseDocPlaceholderText.sourcePreviewLoading,
   });
   const [statusFilter, setStatusFilter] = useState<CaseDocPlaceholderStatusFilter>("all");
   const [deviceTypeFilter, setDeviceTypeFilter] = useState("all");
@@ -10250,10 +10617,18 @@ function CaseDocPlaceholdersPage() {
           setSourceFileState({ status: "unavailable", items: [], message: caseDocPlaceholderText.sourceOptionsUnavailable });
           return;
         }
+        const sourceItems = responseBody.data.items;
         setSourceFileState({
           status: "available",
-          items: responseBody.data.items,
+          items: sourceItems,
           message: caseDocPlaceholderText.sourceOptionsLoaded,
+        });
+        setPreviewSourceFile((current) => {
+          if (sourceItems.some((item) => item.source_file === current)) {
+            return current;
+          }
+          const preferredSource = sourceItems.find((item) => /unit_config|ユニット構成/i.test(item.source_file));
+          return preferredSource?.source_file ?? sourceItems[0]?.source_file ?? "";
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -10266,6 +10641,83 @@ function CaseDocPlaceholdersPage() {
     void fetchSourceFiles();
     return () => abortController.abort();
   }, [currentUser?.role, reloadTick]);
+
+  useEffect(() => {
+    if (currentUser?.role !== "admin" || !previewSourceFile) {
+      setPreviewState({
+        status: "idle",
+        data: null,
+        message: caseDocPlaceholderText.sourcePreviewLoading,
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    async function fetchSourcePreview(): Promise<void> {
+      setPreviewState({
+        status: "loading",
+        data: null,
+        message: caseDocPlaceholderText.sourcePreviewLoading,
+      });
+      const searchParams = new URLSearchParams({
+        source_file: previewSourceFile,
+        page: String(previewPage),
+        page_size: "50",
+      });
+      if (previewFilters.fs_cluster_name) {
+        searchParams.set("fs_cluster_name", previewFilters.fs_cluster_name);
+      }
+      if (previewFilters.block) {
+        searchParams.set("block", previewFilters.block);
+      }
+      if (previewFilters.prefecture) {
+        searchParams.set("prefecture", previewFilters.prefecture);
+      }
+
+      try {
+        const response = await apiFetch(
+          buildApiUrl(`/api/v1/case-docs/placeholders/source-preview?${searchParams.toString()}`),
+          { signal: abortController.signal },
+        );
+        const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderSourcePreviewData>;
+        if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+          setPreviewState({
+            status: "unavailable",
+            data: null,
+            message: responseBody.message || `${caseDocPlaceholderText.sourcePreviewUnavailable} HTTP ${response.status}`,
+          });
+          return;
+        }
+
+        setPreviewState({
+          status: "available",
+          data: responseBody.data,
+          message: caseDocPlaceholderText.sourcePreviewLoaded,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setPreviewState({
+          status: "unavailable",
+          data: null,
+          message: caseDocPlaceholderText.sourcePreviewUnavailable,
+        });
+      }
+    }
+
+    void fetchSourcePreview();
+    return () => abortController.abort();
+  }, [
+    currentUser?.role,
+    previewFilters.block,
+    previewFilters.fs_cluster_name,
+    previewFilters.prefecture,
+    previewPage,
+    previewSourceFile,
+    reloadTick,
+  ]);
 
   if (currentUser?.role !== "admin") {
     return (
@@ -10286,6 +10738,24 @@ function CaseDocPlaceholdersPage() {
   const normalizedKeyword = keywordFilter.trim().toLocaleLowerCase();
   const generatedSourceColumn = toGeneratedCaseDocPlaceholderSourceColumn(formState);
   const selectedSourceFile = sourceFileState.items.find((item) => item.source_file === formState.source_file) ?? null;
+  const previewData = previewState.data;
+  const previewFilterOptions = previewData?.filter_options ?? {
+    fs_cluster_names: [],
+    blocks: [],
+    prefectures: [],
+  };
+  const previewFiltersDisabled = previewState.status === "loading" || previewData?.filterable !== true;
+  const previewFsClusterOptions = previewFilters.fs_cluster_name
+    && !previewFilterOptions.fs_cluster_names.includes(previewFilters.fs_cluster_name)
+    ? [previewFilters.fs_cluster_name, ...previewFilterOptions.fs_cluster_names]
+    : previewFilterOptions.fs_cluster_names;
+  const previewBlockOptions = previewFilters.block && !previewFilterOptions.blocks.includes(previewFilters.block)
+    ? [previewFilters.block, ...previewFilterOptions.blocks]
+    : previewFilterOptions.blocks;
+  const previewPrefectureOptions = previewFilters.prefecture
+    && !previewFilterOptions.prefectures.includes(previewFilters.prefecture)
+    ? [previewFilters.prefecture, ...previewFilterOptions.prefectures]
+    : previewFilterOptions.prefectures;
 
   const filteredItems = placeholderState.items.filter((item) => {
     if (statusFilter === "enabled" && !item.enabled) {
@@ -10319,6 +10789,25 @@ function CaseDocPlaceholdersPage() {
 
     return searchableText.includes(normalizedKeyword);
   });
+
+  function updatePreviewSourceFile(sourceFile: string): void {
+    setPreviewSourceFile(sourceFile);
+    setPreviewFilters({ fs_cluster_name: "", block: "", prefecture: "" });
+    setPreviewPage(1);
+  }
+
+  function updatePreviewFilter<TKey extends keyof CaseDocPlaceholderSourcePreviewFilters>(
+    key: TKey,
+    value: CaseDocPlaceholderSourcePreviewFilters[TKey],
+  ): void {
+    setPreviewFilters((current) => ({ ...current, [key]: value }));
+    setPreviewPage(1);
+  }
+
+  function resetPreviewFilters(): void {
+    setPreviewFilters({ fs_cluster_name: "", block: "", prefecture: "" });
+    setPreviewPage(1);
+  }
 
   function openCreateEditor(): void {
     setEditorMode("create");
@@ -10413,6 +10902,38 @@ function CaseDocPlaceholdersPage() {
     }
   }
 
+  function getPreviewColumnMappings(column: string): CaseDocPlaceholderMappingItemData[] {
+    const normalizedColumn = normalizeCaseDocPlaceholderColumnName(column);
+    return (previewData?.mappings ?? []).filter(
+      (mapping) => mapping.scope === "device"
+        && normalizeCaseDocPlaceholderColumnName(mapping.value_column) === normalizedColumn,
+    );
+  }
+
+  function getPreviewCellMappings(
+    row: CaseDocPlaceholderSourcePreviewRowData,
+    column: string,
+  ): CaseDocPlaceholderMappingItemData[] {
+    if (previewData === null) {
+      return [];
+    }
+    const normalizedColumn = normalizeCaseDocPlaceholderColumnName(column);
+    return previewData.mappings.filter((mapping) => {
+      if (
+        mapping.scope !== "common"
+        || normalizeCaseDocPlaceholderColumnName(mapping.value_column) !== normalizedColumn
+        || !mapping.key_value
+      ) {
+        return false;
+      }
+      const keyColumnIndex = previewData.columns.findIndex(
+        (candidate) => normalizeCaseDocPlaceholderColumnName(candidate)
+          === normalizeCaseDocPlaceholderColumnName(mapping.key_column),
+      );
+      return keyColumnIndex >= 0 && row.values[keyColumnIndex] === mapping.key_value;
+    });
+  }
+
   return (
     <Page title={caseDocPlaceholderText.title} description={caseDocPlaceholderText.description}>
       <Toolbar>
@@ -10425,6 +10946,194 @@ function CaseDocPlaceholdersPage() {
           {caseDocPlaceholderText.add}
         </button>
       </Toolbar>
+
+      <section className="section-band placeholder-source-preview-section">
+        <div className="placeholder-source-preview-heading">
+          <div>
+            <h2>{caseDocPlaceholderText.sourcePreviewTitle}</h2>
+            {previewData?.sheet_name ? <span>{previewData.source_file} / {previewData.sheet_name}</span> : null}
+          </div>
+          <p aria-live="polite">{previewState.message}</p>
+        </div>
+
+        <div className="placeholder-source-preview-filters">
+          <label>
+            {caseDocPlaceholderText.sourceFile}
+            <select
+              value={previewSourceFile}
+              onChange={(event) => updatePreviewSourceFile(event.target.value)}
+              disabled={sourceFileState.status !== "available"}
+            >
+              <option value="">{caseDocPlaceholderText.selectSourceFile}</option>
+              {sourceFileState.items.map((item) => (
+                <option key={item.source_file} value={item.source_file}>{item.source_file}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {caseDocPlaceholderText.fsClusterName}
+            <select
+              value={previewFilters.fs_cluster_name}
+              onChange={(event) => updatePreviewFilter("fs_cluster_name", event.target.value)}
+              disabled={previewFiltersDisabled}
+            >
+              <option value="">{caseDocPlaceholderText.all}</option>
+              {previewFsClusterOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label>
+            {caseDocPlaceholderText.block}
+            <select
+              value={previewFilters.block}
+              onChange={(event) => updatePreviewFilter("block", event.target.value)}
+              disabled={previewFiltersDisabled}
+            >
+              <option value="">{caseDocPlaceholderText.all}</option>
+              {previewBlockOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label>
+            {caseDocPlaceholderText.prefecture}
+            <select
+              value={previewFilters.prefecture}
+              onChange={(event) => updatePreviewFilter("prefecture", event.target.value)}
+              disabled={previewFiltersDisabled}
+            >
+              <option value="">{caseDocPlaceholderText.all}</option>
+              {previewPrefectureOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <button
+            className="secondary"
+            type="button"
+            onClick={resetPreviewFilters}
+            disabled={previewFiltersDisabled || !Object.values(previewFilters).some(Boolean)}
+          >
+            {caseDocPlaceholderText.resetFilters}
+          </button>
+        </div>
+
+        {previewState.status === "loading" ? (
+          <div className="placeholder-source-preview-message" role="status">
+            {caseDocPlaceholderText.sourcePreviewLoading}
+          </div>
+        ) : null}
+
+        {previewState.status === "unavailable" ? (
+          <div className="placeholder-source-preview-message placeholder-source-preview-error" role="alert">
+            {previewState.message}
+          </div>
+        ) : null}
+
+        {previewState.status === "available" && previewData !== null ? (
+          <>
+            {previewData.rows.length > 0 ? (
+              <div className="placeholder-source-table-wrap">
+                <table aria-label={`${previewData.source_file} ${caseDocPlaceholderText.sourcePreviewTitle}`}>
+                  <thead>
+                    <tr className="placeholder-source-mapping-row">
+                      <th>{caseDocPlaceholderText.configuredPlaceholders}</th>
+                      {previewData.columns.map((column, columnIndex) => {
+                        const columnMappings = getPreviewColumnMappings(column);
+                        return (
+                          <th key={`mapping-${columnIndex}`}>
+                            {columnMappings.length > 0 ? (
+                              <div className="placeholder-source-mapping-list">
+                                {columnMappings.map((mapping) => (
+                                  <button
+                                    key={mapping.name}
+                                    type="button"
+                                    className="placeholder-source-mapping-chip"
+                                    onClick={() => openEditEditor(mapping)}
+                                    title={mapping.description ?? formatCaseDocPlaceholderName(mapping.name)}
+                                  >
+                                    {formatCaseDocPlaceholderName(mapping.name)}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="placeholder-source-mapping-empty">-</span>
+                            )}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                    <tr>
+                      <th>{caseDocPlaceholderText.rowNumber}</th>
+                      {previewData.columns.map((column, columnIndex) => (
+                        <th key={`column-${columnIndex}`}>{column}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewData.rows.map((row) => (
+                      <tr key={row.row_number}>
+                        <th scope="row">{row.row_number}</th>
+                        {previewData.columns.map((column, columnIndex) => {
+                          const cellMappings = getPreviewCellMappings(row, column);
+                          return (
+                            <td
+                              key={`${row.row_number}-${columnIndex}`}
+                              className={cellMappings.length > 0 ? "placeholder-source-mapped-cell" : undefined}
+                            >
+                              {cellMappings.length > 0 ? (
+                                <div className="placeholder-source-mapping-list">
+                                  {cellMappings.map((mapping) => (
+                                    <button
+                                      key={mapping.name}
+                                      type="button"
+                                      className="placeholder-source-mapping-chip"
+                                      onClick={() => openEditEditor(mapping)}
+                                      title={mapping.description ?? formatCaseDocPlaceholderName(mapping.name)}
+                                    >
+                                      {formatCaseDocPlaceholderName(mapping.name)}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <span>{row.values[columnIndex] ?? ""}</span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="placeholder-source-preview-message">{caseDocPlaceholderText.sourcePreviewEmpty}</div>
+            )}
+
+            <div className="placeholder-source-pagination">
+              <span>{previewData.total_count}件</span>
+              <div>
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => setPreviewPage((current) => Math.max(1, current - 1))}
+                  disabled={previewData.page <= 1}
+                >
+                  <span aria-hidden="true">←</span>
+                  {caseDocPlaceholderText.previousPage}
+                </button>
+                <strong>{previewData.page} / {Math.max(previewData.total_pages, 1)}</strong>
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => setPreviewPage((current) => current + 1)}
+                  disabled={
+                    previewData.total_pages === 0
+                    || previewData.page >= previewData.total_pages
+                  }
+                >
+                  {caseDocPlaceholderText.nextPage}
+                  <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </section>
 
       <section className={`list-status list-status-${mutationState.status === "error" ? "unavailable" : mutationState.status === "success" ? "available" : placeholderState.status}`} aria-live="polite">
         <div>

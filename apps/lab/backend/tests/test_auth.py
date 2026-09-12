@@ -33,6 +33,9 @@ def _managed_user(
     role: str = "member",
     is_active: bool = True,
     password_change_required: bool = False,
+    deleted_at: datetime | None = None,
+    deleted_by: str | None = None,
+    delete_reason: str | None = None,
 ) -> AuthManagedUserData:
     now = datetime(2026, 9, 11, 3, 0, tzinfo=timezone.utc)
     return AuthManagedUserData(
@@ -43,6 +46,9 @@ def _managed_user(
         is_active=is_active,
         password_change_required=password_change_required,
         last_login_at=None,
+        deleted_at=deleted_at,
+        deleted_by=deleted_by,
+        delete_reason=delete_reason,
         created_at=now,
         updated_at=now,
     )
@@ -101,6 +107,86 @@ def test_login_sets_httponly_cookie(test_settings, monkeypatch) -> None:
     finally:
         client.close()
         application.dependency_overrides.clear()
+
+
+def test_user_can_self_register_as_member(client, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_create(settings, **values):
+        captured.update(values)
+        return _managed_user(
+            user_id=12,
+            username="new-user@example.co.jp",
+            display_name="新規利用者",
+            role="member",
+            password_change_required=False,
+        )
+
+    monkeypatch.setattr("app.routers.auth.create_managed_user", fake_create)
+    monkeypatch.setattr(
+        "app.routers.auth.create_auth_session",
+        lambda settings, user_id: "self-registration-token",
+    )
+
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "new-user@example.co.jp",
+            "display_name": "新規利用者",
+            "password": "self-selected-password",
+            "role": "admin",
+        },
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json()["data"]["role"] == "member"
+    assert response.json()["data"]["password_change_required"] is False
+    assert captured["role"] == "member"
+    assert captured["require_password_change"] is False
+    assert "self-registration-token" in response.headers["set-cookie"]
+
+
+def test_duplicate_self_registration_returns_conflict(client, monkeypatch) -> None:
+    def fake_create(settings, **values):
+        del settings, values
+        raise DuplicateUsernameError()
+
+    monkeypatch.setattr("app.routers.auth.create_managed_user", fake_create)
+
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "member@example.co.jp",
+            "display_name": "重複利用者",
+            "password": "self-selected-password",
+        },
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert "すでに登録" in response.json()["message"]
+
+
+def test_self_registration_requires_email_address(client, monkeypatch) -> None:
+    create_user_called = False
+
+    def fake_create(settings, **values):
+        nonlocal create_user_called
+        create_user_called = True
+        return _managed_user()
+
+    monkeypatch.setattr("app.routers.auth.create_managed_user", fake_create)
+
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "not-an-email",
+            "display_name": "形式不正ユーザー",
+            "password": "self-selected-password",
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert create_user_called is False
 
 
 def test_member_cannot_open_admin_placeholder_settings(test_settings, monkeypatch) -> None:
@@ -287,6 +373,71 @@ def test_admin_cannot_disable_self(client, monkeypatch) -> None:
 
     assert response.status_code == status.HTTP_409_CONFLICT
     assert response.json()["message"] == "自分自身のアカウントは無効化できません。"
+
+
+def test_admin_can_logically_delete_managed_user(client, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    deleted_at = datetime(2026, 9, 12, 4, 0, tzinfo=timezone.utc)
+
+    def fake_delete(settings, **values):
+        captured.update(values)
+        return _managed_user(
+            user_id=int(values["user_id"]),
+            is_active=False,
+            deleted_at=deleted_at,
+            deleted_by=str(values["deleted_by"]),
+            delete_reason=str(values["reason"]),
+        )
+
+    monkeypatch.setattr("app.routers.auth.delete_managed_user", fake_delete)
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/auth/users/8",
+        json={"reason": "誤って登録したため"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"]["is_active"] is False
+    assert response.json()["data"]["deleted_at"] is not None
+    assert response.json()["data"]["delete_reason"] == "誤って登録したため"
+    assert captured["acting_user_id"] == 1
+    assert captured["deleted_by"] == "pytest authenticated user"
+
+
+def test_admin_cannot_delete_self(client, monkeypatch) -> None:
+    def fake_delete(settings, **values):
+        del settings, values
+        raise ManagedUserConflictError("自分自身のアカウントは削除できません。")
+
+    monkeypatch.setattr("app.routers.auth.delete_managed_user", fake_delete)
+
+    response = client.request(
+        "DELETE",
+        "/api/v1/auth/users/1",
+        json={"reason": "削除テスト"},
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["message"] == "自分自身のアカウントは削除できません。"
+
+
+def test_admin_can_restore_deleted_user(client, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_restore(settings, **values):
+        captured.update(values)
+        return _managed_user(user_id=int(values["user_id"]), is_active=False)
+
+    monkeypatch.setattr("app.routers.auth.restore_managed_user", fake_restore)
+
+    response = client.post("/api/v1/auth/users/8/restore")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"]["deleted_at"] is None
+    assert response.json()["data"]["is_active"] is False
+    assert captured["user_id"] == 8
+    assert "再有効化" in response.json()["message"]
 
 
 def test_password_change_required_user_can_only_use_auth_api(test_settings, monkeypatch) -> None:

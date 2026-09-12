@@ -17,6 +17,7 @@ type AuthContextValue = {
   status: AuthStatus;
   error: string;
   login: (username: string, password: string) => Promise<AuthUser>;
+  register: (username: string, displayName: string, password: string) => Promise<AuthUser>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
 };
@@ -128,6 +129,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return authenticatedUser;
   }
 
+  async function register(username: string, displayName: string, password: string): Promise<AuthUser> {
+    const response = await fetch(buildAuthApiUrl("/api/v1/auth/register"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, display_name: displayName, password }),
+    });
+    const body = await readAuthResponse(response);
+    if (!response.ok || body.result !== "success" || body.data === null) {
+      throw new Error(body.message || "ユーザー登録に失敗しました。");
+    }
+    const registeredUser = toAuthUser(body.data);
+    setUser(registeredUser);
+    setStatus("authenticated");
+    setError("");
+    return registeredUser;
+  }
+
   async function changePassword(currentPassword: string, newPassword: string): Promise<AuthUser> {
     const response = await fetch(buildAuthApiUrl("/api/v1/auth/change-password"), {
       method: "POST",
@@ -163,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const value = useMemo(
-    () => ({ user, status, error, login, changePassword, logout }),
+    () => ({ user, status, error, login, register, changePassword, logout }),
     [user, status, error],
   );
 
