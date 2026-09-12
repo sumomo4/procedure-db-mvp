@@ -8202,6 +8202,9 @@ const caseDocPlaceholderText = {
   resetFilters: "条件をリセット",
   rowNumber: "行",
   configuredPlaceholders: "設定済み",
+  addDeviceMapping: "この列から装置別プレースホルダを追加",
+  addCommonMapping: "このセルから共通プレースホルダを追加",
+  selectedSource: "選択元",
   previousPage: "前へ",
   nextPage: "次へ",
   mutationReady: "追加、編集、有効/無効切替を実行できます。",
@@ -8265,6 +8268,28 @@ function toGeneratedCaseDocPlaceholderSourceColumn(form: CaseDocPlaceholderFormS
 
 function normalizeCaseDocPlaceholderColumnName(value: string): string {
   return value.replace(/[\s　]+/g, "").toLocaleLowerCase();
+}
+
+function findCaseDocPlaceholderColumn(columns: string[], aliases: string[]): string {
+  const normalizedAliases = new Set(aliases.map(normalizeCaseDocPlaceholderColumnName));
+  return columns.find((column) => normalizedAliases.has(normalizeCaseDocPlaceholderColumnName(column))) ?? "";
+}
+
+function inferCaseDocPlaceholderDeviceType(
+  sourceFile: string,
+  mappings: CaseDocPlaceholderMappingItemData[],
+): string {
+  const sourceStem = sourceFile.replace(/\.[^.]+$/, "").trim().toUpperCase();
+  const sameDeviceMapping = mappings.find(
+    (mapping) => mapping.scope === "device" && mapping.device_type?.toUpperCase() === sourceStem,
+  );
+  if (sameDeviceMapping?.device_type) {
+    return sameDeviceMapping.device_type;
+  }
+  if (/^[A-Z][A-Z0-9_-]{0,31}$/.test(sourceStem)) {
+    return sourceStem;
+  }
+  return mappings.find((mapping) => mapping.scope === "device" && mapping.device_type)?.device_type ?? "SBC";
 }
 
 function formatCaseDocPlaceholderName(name: string): string {
@@ -10548,6 +10573,7 @@ function CaseDocPlaceholdersPage() {
   const [reloadTick, setReloadTick] = useState(0);
   const [editorMode, setEditorMode] = useState<CaseDocPlaceholderEditorMode | null>(null);
   const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
+  const [editorSourceSelection, setEditorSourceSelection] = useState<string | null>(null);
   const [formState, setFormState] = useState<CaseDocPlaceholderFormState>(() => emptyCaseDocPlaceholderForm());
   const [mutationState, setMutationState] = useState<CaseDocPlaceholderMutationState>({
     status: "idle",
@@ -10757,6 +10783,20 @@ function CaseDocPlaceholdersPage() {
     ? [previewFilters.prefecture, ...previewFilterOptions.prefectures]
     : previewFilterOptions.prefectures;
 
+  const previewCommonKeyColumn = previewData
+    ? previewData.mappings.find((mapping) => mapping.scope === "common")?.key_column
+      ?? findCaseDocPlaceholderColumn(previewData.columns, ["key", "キー"])
+    : "";
+  const previewDeviceKeyColumn = previewData
+    ? previewData.mappings.find((mapping) => mapping.scope === "device")?.key_column
+      ?? (findCaseDocPlaceholderColumn(previewData.columns, ["host_name", "ホスト名"])
+        || previewData.columns[0] || "")
+    : "";
+  const isPreviewCommonSource = previewData !== null && (
+    /^case_common_values\.(xlsx|xlsm|csv)$/i.test(previewData.source_file)
+    || (previewData.mappings.length > 0 && previewData.mappings.every((mapping) => mapping.scope === "common"))
+  );
+
   const filteredItems = placeholderState.items.filter((item) => {
     if (statusFilter === "enabled" && !item.enabled) {
       return false;
@@ -10812,13 +10852,68 @@ function CaseDocPlaceholdersPage() {
   function openCreateEditor(): void {
     setEditorMode("create");
     setEditingOriginalName(null);
+    setEditorSourceSelection(null);
     setFormState(emptyCaseDocPlaceholderForm());
+    setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
+  }
+
+  function openCreateEditorFromPreviewColumn(column: string): void {
+    if (previewData === null) {
+      return;
+    }
+    const deviceType = inferCaseDocPlaceholderDeviceType(previewData.source_file, previewData.mappings);
+    setEditorMode("create");
+    setEditingOriginalName(null);
+    setEditorSourceSelection(`${previewData.source_file} / ${column}`);
+    setFormState({
+      ...emptyCaseDocPlaceholderForm(),
+      scope: "device",
+      device_type: deviceType,
+      source_file: previewData.source_file,
+      key_column: previewDeviceKeyColumn,
+      value_column: column,
+    });
+    setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
+  }
+
+  function openCreateEditorFromPreviewCell(
+    row: CaseDocPlaceholderSourcePreviewRowData,
+    column: string,
+  ): void {
+    if (previewData === null || !previewCommonKeyColumn) {
+      return;
+    }
+    const keyColumnIndex = previewData.columns.findIndex(
+      (candidate) => normalizeCaseDocPlaceholderColumnName(candidate)
+        === normalizeCaseDocPlaceholderColumnName(previewCommonKeyColumn),
+    );
+    if (keyColumnIndex < 0) {
+      return;
+    }
+    const keyValue = row.values[keyColumnIndex]?.trim() ?? "";
+    if (!keyValue) {
+      return;
+    }
+
+    setEditorMode("create");
+    setEditingOriginalName(null);
+    setEditorSourceSelection(`${previewData.source_file} / ${row.row_number}行 / ${column}`);
+    setFormState({
+      ...emptyCaseDocPlaceholderForm(),
+      scope: "common",
+      device_type: "",
+      source_file: previewData.source_file,
+      key_column: previewCommonKeyColumn,
+      key_value: keyValue,
+      value_column: column,
+    });
     setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
   }
 
   function openEditEditor(item: CaseDocPlaceholderMappingItemData): void {
     setEditorMode("edit");
     setEditingOriginalName(item.name);
+    setEditorSourceSelection(`${item.source_file} / ${item.value_column}`);
     setFormState(toCaseDocPlaceholderForm(item));
     setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
   }
@@ -10826,6 +10921,7 @@ function CaseDocPlaceholdersPage() {
   function closeEditor(): void {
     setEditorMode(null);
     setEditingOriginalName(null);
+    setEditorSourceSelection(null);
     setFormState(emptyCaseDocPlaceholderForm());
   }
 
@@ -11035,9 +11131,12 @@ function CaseDocPlaceholdersPage() {
                       <th>{caseDocPlaceholderText.configuredPlaceholders}</th>
                       {previewData.columns.map((column, columnIndex) => {
                         const columnMappings = getPreviewColumnMappings(column);
+                        const canCreateMapping = !isPreviewCommonSource
+                          && normalizeCaseDocPlaceholderColumnName(column)
+                            !== normalizeCaseDocPlaceholderColumnName(previewDeviceKeyColumn);
                         return (
                           <th key={`mapping-${columnIndex}`}>
-                            {columnMappings.length > 0 ? (
+                            {columnMappings.length > 0 || canCreateMapping ? (
                               <div className="placeholder-source-mapping-list">
                                 {columnMappings.map((mapping) => (
                                   <button
@@ -11050,6 +11149,17 @@ function CaseDocPlaceholdersPage() {
                                     {formatCaseDocPlaceholderName(mapping.name)}
                                   </button>
                                 ))}
+                                {canCreateMapping ? (
+                                  <button
+                                    type="button"
+                                    className="placeholder-source-add-mapping"
+                                    onClick={() => openCreateEditorFromPreviewColumn(column)}
+                                    title={caseDocPlaceholderText.addDeviceMapping}
+                                    aria-label={`${column}: ${caseDocPlaceholderText.addDeviceMapping}`}
+                                  >
+                                    <span aria-hidden="true">+</span>
+                                  </button>
+                                ) : null}
                               </div>
                             ) : (
                               <span className="placeholder-source-mapping-empty">-</span>
@@ -11071,12 +11181,22 @@ function CaseDocPlaceholdersPage() {
                         <th scope="row">{row.row_number}</th>
                         {previewData.columns.map((column, columnIndex) => {
                           const cellMappings = getPreviewCellMappings(row, column);
+                          const keyColumnIndex = previewData.columns.findIndex(
+                            (candidate) => normalizeCaseDocPlaceholderColumnName(candidate)
+                              === normalizeCaseDocPlaceholderColumnName(previewCommonKeyColumn),
+                          );
+                          const canCreateMapping = isPreviewCommonSource
+                            && Boolean(previewCommonKeyColumn)
+                            && normalizeCaseDocPlaceholderColumnName(column)
+                              !== normalizeCaseDocPlaceholderColumnName(previewCommonKeyColumn)
+                            && keyColumnIndex >= 0
+                            && Boolean(row.values[keyColumnIndex]?.trim());
                           return (
                             <td
                               key={`${row.row_number}-${columnIndex}`}
                               className={cellMappings.length > 0 ? "placeholder-source-mapped-cell" : undefined}
                             >
-                              {cellMappings.length > 0 ? (
+                              {cellMappings.length > 0 || canCreateMapping ? (
                                 <div className="placeholder-source-mapping-list">
                                   {cellMappings.map((mapping) => (
                                     <button
@@ -11089,6 +11209,17 @@ function CaseDocPlaceholdersPage() {
                                       {formatCaseDocPlaceholderName(mapping.name)}
                                     </button>
                                   ))}
+                                  {canCreateMapping ? (
+                                    <button
+                                      type="button"
+                                      className="placeholder-source-add-mapping"
+                                      onClick={() => openCreateEditorFromPreviewCell(row, column)}
+                                      title={caseDocPlaceholderText.addCommonMapping}
+                                      aria-label={`${row.row_number}行 ${column}: ${caseDocPlaceholderText.addCommonMapping}`}
+                                    >
+                                      <span aria-hidden="true">+</span>
+                                    </button>
+                                  ) : null}
                                 </div>
                               ) : null}
                               <span>{row.values[columnIndex] ?? ""}</span>
@@ -11248,6 +11379,12 @@ function CaseDocPlaceholdersPage() {
             <h2 id="placeholder-editor-title">
               {editorMode === "create" ? caseDocPlaceholderText.editorCreateTitle : caseDocPlaceholderText.editorEditTitle}
             </h2>
+            {editorSourceSelection ? (
+              <p className="placeholder-editor-source">
+                <span>{caseDocPlaceholderText.selectedSource}</span>
+                <strong>{editorSourceSelection}</strong>
+              </p>
+            ) : null}
             <form className="placeholder-editor-form" onSubmit={(event) => void handleSubmitPlaceholder(event)}>
               <label>
                 {caseDocPlaceholderText.name}

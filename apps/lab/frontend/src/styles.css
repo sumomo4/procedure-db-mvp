@@ -2570,6 +2570,30 @@ textarea {
   background: #e8ddf3;
 }
 
+.placeholder-source-add-mapping {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #648d96;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #1f6f79;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.placeholder-source-add-mapping:hover {
+  border-color: #1f6f79;
+  background: #e8f3f4;
+}
+
+.placeholder-source-add-mapping:focus-visible {
+  outline: 2px solid #1f6f79;
+  outline-offset: 2px;
+}
+
 .placeholder-source-mapping-empty {
   color: #8a9499;
 }
@@ -2604,6 +2628,26 @@ textarea {
 .placeholder-source-pagination strong {
   min-width: 72px;
   text-align: center;
+}
+
+.placeholder-editor-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid #1f7882;
+  background: #eef6f6;
+  color: #405159;
+  font-size: 13px;
+}
+
+.placeholder-editor-source span {
+  color: #63727a;
+}
+
+.placeholder-editor-source strong {
+  overflow-wrap: anywhere;
 }
 
 
