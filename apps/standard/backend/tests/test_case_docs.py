@@ -3,6 +3,7 @@
 from io import BytesIO
 from pathlib import Path
 from hashlib import sha256
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
@@ -18,10 +19,14 @@ from app.core.case_doc_generation import (
 )
 from app.core.config import AppSettings
 from app.core.responses import (
+    CaseDocExecutionBulkUpdateRequest,
+    CaseDocExecutionCommentData,
+    CaseDocExecutionCommentUpdateRequest,
     CaseDocExecutionHistoryData,
     CaseDocExecutionItemData,
     CaseDocHostAssignmentData,
     CaseDocInstanceDetailData,
+    CaseDocInstanceListData,
     CaseDocPreparationData,
     CaseDocPreparationUpdateRequest,
     CaseDocTargetDeviceSlotData,
@@ -34,7 +39,12 @@ from app.core.responses import (
     SourceDocDetailData,
     SourceDocModuleItemData,
 )
-from app.db.case_doc_instances import _is_preparation_complete
+from app.db.case_doc_instances import (
+    _build_case_doc_list_filter,
+    _is_preparation_complete,
+    _normalize_case_doc_tag_paths,
+    _summary_from_row,
+)
 
 
 PNG_BYTES = bytes.fromhex(
@@ -1237,6 +1247,263 @@ def test_case_doc_preparation_requires_all_saved_values_before_execution() -> No
     assert _is_preparation_complete(None) is False
 
 
+def test_case_doc_summary_exposes_case_name_with_legacy_fallback() -> None:
+    row = {
+        "case_document_id": 7,
+        "case_document_key": "CASE-TEST-001",
+        "case_name": "東京第1ビル SBC更改",
+        "tag_paths": ["ネットワーク/SBC", "東京"],
+        "source_doc_id": 1,
+        "source_doc_key": "BP-STD-001",
+        "source_doc_name": "M1確認用 原本A",
+        "unit_config_id": "unit-tokyo-001",
+        "status": "active",
+        "total_count": 4,
+        "checked_count": 0,
+        "skipped_count": 0,
+        "pending_count": 4,
+        "resume_item_label": "0.1.1",
+        "created_by": "pytest",
+        "created_at": "2026-09-14T09:00:00+09:00",
+        "updated_at": "2026-09-14T09:00:00+09:00",
+    }
+
+    assert _summary_from_row(row).case_name == "東京第1ビル SBC更改"
+    assert _summary_from_row(row).tag_paths == ["ネットワーク/SBC", "東京"]
+    assert _summary_from_row({**row, "case_name": ""}).case_name == "M1確認用 原本A"
+
+
+def test_case_doc_search_filter_uses_keyword_tags_and_execution_status() -> None:
+    where_clause, parameters = _build_case_doc_list_filter(
+        "東京工事",
+        ["ネットワーク\\SBC", "東京", "ネットワーク/SBC"],
+        "not_started",
+    )
+
+    assert "cd.case_document_key ILIKE" in where_clause
+    assert "tag_filter_0" in where_clause
+    assert "tag_filter_1" in where_clause
+    assert "NOT EXISTS" in where_clause
+    assert parameters == {
+        "keyword": "%東京工事%",
+        "tag_path_0": "ネットワーク/SBC",
+        "tag_path_1": "東京",
+    }
+    assert _normalize_case_doc_tag_paths([]) == ["未分類"]
+    assert _normalize_case_doc_tag_paths("ネットワーク/SBC") == ["ネットワーク/SBC"]
+
+
+def test_case_doc_list_route_passes_search_filters(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_list(settings: AppSettings, **filters: object) -> CaseDocInstanceListData:
+        del settings
+        captured.update(filters)
+        return CaseDocInstanceListData(items=[], tags=["ネットワーク/SBC", "東京"])
+
+    monkeypatch.setattr("app.routers.case_docs.list_case_doc_instances", fake_list)
+    response = client.get(
+        "/api/v1/case-docs/instances",
+        params=[
+            ("keyword", "東京工事"),
+            ("tag_path", "ネットワーク/SBC"),
+            ("tag_path", "東京"),
+            ("execution_status", "not_started"),
+        ],
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert captured == {
+        "keyword": "東京工事",
+        "tag_paths": ["ネットワーク/SBC", "東京"],
+        "execution_status": "not_started",
+    }
+    assert response.json()["data"]["tags"] == ["ネットワーク/SBC", "東京"]
+
+
+def test_unstarted_case_doc_workbook_can_be_downloaded(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workbook_bytes = b"original-case-document"
+    detail = SimpleNamespace(
+        case_document_key="CASE-TEST-001",
+        status="active",
+        checked_count=0,
+        skipped_count=0,
+    )
+    monkeypatch.setattr("app.routers.case_docs.get_case_doc_instance_detail", lambda settings, case_document_id: detail)
+    monkeypatch.setattr(
+        "app.routers.case_docs.read_case_doc_original_workbook",
+        lambda settings, case_document_id: workbook_bytes,
+    )
+
+    response = client.get("/api/v1/case-docs/instances/7/workbook")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.content == workbook_bytes
+    assert response.headers["content-disposition"] == 'attachment; filename="CASE-TEST-001.xlsm"'
+
+
+def test_started_case_doc_workbook_download_is_rejected(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detail = SimpleNamespace(
+        case_document_key="CASE-TEST-001",
+        status="active",
+        checked_count=1,
+        skipped_count=0,
+    )
+    monkeypatch.setattr("app.routers.case_docs.get_case_doc_instance_detail", lambda settings, case_document_id: detail)
+
+    response = client.get("/api/v1/case-docs/instances/7/workbook")
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert "実行開始後" in response.json()["message"]
+
+
+def test_bulk_execution_route_uses_authenticated_user(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _fake_case_doc_context()
+    captured: dict[str, object] = {}
+
+    def fake_update(
+        settings: AppSettings,
+        case_document_id: int,
+        payload: CaseDocExecutionBulkUpdateRequest,
+        performed_by: str,
+    ) -> CaseDocInstanceDetailData:
+        del settings
+        captured.update(
+            case_document_id=case_document_id,
+            payload=payload,
+            performed_by=performed_by,
+        )
+        return CaseDocInstanceDetailData(
+            case_document_id=case_document_id,
+            case_document_key="CASE-TEST-001",
+            source_doc_id=1,
+            source_doc_key="BP-STD-001",
+            source_doc_name="M1確認用 原本A",
+            unit_config_id=context.unit_config.unit_config_id,
+            status="active",
+            total_count=2,
+            checked_count=2,
+            skipped_count=0,
+            pending_count=0,
+            created_by="pytest",
+            created_at="2026-08-22T00:00:00+09:00",
+            updated_at="2026-08-22T09:00:00+09:00",
+            prefecture=context.unit_config.prefecture,
+            building=context.unit_config.building,
+            targets=context.target_device_slots,
+            execution_items=[],
+        )
+
+    monkeypatch.setattr("app.routers.case_docs.update_case_doc_execution_items", fake_update)
+    response = client.patch(
+        "/api/v1/case-docs/instances/7/items/bulk",
+        json={
+            "status": "checked",
+            "items": [
+                {"execution_item_id": 11, "expected_lock_version": 0},
+                {"execution_item_id": 12, "expected_lock_version": 2},
+            ],
+            "skip_reason": None,
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert captured["case_document_id"] == 7
+    assert captured["performed_by"] == "pytest authenticated user"
+    payload = captured["payload"]
+    assert isinstance(payload, CaseDocExecutionBulkUpdateRequest)
+    assert [item.execution_item_id for item in payload.items] == [11, 12]
+
+
+def test_bulk_execution_route_rejects_pending_status(client: TestClient) -> None:
+    response = client.patch(
+        "/api/v1/case-docs/instances/7/items/bulk",
+        json={
+            "status": "pending",
+            "items": [{"execution_item_id": 11, "expected_lock_version": 0}],
+        },
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_execution_comment_route_uses_authenticated_user(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _fake_case_doc_context()
+    captured: dict[str, object] = {}
+
+    def fake_update(
+        settings: AppSettings,
+        case_document_id: int,
+        group_start_row_order: int,
+        payload: CaseDocExecutionCommentUpdateRequest,
+        updated_by: str,
+    ) -> CaseDocInstanceDetailData:
+        del settings
+        captured.update(
+            case_document_id=case_document_id,
+            group_start_row_order=group_start_row_order,
+            payload=payload,
+            updated_by=updated_by,
+        )
+        return CaseDocInstanceDetailData(
+            case_document_id=case_document_id,
+            case_document_key="CASE-TEST-001",
+            source_doc_id=1,
+            source_doc_key="BP-STD-001",
+            source_doc_name="M1確認用 原本A",
+            unit_config_id=context.unit_config.unit_config_id,
+            status="active",
+            total_count=2,
+            checked_count=0,
+            skipped_count=0,
+            pending_count=2,
+            created_by="pytest",
+            created_at="2026-09-14T09:00:00+09:00",
+            updated_at="2026-09-14T10:00:00+09:00",
+            prefecture=context.unit_config.prefecture,
+            building=context.unit_config.building,
+            targets=context.target_device_slots,
+            execution_items=[],
+            execution_comments=[
+                CaseDocExecutionCommentData(
+                    group_start_row_order=4,
+                    item_label="0.4.1",
+                    comment_text=payload.comment_text,
+                    updated_by=updated_by,
+                    updated_at="2026-09-14T10:00:00+09:00",
+                    lock_version=1,
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.routers.case_docs.update_case_doc_execution_comment", fake_update)
+    response = client.put(
+        "/api/v1/case-docs/instances/7/comments/4",
+        json={"comment_text": "想定外の応答を確認", "expected_lock_version": 0},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert captured["case_document_id"] == 7
+    assert captured["group_start_row_order"] == 4
+    assert captured["updated_by"] == "pytest authenticated user"
+    assert response.json()["data"]["execution_comments"][0]["comment_text"] == "想定外の応答を確認"
+
+
 def test_case_doc_evidence_workbook_writes_checked_time_and_skip_fill() -> None:
     source_doc = _fake_source_doc_detail(1)
     context = _fake_case_doc_context()
@@ -1300,6 +1567,16 @@ def test_case_doc_evidence_workbook_writes_checked_time_and_skip_fill() -> None:
         building=context.unit_config.building,
         targets=context.target_device_slots,
         execution_items=execution_items,
+        execution_comments=[
+            CaseDocExecutionCommentData(
+                group_start_row_order=snapshots[0]["row_order"],
+                item_label="0.1.1",
+                comment_text="想定より応答に時間がかかったため手順を見直す",
+                updated_by="pytest",
+                updated_at="2026-08-18T05:40:00+00:00",
+                lock_version=1,
+            )
+        ],
     )
 
     evidence_bytes = build_case_doc_evidence_workbook_bytes(original_bytes, detail)
@@ -1310,4 +1587,9 @@ def test_case_doc_evidence_workbook_writes_checked_time_and_skip_fill() -> None:
     assert body_sheet[snapshots[1]["excel_cell"]].value == "SKIP"
     assert str(body_sheet[snapshots[1]["excel_cell"]].fill.fgColor.rgb).endswith("D9D9D9")
     assert "\u5b9f\u65bd\u5c65\u6b74" in workbook.sheetnames
+    assert "コメント一覧" in workbook.sheetnames
+    comment_sheet = workbook["コメント一覧"]
+    assert comment_sheet["A2"].value == "0.1.1"
+    assert comment_sheet["C2"].value == "想定より応答に時間がかかったため手順を見直す"
+    assert comment_sheet["D2"].value == "pytest"
     assert workbook.vba_archive is not None

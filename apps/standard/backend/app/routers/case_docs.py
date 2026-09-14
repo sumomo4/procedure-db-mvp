@@ -15,6 +15,8 @@ from app.core.case_doc_generation import (
 )
 from app.core.responses import (
     ApiResponse,
+    CaseDocExecutionBulkUpdateRequest,
+    CaseDocExecutionCommentUpdateRequest,
     CaseDocExecutionUpdateRequest,
     CaseDocGenerateRequest,
     CaseDocInstanceCompleteRequest,
@@ -56,7 +58,9 @@ from app.db.case_doc_instances import (
     list_case_doc_instances,
     read_case_doc_original_workbook,
     update_case_doc_preparation,
+    update_case_doc_execution_comment,
     update_case_doc_execution_item,
+    update_case_doc_execution_items,
 )
 from app.db.source_docs import get_source_doc_detail
 from app.routers.health import get_app_settings
@@ -405,6 +409,7 @@ def create_case_doc_instance_resource(
             workbook_bytes,
             execution_items,
             current_user.display_name,
+            payload.case_name,
         )
     except ValueError as exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
@@ -419,11 +424,24 @@ def create_case_doc_instance_resource(
 @router.get("/instances", response_model=ApiResponse[CaseDocInstanceListData])
 def read_case_doc_instances(
     settings: Annotated[AppSettings, Depends(get_app_settings)],
+    keyword: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+    tag_paths: Annotated[list[str] | None, Query(alias="tag_path", min_length=1)] = None,
+    execution_status: Annotated[
+        str | None,
+        Query(pattern=r"^(all|active|not_started|in_progress|completed)$"),
+    ] = None,
 ) -> ApiResponse[CaseDocInstanceListData]:
     """Return persistent executable case document instances."""
 
     try:
-        data = list_case_doc_instances(settings)
+        data = list_case_doc_instances(
+            settings,
+            keyword=keyword,
+            tag_paths=tag_paths,
+            execution_status=execution_status,
+        )
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
     except DatabaseConnectionError as exception:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
     return success_response(data, "案件CS実行一覧を取得しました。")
@@ -468,6 +486,32 @@ def update_case_doc_preparation_resource(
 
 
 @router.patch(
+    "/instances/{case_document_id}/items/bulk",
+    response_model=ApiResponse[CaseDocInstanceDetailData],
+)
+def update_case_doc_execution_items_resource(
+    case_document_id: int,
+    payload: CaseDocExecutionBulkUpdateRequest,
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceDetailData]:
+    """Check or skip pending time cells together without overwriting completed cells."""
+
+    try:
+        data = update_case_doc_execution_items(
+            settings,
+            case_document_id,
+            payload,
+            current_user.display_name,
+        )
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    return success_response(data, "案件CSの実施状態を一括更新しました。")
+
+
+@router.patch(
     "/instances/{case_document_id}/items/{execution_item_id}",
     response_model=ApiResponse[CaseDocInstanceDetailData],
 )
@@ -493,6 +537,34 @@ def update_case_doc_execution_item_resource(
     except DatabaseConnectionError as exception:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
     return success_response(data, "案件CSの実施状態を更新しました。")
+
+
+@router.put(
+    "/instances/{case_document_id}/comments/{group_start_row_order}",
+    response_model=ApiResponse[CaseDocInstanceDetailData],
+)
+def update_case_doc_execution_comment_resource(
+    case_document_id: int,
+    group_start_row_order: int,
+    payload: CaseDocExecutionCommentUpdateRequest,
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocInstanceDetailData]:
+    """Save the comment attached to one minor-number execution group."""
+
+    try:
+        data = update_case_doc_execution_comment(
+            settings,
+            case_document_id,
+            group_start_row_order,
+            payload,
+            current_user.display_name,
+        )
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    return success_response(data, "小項番のコメントを保存しました。")
 
 
 @router.post(
@@ -538,6 +610,41 @@ def export_case_doc_instance_evidence(
     filename = f"{detail.case_document_key}-evidence.xlsm"
     return Response(
         content=evidence_bytes,
+        media_type=XLSM_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/instances/{case_document_id}/workbook")
+def export_unstarted_case_doc_workbook(
+    case_document_id: int,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> Response:
+    """Download the original case document before WebUI execution begins."""
+
+    try:
+        detail = get_case_doc_instance_detail(settings, case_document_id)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+
+    if detail is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="案件CSが見つかりませんでした。")
+    if detail.status != "active" or detail.checked_count + detail.skipped_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="実行開始後または完了済みの案件CSは、元の案件CS Excelを出力できません。",
+        )
+
+    try:
+        workbook_bytes = read_case_doc_original_workbook(settings, case_document_id)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+
+    filename = f"{detail.case_document_key}.xlsm"
+    return Response(
+        content=workbook_bytes,
         media_type=XLSM_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
