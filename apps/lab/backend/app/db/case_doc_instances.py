@@ -10,8 +10,11 @@ from uuid import uuid4
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    CaseDocExecutionCommentData,
+    CaseDocExecutionCommentUpdateRequest,
     CaseDocExecutionHistoryData,
     CaseDocExecutionItemData,
+    CaseDocExecutionBulkUpdateRequest,
     CaseDocExecutionUpdateRequest,
     CaseDocInstanceDetailData,
     CaseDocInstanceListData,
@@ -29,6 +32,7 @@ CASE_DOC_INSTANCE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS proc.case_documents (
     case_document_id bigserial PRIMARY KEY,
     case_document_key text NOT NULL UNIQUE,
+    case_name text,
     source_doc_id bigint NOT NULL,
     source_doc_version_id bigint NOT NULL,
     source_doc_key text NOT NULL,
@@ -38,6 +42,7 @@ CREATE TABLE IF NOT EXISTS proc.case_documents (
     building text NOT NULL,
     context_json jsonb NOT NULL,
     preparation_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    tags_initialized boolean NOT NULL DEFAULT false,
     workbook_path text NOT NULL,
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed')),
     created_by text,
@@ -48,6 +53,20 @@ CREATE TABLE IF NOT EXISTS proc.case_documents (
 
 ALTER TABLE proc.case_documents
     ADD COLUMN IF NOT EXISTS preparation_json jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE proc.case_documents
+    ADD COLUMN IF NOT EXISTS case_name text;
+ALTER TABLE proc.case_documents
+    ADD COLUMN IF NOT EXISTS tags_initialized boolean NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS proc.case_document_tag_memberships (
+    case_document_id bigint NOT NULL REFERENCES proc.case_documents (case_document_id) ON DELETE CASCADE,
+    tag_path text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (case_document_id, tag_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_case_document_tag_memberships_tag_path
+    ON proc.case_document_tag_memberships (tag_path);
 
 CREATE TABLE IF NOT EXISTS proc.case_document_targets (
     case_document_target_id bigserial PRIMARY KEY,
@@ -96,6 +115,18 @@ ALTER TABLE proc.case_document_execution_items
 CREATE INDEX IF NOT EXISTS idx_case_document_execution_items_case_document
     ON proc.case_document_execution_items (case_document_id, row_order, target_no);
 
+CREATE TABLE IF NOT EXISTS proc.case_document_execution_comments (
+    execution_comment_id bigserial PRIMARY KEY,
+    case_document_id bigint NOT NULL REFERENCES proc.case_documents (case_document_id) ON DELETE CASCADE,
+    group_start_row_order integer NOT NULL CHECK (group_start_row_order > 0),
+    item_label text NOT NULL,
+    comment_text text NOT NULL DEFAULT '',
+    updated_by text,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    lock_version integer NOT NULL DEFAULT 0 CHECK (lock_version >= 0),
+    UNIQUE (case_document_id, group_start_row_order)
+);
+
 CREATE TABLE IF NOT EXISTS proc.case_document_execution_histories (
     history_id bigserial PRIMARY KEY,
     execution_item_id bigint NOT NULL REFERENCES proc.case_document_execution_items (execution_item_id) ON DELETE CASCADE,
@@ -119,8 +150,66 @@ def _isoformat(value: Any) -> str | None:
     return str(value)
 
 
+def _normalize_case_doc_tag_paths(tag_paths: Sequence[str] | None) -> list[str]:
+    """Normalize inherited tag paths while preserving letter case."""
+
+    if isinstance(tag_paths, str):
+        tag_paths = [tag_paths]
+    normalized: list[str] = []
+    for tag_path in tag_paths or []:
+        value = "/".join(
+            part.strip()
+            for part in str(tag_path).strip().replace("\\", "/").split("/")
+            if part.strip()
+        )
+        value = value or "未分類"
+        if value not in normalized:
+            normalized.append(value)
+    return normalized or ["未分類"]
+
+
 def _ensure_schema(cursor: Any) -> None:
     cursor.execute(CASE_DOC_INSTANCE_SCHEMA_SQL)
+    cursor.execute("SELECT to_regclass('proc.blueprint_tag_memberships') AS relation_name;")
+    source_tag_table = cursor.fetchone()
+    if source_tag_table and source_tag_table["relation_name"] is not None:
+        cursor.execute(
+            """
+            INSERT INTO proc.case_document_tag_memberships (case_document_id, tag_path)
+            SELECT cd.case_document_id, source_tag.tag_path
+            FROM proc.case_documents cd
+            JOIN proc.blueprint_tag_memberships source_tag
+              ON source_tag.blueprint_id = cd.source_doc_id
+            WHERE cd.tags_initialized = false
+              AND NOT EXISTS (
+                SELECT 1
+                FROM proc.case_document_tag_memberships existing_tag
+                WHERE existing_tag.case_document_id = cd.case_document_id
+            )
+            ON CONFLICT (case_document_id, tag_path) DO NOTHING;
+            """
+        )
+    cursor.execute(
+        """
+        INSERT INTO proc.case_document_tag_memberships (case_document_id, tag_path)
+        SELECT cd.case_document_id, '未分類'
+        FROM proc.case_documents cd
+        WHERE cd.tags_initialized = false
+          AND NOT EXISTS (
+            SELECT 1
+            FROM proc.case_document_tag_memberships existing_tag
+            WHERE existing_tag.case_document_id = cd.case_document_id
+        )
+        ON CONFLICT (case_document_id, tag_path) DO NOTHING;
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE proc.case_documents
+        SET tags_initialized = true
+        WHERE tags_initialized = false;
+        """
+    )
 
 
 def _write_original_workbook(settings: AppSettings, case_document_key: str, workbook_bytes: bytes) -> Path:
@@ -138,6 +227,8 @@ def _summary_from_row(row: dict[str, Any]) -> CaseDocInstanceListItemData:
     return CaseDocInstanceListItemData(
         case_document_id=row["case_document_id"],
         case_document_key=row["case_document_key"],
+        case_name=str(row.get("case_name") or row.get("source_doc_name") or "").strip(),
+        tag_paths=_normalize_case_doc_tag_paths(row.get("tag_paths")),
         source_doc_id=row["source_doc_id"],
         source_doc_key=row["source_doc_key"],
         source_doc_name=row["source_doc_name"],
@@ -198,6 +289,19 @@ CASE_DOC_SUMMARY_SELECT = """
 SELECT
     cd.case_document_id,
     cd.case_document_key,
+    COALESCE(
+        NULLIF(BTRIM(cd.case_name), ''),
+        NULLIF(BTRIM(cd.preparation_json ->> 'construction_name'), ''),
+        cd.source_doc_name
+    ) AS case_name,
+    COALESCE(
+        (
+            SELECT array_agg(case_tag.tag_path ORDER BY case_tag.tag_path)
+            FROM proc.case_document_tag_memberships case_tag
+            WHERE case_tag.case_document_id = cd.case_document_id
+        ),
+        ARRAY['未分類']::text[]
+    ) AS tag_paths,
     cd.source_doc_id,
     cd.source_doc_key,
     cd.source_doc_name,
@@ -261,6 +365,7 @@ CASE_DOC_SUMMARY_GROUP = """
 GROUP BY
     cd.case_document_id,
     cd.case_document_key,
+    cd.case_name,
     cd.source_doc_id,
     cd.source_doc_key,
     cd.source_doc_name,
@@ -277,6 +382,92 @@ GROUP BY
 """
 
 
+VALID_CASE_DOC_EXECUTION_STATUSES = frozenset({"all", "active", "not_started", "in_progress", "completed"})
+
+
+def _build_case_doc_list_filter(
+    keyword: str | None,
+    tag_paths: Sequence[str] | None,
+    execution_status: str | None,
+) -> tuple[str, dict[str, object]]:
+    """Build server-side filters for the executable case document list."""
+
+    conditions: list[str] = []
+    parameters: dict[str, object] = {}
+    normalized_keyword = (keyword or "").strip()
+    if normalized_keyword:
+        conditions.append(
+            """
+            (
+                cd.case_document_key ILIKE %(keyword)s
+                OR COALESCE(cd.case_name, '') ILIKE %(keyword)s
+                OR cd.source_doc_key ILIKE %(keyword)s
+                OR cd.source_doc_name ILIKE %(keyword)s
+                OR COALESCE(cd.preparation_json ->> 'construction_name', '') ILIKE %(keyword)s
+                OR EXISTS (
+                    SELECT 1
+                    FROM proc.case_document_tag_memberships keyword_tag
+                    WHERE keyword_tag.case_document_id = cd.case_document_id
+                      AND keyword_tag.tag_path ILIKE %(keyword)s
+                )
+            )
+            """
+        )
+        parameters["keyword"] = f"%{normalized_keyword}%"
+
+    for index, tag_path in enumerate(_normalize_case_doc_tag_paths(tag_paths) if tag_paths else []):
+        parameter_name = f"tag_path_{index}"
+        conditions.append(
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM proc.case_document_tag_memberships tag_filter_{index}
+                WHERE tag_filter_{index}.case_document_id = cd.case_document_id
+                  AND tag_filter_{index}.tag_path = %({parameter_name})s
+            )
+            """
+        )
+        parameters[parameter_name] = tag_path
+
+    normalized_status = (execution_status or "all").strip().lower()
+    if normalized_status not in VALID_CASE_DOC_EXECUTION_STATUSES:
+        raise ValueError("execution_status is invalid.")
+    if normalized_status == "active":
+        conditions.append("cd.status = 'active'")
+    elif normalized_status == "not_started":
+        conditions.extend(
+            [
+                "cd.status = 'active'",
+                """
+                NOT EXISTS (
+                    SELECT 1
+                    FROM proc.case_document_execution_items started_item
+                    WHERE started_item.case_document_id = cd.case_document_id
+                      AND started_item.status IN ('checked', 'skipped')
+                )
+                """,
+            ]
+        )
+    elif normalized_status == "in_progress":
+        conditions.extend(
+            [
+                "cd.status = 'active'",
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM proc.case_document_execution_items started_item
+                    WHERE started_item.case_document_id = cd.case_document_id
+                      AND started_item.status IN ('checked', 'skipped')
+                )
+                """,
+            ]
+        )
+    elif normalized_status == "completed":
+        conditions.append("cd.status = 'completed'")
+
+    return ("WHERE " + " AND ".join(conditions) if conditions else "", parameters)
+
+
 def create_case_doc_instance(
     settings: AppSettings,
     source_doc: SourceDocDetailData,
@@ -284,6 +475,7 @@ def create_case_doc_instance(
     workbook_bytes: bytes,
     execution_item_snapshots: Sequence[dict[str, Any]],
     created_by: str | None,
+    case_name: str | None = None,
 ) -> CaseDocInstanceDetailData:
     """Persist a generated workbook and its executable time cells."""
 
@@ -305,6 +497,7 @@ def create_case_doc_instance(
                     """
                     INSERT INTO proc.case_documents (
                         case_document_key,
+                        case_name,
                         source_doc_id,
                         source_doc_version_id,
                         source_doc_key,
@@ -318,6 +511,7 @@ def create_case_doc_instance(
                         created_by
                     ) VALUES (
                         %(case_document_key)s,
+                        %(case_name)s,
                         %(source_doc_id)s,
                         %(source_doc_version_id)s,
                         %(source_doc_key)s,
@@ -334,6 +528,7 @@ def create_case_doc_instance(
                     """,
                     {
                         "case_document_key": case_document_key,
+                        "case_name": (case_name or "").strip() or source_doc.source_doc_name,
                         "source_doc_id": source_doc.source_doc_id,
                         "source_doc_version_id": source_doc.source_doc_version_id,
                         "source_doc_key": source_doc.source_doc_key,
@@ -362,6 +557,24 @@ def create_case_doc_instance(
                 if inserted is None:
                     raise RuntimeError("case document insert returned no identifier")
                 case_document_id = int(inserted["case_document_id"])
+
+                for tag_path in _normalize_case_doc_tag_paths(source_doc.tag_paths):
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.case_document_tag_memberships (case_document_id, tag_path)
+                        VALUES (%(case_document_id)s, %(tag_path)s)
+                        ON CONFLICT (case_document_id, tag_path) DO NOTHING;
+                        """,
+                        {"case_document_id": case_document_id, "tag_path": tag_path},
+                    )
+                cursor.execute(
+                    """
+                    UPDATE proc.case_documents
+                    SET tags_initialized = true
+                    WHERE case_document_id = %(case_document_id)s;
+                    """,
+                    {"case_document_id": case_document_id},
+                )
 
                 for target in context.target_device_slots:
                     cursor.execute(
@@ -433,8 +646,15 @@ def create_case_doc_instance(
     return detail
 
 
-def list_case_doc_instances(settings: AppSettings) -> CaseDocInstanceListData:
+def list_case_doc_instances(
+    settings: AppSettings,
+    keyword: str | None = None,
+    tag_paths: Sequence[str] | None = None,
+    execution_status: str | None = None,
+) -> CaseDocInstanceListData:
     """Return persistent case document instances ordered by newest first."""
+
+    where_clause, parameters = _build_case_doc_list_filter(keyword, tag_paths, execution_status)
 
     try:
         import psycopg
@@ -446,12 +666,25 @@ def list_case_doc_instances(settings: AppSettings) -> CaseDocInstanceListData:
         ) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 _ensure_schema(cursor)
-                cursor.execute(f"{CASE_DOC_SUMMARY_SELECT} {CASE_DOC_SUMMARY_GROUP} ORDER BY cd.created_at DESC")
+                cursor.execute(
+                    f"{CASE_DOC_SUMMARY_SELECT} {where_clause} {CASE_DOC_SUMMARY_GROUP} ORDER BY cd.created_at DESC",
+                    parameters,
+                )
                 rows = cursor.fetchall()
+                cursor.execute(
+                    """
+                    SELECT DISTINCT membership.tag_path
+                    FROM proc.case_document_tag_memberships membership
+                    JOIN proc.case_documents cd
+                      ON cd.case_document_id = membership.case_document_id
+                    ORDER BY membership.tag_path;
+                    """
+                )
+                tags = [str(row["tag_path"]) for row in cursor.fetchall()]
     except Exception as exception:
         raise DatabaseConnectionError("案件CS実行一覧の取得に失敗しました。") from exception
 
-    return CaseDocInstanceListData(items=[_summary_from_row(row) for row in rows])
+    return CaseDocInstanceListData(items=[_summary_from_row(row) for row in rows], tags=tags)
 
 
 def get_case_doc_instance_detail(
@@ -601,6 +834,23 @@ def get_case_doc_instance_detail(
                                 note=history_row["note"],
                             )
                         )
+
+                cursor.execute(
+                    """
+                    SELECT
+                        group_start_row_order,
+                        item_label,
+                        comment_text,
+                        updated_by,
+                        updated_at,
+                        lock_version
+                    FROM proc.case_document_execution_comments
+                    WHERE case_document_id = %(case_document_id)s
+                    ORDER BY group_start_row_order;
+                    """,
+                    {"case_document_id": case_document_id},
+                )
+                comment_rows = cursor.fetchall()
     except Exception as exception:
         raise DatabaseConnectionError("案件CS実行詳細の取得に失敗しました。") from exception
 
@@ -646,6 +896,17 @@ def get_case_doc_instance_detail(
         )
         for row in item_rows
     ]
+    execution_comments = [
+        CaseDocExecutionCommentData(
+            group_start_row_order=row["group_start_row_order"],
+            item_label=row["item_label"],
+            comment_text=row["comment_text"],
+            updated_by=row["updated_by"],
+            updated_at=_isoformat(row["updated_at"]) or "",
+            lock_version=row["lock_version"],
+        )
+        for row in comment_rows
+    ]
     return CaseDocInstanceDetailData(
         **summary.model_dump(),
         prefecture=summary_row["prefecture"],
@@ -653,6 +914,7 @@ def get_case_doc_instance_detail(
         preparation=_preparation_from_row(summary_row),
         targets=targets,
         execution_items=execution_items,
+        execution_comments=execution_comments,
     )
 
 
@@ -805,6 +1067,279 @@ def update_case_doc_execution_item(
     detail = get_case_doc_instance_detail(settings, case_document_id)
     if detail is None:
         raise DatabaseConnectionError("更新した案件CS実行データを取得できませんでした。")
+    return detail
+
+
+def update_case_doc_execution_items(
+    settings: AppSettings,
+    case_document_id: int,
+    payload: CaseDocExecutionBulkUpdateRequest,
+    performed_by: str,
+) -> CaseDocInstanceDetailData:
+    """Atomically update only pending cells, preserving every prior result."""
+
+    item_versions = {item.execution_item_id: item.expected_lock_version for item in payload.items}
+    if len(item_versions) != len(payload.items):
+        raise ValueError("同じ実施項目が複数選択されています。")
+    item_ids = sorted(item_versions)
+
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """
+                    SELECT execution_item_id, status, lock_version
+                    FROM proc.case_document_execution_items
+                    WHERE case_document_id = %(case_document_id)s
+                      AND execution_item_id = ANY(%(item_ids)s)
+                    ORDER BY execution_item_id
+                    FOR UPDATE;
+                    """,
+                    {"case_document_id": case_document_id, "item_ids": item_ids},
+                )
+                selected = cursor.fetchall()
+                if len(selected) != len(item_ids):
+                    raise ValueError("対象の実施項目が見つかりません。画面を再読み込みしてください。")
+                if any(row["status"] != "pending" for row in selected):
+                    raise ValueError("実施済みの項目は一括更新できません。画面を再読み込みしてください。")
+                if any(row["lock_version"] != item_versions[row["execution_item_id"]] for row in selected):
+                    raise ValueError("ほかの操作で更新されています。画面を再読み込みしてください。")
+
+                cursor.execute(
+                    """
+                    SELECT status, preparation_json
+                    FROM proc.case_documents
+                    WHERE case_document_id = %(case_document_id)s
+                    FOR UPDATE;
+                    """,
+                    {"case_document_id": case_document_id},
+                )
+                case_document = cursor.fetchone()
+                if case_document is None or case_document["status"] != "active":
+                    raise ValueError("案件CSが見つからないか、すでに完了しています。")
+                if not _is_preparation_complete(case_document["preparation_json"]):
+                    raise ValueError("工事情報を入力して保存してから案件CSを実行してください。")
+
+                cursor.execute(
+                    """
+                    UPDATE proc.case_document_execution_items
+                    SET status = %(status)s,
+                        performed_at = now(),
+                        performed_by = %(performed_by)s,
+                        skip_reason = %(skip_reason)s,
+                        lock_version = lock_version + 1,
+                        updated_at = now()
+                    WHERE case_document_id = %(case_document_id)s
+                      AND execution_item_id = ANY(%(item_ids)s)
+                      AND status = 'pending'
+                    RETURNING execution_item_id;
+                    """,
+                    {
+                        "status": payload.status,
+                        "performed_by": performed_by,
+                        "skip_reason": payload.skip_reason if payload.status == "skipped" else None,
+                        "case_document_id": case_document_id,
+                        "item_ids": item_ids,
+                    },
+                )
+                if len(cursor.fetchall()) != len(item_ids):
+                    raise ValueError("ほかの操作で更新されています。画面を再読み込みしてください。")
+
+                cursor.execute(
+                    """
+                    INSERT INTO proc.case_document_execution_histories (
+                        execution_item_id, from_status, to_status, changed_by, note
+                    )
+                    SELECT execution_item_id, 'pending', %(status)s, %(performed_by)s, %(note)s
+                    FROM proc.case_document_execution_items
+                    WHERE case_document_id = %(case_document_id)s
+                      AND execution_item_id = ANY(%(item_ids)s);
+                    """,
+                    {
+                        "status": payload.status,
+                        "performed_by": performed_by,
+                        "note": payload.skip_reason if payload.status == "skipped" else None,
+                        "case_document_id": case_document_id,
+                        "item_ids": item_ids,
+                    },
+                )
+                cursor.execute(
+                    """
+                    UPDATE proc.case_documents
+                    SET updated_at = now()
+                    WHERE case_document_id = %(case_document_id)s;
+                    """,
+                    {"case_document_id": case_document_id},
+                )
+    except ValueError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("案件CSの一括更新に失敗しました。") from exception
+
+    detail = get_case_doc_instance_detail(settings, case_document_id)
+    if detail is None:
+        raise DatabaseConnectionError("更新した案件CS実行データを取得できませんでした。")
+    return detail
+
+
+def update_case_doc_execution_comment(
+    settings: AppSettings,
+    case_document_id: int,
+    group_start_row_order: int,
+    payload: CaseDocExecutionCommentUpdateRequest,
+    updated_by: str,
+) -> CaseDocInstanceDetailData:
+    """Save one optional comment against a minor-number execution group."""
+
+    comment_text = payload.comment_text.strip()
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                _ensure_schema(cursor)
+                cursor.execute(
+                    """
+                    SELECT status, preparation_json
+                    FROM proc.case_documents
+                    WHERE case_document_id = %(case_document_id)s
+                    FOR UPDATE;
+                    """,
+                    {"case_document_id": case_document_id},
+                )
+                case_document = cursor.fetchone()
+                if case_document is None or case_document["status"] != "active":
+                    raise ValueError("案件CSが見つからないか、すでに完了しています。")
+                if not _is_preparation_complete(case_document["preparation_json"]):
+                    raise ValueError("工事情報を入力して保存してからコメントを登録してください。")
+
+                cursor.execute(
+                    """
+                    SELECT
+                        major_no,
+                        middle_no,
+                        minor_no,
+                        (
+                            SELECT MIN(first_item.row_order)
+                            FROM proc.case_document_execution_items first_item
+                            WHERE first_item.case_document_id = %(case_document_id)s
+                        ) AS first_row_order
+                    FROM proc.case_document_execution_items
+                    WHERE case_document_id = %(case_document_id)s
+                      AND row_order = %(group_start_row_order)s
+                    ORDER BY target_no
+                    LIMIT 1;
+                    """,
+                    {
+                        "case_document_id": case_document_id,
+                        "group_start_row_order": group_start_row_order,
+                    },
+                )
+                group_row = cursor.fetchone()
+                if group_row is None:
+                    raise ValueError("指定された小項番が見つかりません。")
+                if not str(group_row["minor_no"] or "").strip() and group_start_row_order != group_row["first_row_order"]:
+                    raise ValueError("コメントは小項番の先頭行に登録してください。")
+
+                number_parts = [
+                    str(group_row[key] or "").strip()
+                    for key in ("major_no", "middle_no", "minor_no")
+                ]
+                item_label = ".".join(part for part in number_parts if part) or "番号なし"
+
+                cursor.execute(
+                    """
+                    SELECT lock_version
+                    FROM proc.case_document_execution_comments
+                    WHERE case_document_id = %(case_document_id)s
+                      AND group_start_row_order = %(group_start_row_order)s
+                    FOR UPDATE;
+                    """,
+                    {
+                        "case_document_id": case_document_id,
+                        "group_start_row_order": group_start_row_order,
+                    },
+                )
+                existing_comment = cursor.fetchone()
+                current_lock_version = int(existing_comment["lock_version"]) if existing_comment else 0
+                if current_lock_version != payload.expected_lock_version:
+                    raise ValueError("ほかの操作でコメントが更新されています。画面を再読み込みしてください。")
+
+                parameters = {
+                    "case_document_id": case_document_id,
+                    "group_start_row_order": group_start_row_order,
+                    "item_label": item_label,
+                    "comment_text": comment_text,
+                    "updated_by": updated_by,
+                    "expected_lock_version": payload.expected_lock_version,
+                }
+                if existing_comment is None:
+                    cursor.execute(
+                        """
+                        INSERT INTO proc.case_document_execution_comments (
+                            case_document_id,
+                            group_start_row_order,
+                            item_label,
+                            comment_text,
+                            updated_by,
+                            lock_version
+                        ) VALUES (
+                            %(case_document_id)s,
+                            %(group_start_row_order)s,
+                            %(item_label)s,
+                            %(comment_text)s,
+                            %(updated_by)s,
+                            1
+                        );
+                        """,
+                        parameters,
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE proc.case_document_execution_comments
+                        SET item_label = %(item_label)s,
+                            comment_text = %(comment_text)s,
+                            updated_by = %(updated_by)s,
+                            updated_at = now(),
+                            lock_version = lock_version + 1
+                        WHERE case_document_id = %(case_document_id)s
+                          AND group_start_row_order = %(group_start_row_order)s
+                          AND lock_version = %(expected_lock_version)s
+                        RETURNING execution_comment_id;
+                        """,
+                        parameters,
+                    )
+                    if cursor.fetchone() is None:
+                        raise ValueError("ほかの操作でコメントが更新されています。画面を再読み込みしてください。")
+
+                cursor.execute(
+                    """
+                    UPDATE proc.case_documents
+                    SET updated_at = now()
+                    WHERE case_document_id = %(case_document_id)s;
+                    """,
+                    {"case_document_id": case_document_id},
+                )
+    except ValueError:
+        raise
+    except Exception as exception:
+        raise DatabaseConnectionError("案件CSのコメント保存に失敗しました。") from exception
+
+    detail = get_case_doc_instance_detail(settings, case_document_id)
+    if detail is None:
+        raise DatabaseConnectionError("コメントを保存した案件CS実行データを取得できませんでした。")
     return detail
 
 

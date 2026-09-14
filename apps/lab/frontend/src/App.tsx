@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { Fragment, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { DevicePager, PreviewFrame, PreviewOverlay } from "./previewUi";
 import { useAuth, type AuthRole } from "./auth";
@@ -173,6 +173,26 @@ type ApiResponse<TData> = {
   data: TData | null;
   message: string;
 };
+
+type OperationNoticeTone = "success" | "warning" | "error";
+
+type OperationNoticeData = {
+  tone: OperationNoticeTone;
+  title: string;
+  message: string;
+};
+
+type OperationNoticeLocationState = {
+  operationNotice?: OperationNoticeData;
+};
+
+type ShellOutletContext = {
+  showOperationNotice: (notice: OperationNoticeData) => void;
+};
+
+function useOperationNotice(): ShellOutletContext["showOperationNotice"] {
+  return useOutletContext<ShellOutletContext>().showOperationNotice;
+}
 
 type ManagedUserData = {
   user_id: number;
@@ -628,6 +648,8 @@ type CaseDocGenerateState = {
 
 type CaseDocExecutionStatus = "pending" | "checked" | "skipped";
 
+type CaseDocExecutionBulkStatus = Exclude<CaseDocExecutionStatus, "pending">;
+
 type CaseDocExecutionHistoryData = {
   history_id: number;
   from_status: CaseDocExecutionStatus;
@@ -635,6 +657,15 @@ type CaseDocExecutionHistoryData = {
   changed_at: string;
   changed_by: string | null;
   note: string | null;
+};
+
+type CaseDocExecutionCommentData = {
+  group_start_row_order: number;
+  item_label: string;
+  comment_text: string;
+  updated_by: string | null;
+  updated_at: string;
+  lock_version: number;
 };
 
 type CaseDocExecutionItemData = {
@@ -665,6 +696,8 @@ type CaseDocExecutionItemData = {
 type CaseDocInstanceListItemData = {
   case_document_id: number;
   case_document_key: string;
+  case_name: string;
+  tag_paths: string[];
   source_doc_id: number;
   source_doc_key: string;
   source_doc_name: string;
@@ -682,7 +715,10 @@ type CaseDocInstanceListItemData = {
 
 type CaseDocInstanceListData = {
   items: CaseDocInstanceListItemData[];
+  tags: string[];
 };
+
+type CaseDocExecutionListTab = "in_progress" | "not_started" | "completed";
 
 type CaseDocPreparationData = {
   construction_name: string;
@@ -708,6 +744,7 @@ type CaseDocInstanceDetailData = CaseDocInstanceListItemData & {
   preparation: CaseDocPreparationData;
   targets: CaseDocTargetDeviceSlotData[];
   execution_items: CaseDocExecutionItemData[];
+  execution_comments: CaseDocExecutionCommentData[];
 };
 
 type CaseDocSavePickerOptions = {
@@ -965,6 +1002,17 @@ function SourceDocTagMembershipList({ item }: { item: SourceDocListItemData }) {
   );
 }
 
+function CaseDocTagMembershipList({ tagPaths }: { tagPaths: string[] }) {
+  const normalizedTags = tagPaths.length > 0 ? tagPaths : ["未分類"];
+  return (
+    <div className="module-folder-membership-list">
+      {Array.from(new Set(normalizedTags.map(normalizeModuleFolderPath))).map((tagPath) => (
+        <span key={tagPath}>{tagPath}</span>
+      ))}
+    </div>
+  );
+}
+
 function buildModuleFolderTreeItems(folders: string[]): ModuleFolderTreeItem[] {
   const directFolders = new Set(folders.map((folder) => normalizeModuleFolderPath(folder)));
   const itemMap = new Map<string, ModuleFolderTreeItem>();
@@ -1119,7 +1167,7 @@ async function readApiResponse<TData>(response: Response): Promise<ApiResponse<T
         return {
           result: "error",
           data: null,
-          message: typeof detail === "string" ? detail : `API処理に失敗しました。HTTP ${response.status}`,
+          message: typeof detail === "string" ? detail : `処理に失敗しました。（HTTP ${response.status}）`,
         };
       }
       return parsed as ApiResponse<TData>;
@@ -1127,7 +1175,7 @@ async function readApiResponse<TData>(response: Response): Promise<ApiResponse<T
       return {
         result: "error",
         data: null,
-        message: `API応答JSONの解析に失敗しました。HTTP ${response.status}`,
+        message: `サーバーからの応答を読み取れませんでした。（HTTP ${response.status}）`,
       };
     }
   }
@@ -1138,7 +1186,7 @@ async function readApiResponse<TData>(response: Response): Promise<ApiResponse<T
     message:
       response.status === 413
         ? "Excelファイルのサイズがアップロード上限を超えています。管理者にアップロード上限の確認を依頼してください。"
-        : `APIからJSONではない応答が返りました。HTTP ${response.status}`,
+        : `サーバーから想定外の応答が返りました。（HTTP ${response.status}）`,
   };
 }
 
@@ -1190,6 +1238,7 @@ function Shell() {
   const navigate = useNavigate();
   const { user: currentUser, logout } = useAuth();
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
+  const [operationNotice, setOperationNotice] = useState<OperationNoticeData | null>(null);
 
   useEffect(() => {
     if (currentUser === null) {
@@ -1200,6 +1249,25 @@ function Shell() {
       navigate("/change-password", { replace: true });
     }
   }, [currentUser, navigate]);
+
+  useEffect(() => {
+    const state = location.state as OperationNoticeLocationState | null;
+    if (!state?.operationNotice) {
+      return;
+    }
+
+    setOperationNotice(state.operationNotice);
+    navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: null });
+  }, [location.hash, location.pathname, location.search, location.state, navigate]);
+
+  useEffect(() => {
+    if (!operationNotice) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => setOperationNotice(null), 8000);
+    return () => window.clearTimeout(timeoutId);
+  }, [operationNotice]);
 
   if (currentUser === null) {
     return null;
@@ -1234,7 +1302,7 @@ function Shell() {
           </NavGroup>
           <NavGroup label="案件CS">
             <NavItem to="/case-docs" label="新規案件化" icon="CS" end />
-            <NavItem to="/case-docs/executions" label="実行・完了" icon="✓" />
+            <NavItem to="/case-docs/executions" label="実行管理" icon="✓" />
           </NavGroup>
           {currentUser.role === "admin" ? (
             <NavGroup label="管理">
@@ -1258,38 +1326,26 @@ function Shell() {
       </aside>
       <main className="content">
         <WorkflowNavigation pathname={location.pathname} />
-        <Outlet />
+        <Outlet context={{ showOperationNotice: setOperationNotice }} />
       </main>
+      {operationNotice ? (
+        <OperationNotice notice={operationNotice} onClose={() => setOperationNotice(null)} />
+      ) : null}
       {isLogoutDialogOpen && (
-        <div className="modal-backdrop" role="presentation">
-          <section
-            aria-labelledby="logout-dialog-title"
-            aria-modal="true"
-            className="modal-dialog"
-            role="dialog"
-          >
-            <span className="modal-icon" aria-hidden="true">↩</span>
-            <h2 id="logout-dialog-title">ログアウトしますか？</h2>
-            <p>現在の画面を終了し、ログイン画面へ戻ります。</p>
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={() => setIsLogoutDialogOpen(false)}>
-                キャンセル
-              </button>
-              <button
-                className="danger"
-                type="button"
-                onClick={async () => {
-                  setIsLogoutDialogOpen(false);
-                  await logout().catch(() => undefined);
-                  navigate("/", { replace: true });
-                }}
-              >
-                <span aria-hidden="true">↩</span>
-                ログアウト
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmationDialog
+          id="logout-dialog"
+          title="ログアウトしますか？"
+          subjectLabel="ログイン中のユーザー"
+          subject={currentUser.displayName}
+          description="現在の画面を終了し、ログイン画面へ戻ります。入力途中の内容は保存されません。"
+          confirmLabel="ログアウト"
+          confirmIcon="↩"
+          onCancel={() => setIsLogoutDialogOpen(false)}
+          onConfirm={() => {
+            setIsLogoutDialogOpen(false);
+            void logout().catch(() => undefined).finally(() => navigate("/", { replace: true }));
+          }}
+        />
       )}
     </div>
   );
@@ -1386,31 +1442,33 @@ function LoginPage() {
     <main className="login-screen">
       <section className="login-panel" aria-labelledby="login-title">
         <div className="login-copy">
-          <p className="eyebrow">Sprint 1 / SB1-04</p>
+          <p className="eyebrow">手順書DB / M1</p>
           <h1 id="login-title">手順書DB WebUI</h1>
-          <p>モジュール登録、検索、原本作成、原本承認状態確認までの主要操作をWebUIから辿れるM1向け画面です。</p>
+          <p>モジュール登録から原本作成、案件化、作業の完了までを一つの流れで管理します。</p>
           <p>登録済みのメールアドレスとパスワードでログインしてください。</p>
         </div>
         <form className="login-form" onSubmit={handleLogin}>
           <label>
-            メールアドレス
+            <RequiredFieldLabel>メールアドレス</RequiredFieldLabel>
             <input
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               autoComplete="username"
               inputMode="email"
+              required
             />
           </label>
           <label>
-            パスワード
+            <RequiredFieldLabel>パスワード</RequiredFieldLabel>
             <input
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
+              required
             />
           </label>
-          {loginError || authError ? <p className="login-error">{loginError || authError}</p> : null}
+          <FormFeedback message={loginError || authError || ""} tone="error" compact />
           <button className="primary" type="submit" disabled={isSubmitting}>
             <span aria-hidden="true">→</span>
             {isSubmitting ? "確認中" : "ログイン"}
@@ -1470,7 +1528,7 @@ function SelfRegistrationPage() {
         </div>
         <form className="login-form" onSubmit={(event) => void handleRegistration(event)}>
           <label>
-            メールアドレス
+            <RequiredFieldLabel>メールアドレス</RequiredFieldLabel>
             <input
               autoComplete="email"
               maxLength={254}
@@ -1481,7 +1539,7 @@ function SelfRegistrationPage() {
             />
           </label>
           <label>
-            表示名
+            <RequiredFieldLabel>表示名</RequiredFieldLabel>
             <input
               autoComplete="name"
               maxLength={200}
@@ -1491,7 +1549,7 @@ function SelfRegistrationPage() {
             />
           </label>
           <label>
-            パスワード
+            <RequiredFieldLabel>パスワード</RequiredFieldLabel>
             <input
               autoComplete="new-password"
               minLength={8}
@@ -1502,7 +1560,7 @@ function SelfRegistrationPage() {
             />
           </label>
           <label>
-            パスワード（確認）
+            <RequiredFieldLabel>パスワード（確認）</RequiredFieldLabel>
             <input
               autoComplete="new-password"
               minLength={8}
@@ -1512,7 +1570,7 @@ function SelfRegistrationPage() {
               onChange={(event) => setPasswordConfirmation(event.target.value)}
             />
           </label>
-          {registrationError ? <p className="login-error" role="alert">{registrationError}</p> : null}
+          <FormFeedback message={registrationError} tone="error" compact />
           <button className="primary" type="submit" disabled={isSubmitting}>
             <span aria-hidden="true">＋</span>
             {isSubmitting ? "登録中" : "登録して利用を開始"}
@@ -1581,7 +1639,7 @@ function PasswordChangePage() {
         </div>
         <form className="login-form" onSubmit={(event) => void handlePasswordChange(event)}>
           <label>
-            現在の仮パスワード
+            <RequiredFieldLabel>現在の仮パスワード</RequiredFieldLabel>
             <input
               autoComplete="current-password"
               required
@@ -1591,7 +1649,7 @@ function PasswordChangePage() {
             />
           </label>
           <label>
-            新しいパスワード
+            <RequiredFieldLabel>新しいパスワード</RequiredFieldLabel>
             <input
               autoComplete="new-password"
               minLength={8}
@@ -1603,7 +1661,7 @@ function PasswordChangePage() {
             <span className="field-hint">8文字以上で入力してください。</span>
           </label>
           <label>
-            新しいパスワード（確認）
+            <RequiredFieldLabel>新しいパスワード（確認）</RequiredFieldLabel>
             <input
               autoComplete="new-password"
               minLength={8}
@@ -1613,7 +1671,7 @@ function PasswordChangePage() {
               onChange={(event) => setNewPasswordConfirmation(event.target.value)}
             />
           </label>
-          {error ? <p className="login-error" role="alert">{error}</p> : null}
+          <FormFeedback message={error} tone="error" compact />
           <button className="primary" type="submit" disabled={isSubmitting}>
             <span aria-hidden="true">→</span>
             {isSubmitting ? "変更中" : "変更して続ける"}
@@ -1773,7 +1831,7 @@ function HomePage() {
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setOverview((current) => ({ ...current, status: "unavailable", message: "作業状況の取得中にAPI接続で失敗しました。" }));
+        setOverview((current) => ({ ...current, status: "unavailable", message: "作業状況を取得できませんでした。しばらくしてから再度お試しください。" }));
       }
     }
 
@@ -1820,7 +1878,7 @@ function ApiHealthPanel() {
     status: "checking",
     primary: "-",
     secondary: "-",
-    message: "API疎通を確認中です。",
+    message: "アプリケーションの接続状態を確認しています。",
   });
   const [databaseHealthState, setDatabaseHealthState] = useState<HealthCheckState>({
     status: "checking",
@@ -1843,7 +1901,7 @@ function ApiHealthPanel() {
             status: "unavailable",
             primary: "-",
             secondary: "-",
-            message: `API応答エラー: HTTP ${response.status}`,
+            message: `アプリケーションが応答しませんでした。（HTTP ${response.status}）`,
           });
           return;
         }
@@ -1854,7 +1912,7 @@ function ApiHealthPanel() {
             status: "unavailable",
             primary: "-",
             secondary: "-",
-            message: responseBody.message || "API疎通確認に失敗しました。",
+            message: responseBody.message || "アプリケーションの接続確認に失敗しました。",
           });
           return;
         }
@@ -1874,7 +1932,7 @@ function ApiHealthPanel() {
           status: "unavailable",
           primary: "-",
           secondary: "-",
-          message: "APIに接続できません。",
+          message: "アプリケーションに接続できません。",
         });
       }
     }
@@ -1921,7 +1979,7 @@ function ApiHealthPanel() {
           status: "unavailable",
           primary: "-",
           secondary: "-",
-          message: "DB疎通APIに接続できません。",
+          message: "データベースの状態を確認できません。",
         });
       }
     }
@@ -1941,19 +1999,19 @@ function ApiHealthPanel() {
   };
 
   return (
-    <section className="api-health" aria-label="APIとDBの疎通状態">
+    <section className="api-health" aria-label="システムの接続状態">
       <HealthStatusRow
-        label="API疎通"
+        label="アプリケーション"
         state={apiHealthState}
         statusLabel={labelMap[apiHealthState.status]}
         primaryLabel="サービス"
         secondaryLabel="環境"
       />
       <HealthStatusRow
-        label="DB疎通"
+        label="データベース"
         state={databaseHealthState}
         statusLabel={labelMap[databaseHealthState.status]}
-        primaryLabel="DB"
+        primaryLabel="サービス"
         secondaryLabel="接続先"
       />
     </section>
@@ -2116,7 +2174,7 @@ function ModuleSearchPage() {
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setModuleListState({ status: "unavailable", items: [], folders: [], message: "APIに接続できませんでした。" });
+        setModuleListState({ status: "unavailable", items: [], folders: [], message: "サーバーに接続できませんでした。" });
       }
     }
 
@@ -2275,7 +2333,7 @@ function ModuleSearchPage() {
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderRenameState({ status: "error", message: "タグ名の変更中にAPI接続で失敗しました。" });
+      setFolderRenameState({ status: "error", message: "タグ名を変更できませんでした。しばらくしてから再度お試しください。" });
     }
   }
 
@@ -2314,7 +2372,7 @@ function ModuleSearchPage() {
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderDeleteState({ status: "error", message: "タグ削除中にAPI接続で失敗しました。" });
+      setFolderDeleteState({ status: "error", message: "タグを削除できませんでした。しばらくしてから再度お試しください。" });
       setIsFolderDeleteConfirmOpen(false);
     }
   }
@@ -2377,7 +2435,7 @@ function ModuleSearchPage() {
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderCreateState({ status: "error", message: "タグ追加中にAPI接続で失敗しました。" });
+      setFolderCreateState({ status: "error", message: "タグを追加できませんでした。しばらくしてから再度お試しください。" });
     }
   }
 
@@ -2417,7 +2475,7 @@ function ModuleSearchPage() {
         sort: sortFilter,
       });
     } catch (error) {
-      setFolderMoveState({ status: "error", message: "タグ追加中にAPI接続で失敗しました。" });
+      setFolderMoveState({ status: "error", message: "タグを追加できませんでした。しばらくしてから再度お試しください。" });
     }
   }
 
@@ -2435,7 +2493,7 @@ function ModuleSearchPage() {
   const canMoveSelectedModules = selectedModuleIds.length > 0 && folderMoveState.status !== "submitting";
 
   return (
-    <Page title={"モジュール検索"} description={"APIから取得したモジュール一覧を検索し、詳細情報と版管理を確認できます。"}>
+    <Page title={"モジュール検索"} description={"登録済みのモジュールを検索し、内容、承認状態、版の違いを確認できます。"}>
       <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
         <label>
           {"キーワード"}
@@ -2674,6 +2732,8 @@ function ModuleSearchPage() {
             <section className="empty-state"><h2>{"該当するモジュールはありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
           ) : (
             <DataTable
+              stickyFirstColumn
+              stickyLastColumn
               columns={[
                 <label className="module-row-select-all">
                   <input
@@ -2718,27 +2778,19 @@ function ModuleSearchPage() {
         </div>
       </div>
       {isFolderDeleteConfirmOpen ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsFolderDeleteConfirmOpen(false)}>
-          <section
-            aria-labelledby="folder-delete-dialog-title"
-            aria-modal="true"
-            className="modal-dialog"
-            role="dialog"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <span className="modal-icon" aria-hidden="true">-</span>
-            <h2 id="folder-delete-dialog-title">タグを削除しますか？</h2>
-            <p>「{folderPathFilter}」を削除します。他にタグがないモジュールだけ「未分類」へ移動します。</p>
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={() => setIsFolderDeleteConfirmOpen(false)}>
-                キャンセル
-              </button>
-              <button className="danger" type="button" onClick={() => void handleFolderDeleteConfirm()}>
-                削除する
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmationDialog
+          id="module-tag-delete-dialog"
+          title="タグを削除しますか？"
+          subjectLabel="削除するタグ"
+          subject={folderPathFilter}
+          description="このタグだけが設定されているモジュールは「未分類」へ移動します。モジュール自体は削除されません。"
+          confirmLabel="タグを削除"
+          tone="danger"
+          busy={folderDeleteState.status === "submitting"}
+          busyLabel="削除中"
+          onCancel={() => setIsFolderDeleteConfirmOpen(false)}
+          onConfirm={() => void handleFolderDeleteConfirm()}
+        />
       ) : null}
     </Page>
   );
@@ -2807,7 +2859,7 @@ function useModuleDetailState(moduleId: string | undefined, versionNo: string | 
         setModuleDetailState({
           status: "unavailable",
           item: null,
-          message: "APIに接続できませんでした。",
+          message: "サーバーに接続できませんでした。",
         });
       }
     }
@@ -2907,7 +2959,7 @@ function ModuleDetailPage() {
         setVersionListState({
           status: "unavailable",
           items: [],
-          message: "モジュール版一覧の取得中にAPI接続で失敗しました。",
+          message: "モジュールの版一覧を取得できませんでした。",
         });
       }
     }
@@ -3007,7 +3059,7 @@ function ModuleDetailPage() {
       setModuleDiffState({
         status: "unavailable",
         item: null,
-        message: "差分取得中にAPI接続で失敗しました。",
+        message: "版の差分を取得できませんでした。",
       });
     }
   }
@@ -3049,14 +3101,23 @@ function ModuleDetailPage() {
       }
 
       setIsCancellationDialogOpen(false);
-      navigate("/modules/search", { replace: true });
+      navigate("/modules/search", {
+        replace: true,
+        state: {
+          operationNotice: {
+            tone: "success",
+            title: "モジュール登録を取り消しました",
+            message: `${item.module_key} / ${item.module_name} を通常の一覧から除外しました。`,
+          },
+        } satisfies OperationNoticeLocationState,
+      });
     } catch {
-      setCancellationState({ status: "error", message: "登録取消中にAPI接続で失敗しました。" });
+      setCancellationState({ status: "error", message: "登録を取り消せませんでした。しばらくしてから再度お試しください。" });
     }
   }
 
   return (
-    <Page title="モジュール詳細" description="APIから取得したモジュールの基本情報と行データを確認します。">
+    <Page title="モジュール詳細" description="モジュールの基本情報、手順内容、版の違いを確認します。">
       <section className={`list-status list-status-${moduleDetailState.status}`} aria-live="polite">
         <div>
           <span>取得状態</span>
@@ -3225,18 +3286,24 @@ function ModuleDetailPage() {
           <section
             aria-labelledby="module-cancellation-dialog-title"
             aria-modal="true"
-            className="modal-dialog module-cancellation-dialog"
-            role="dialog"
+            className="modal-dialog module-cancellation-dialog confirmation-dialog confirmation-dialog-danger"
+            role="alertdialog"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <span className="modal-icon" aria-hidden="true">×</span>
-            <h2 id="module-cancellation-dialog-title">モジュール登録を取り消しますか？</h2>
-            <p>
-              {item.module_key} / {item.module_name} を通常の一覧から非表示にします。
-              取込ファイルと記録は保持されます。
-            </p>
+            <div className="confirmation-dialog-heading">
+              <span className="modal-icon" aria-hidden="true">!</span>
+              <div>
+                <span className="confirmation-dialog-kicker">取消確認</span>
+                <h2 id="module-cancellation-dialog-title">モジュール登録を取り消しますか？</h2>
+              </div>
+            </div>
+            <div className="confirmation-dialog-target">
+              <span>対象モジュール</span>
+              <strong>{item.module_key} / {item.module_name}</strong>
+            </div>
+            <p className="confirmation-dialog-description">通常の一覧から非表示になります。取込ファイルと操作記録は保持されます。</p>
             <label className="module-cancellation-reason-field">
-              取消理由
+              <RequiredFieldLabel>取消理由</RequiredFieldLabel>
               <textarea
                 value={cancellationReason}
                 onChange={(event) => {
@@ -3251,11 +3318,11 @@ function ModuleDetailPage() {
                 placeholder="例: 対象外のExcelを誤って登録したため"
               />
             </label>
-            {cancellationState.message ? (
-              <p className={cancellationState.status === "error" ? "form-error" : "form-hint"} role="alert">
-                {cancellationState.message}
-              </p>
-            ) : null}
+            <FormFeedback
+              message={cancellationState.message}
+              tone={cancellationState.status === "error" ? "error" : cancellationState.status === "submitting" ? "pending" : "neutral"}
+              compact
+            />
             <div className="modal-actions">
               <button
                 className="secondary"
@@ -4408,7 +4475,7 @@ function ModuleRegisterPage() {
           <span>新しい版をExcelから作成</span>
           <strong>{versionSourceModuleKey}</strong>
           <p>
-            {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: 次のdraft版。`}
+            {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。次の版を作成中として保存します。`}
           </p>
           <div className="register-result-meta">
             <span>{`module_id: ${versionSourceModuleId ?? "-"}`}</span>
@@ -4632,8 +4699,7 @@ function ModuleRegisterPage() {
             <div>
               <h2>Excel取込プレビュー</h2>
               <p className="register-section-copy">
-                現在の入力を 1 シート相当の JSON として <code>POST /api/v1/modules/import-sheet</code> に送り、
-                正規化後の内容を確認します。
+                入力した手順内容を、保存前にExcelと同じ列構成で確認します。
               </p>
             </div>
             <button className="secondary" type="button" onClick={() => void handleImportPreview()}>
@@ -4722,7 +4788,7 @@ function ModuleRegisterPage() {
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting"}>
             <span aria-hidden="true">✎</span>
-            {createState.status === "submitting" ? "保存中..." : "保存実行"}
+            {createState.status === "submitting" ? "保存中..." : "モジュールを保存"}
           </button>
         </Toolbar>
       </form>
@@ -5591,7 +5657,7 @@ function ModuleRegisterPageV2() {
             <span>新しい版をExcelから作成</span>
             <strong>{versionSourceModuleKey}</strong>
             <p>
-              {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。作成予定: 次のdraft版。`}
+              {`対象: ${versionSourceModuleKey} / ${versionSourceModuleName ?? "名称未指定"}。次の版を作成中として保存します。`}
             </p>
             <div className="register-result-meta">
               <span>{`module_id: ${versionSourceModuleId ?? "-"}`}</span>
@@ -5844,7 +5910,7 @@ function ModuleRegisterPageV2() {
             <div>
               <h2>Excelファイル取込</h2>
               <p className="register-section-copy">
-                xlsx / xlsm を選択して <code>POST /api/v1/modules/import</code> に送り、取込結果をこの画面へ反映します。
+                xlsxまたはxlsmファイルを選択し、モジュールとして取り込みます。
               </p>
             </div>
             <button
@@ -5859,11 +5925,12 @@ function ModuleRegisterPageV2() {
           </div>
           <FormGrid>
             <label className="wide">
-              Excelファイル
+              <RequiredFieldLabel>Excelファイル</RequiredFieldLabel>
               <input
                 key={importFileInputKey}
                 type="file"
                 accept=".xlsx,.xlsm"
+                required
                 onChange={(event) => {
                   const nextFile = event.target.files?.[0] ?? null;
                   setSelectedImportFile(nextFile);
@@ -6036,7 +6103,7 @@ function ModuleRegisterPageV2() {
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting" || !canSaveImportedModule}>
             <span aria-hidden="true">✔</span>
-            {createState.status === "submitting" ? "保存中..." : "保存実行"}
+            {createState.status === "submitting" ? "保存中..." : "モジュールを保存"}
           </button>
         </Toolbar>
       </form>
@@ -6188,7 +6255,7 @@ function DocumentSearchPage() {
         setSourceDocListState({ status: "available", items: responseBody.data.items, tags: responseBody.data.tags ?? [], message: responseBody.message || "原本一覧を取得しました。" });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setSourceDocListState({ status: "unavailable", items: [], tags: [], message: "APIに接続できませんでした。" });
+        setSourceDocListState({ status: "unavailable", items: [], tags: [], message: "サーバーに接続できませんでした。" });
       }
     }
 
@@ -6294,7 +6361,7 @@ function DocumentSearchPage() {
       });
       return responseBody;
     } catch {
-      return { result: "error", data: null, message: "タグ操作中にAPI接続で失敗しました。" };
+      return { result: "error", data: null, message: "タグを更新できませんでした。しばらくしてから再度お試しください。" };
     }
   }
 
@@ -6426,7 +6493,7 @@ function DocumentSearchPage() {
     && sourceDocListState.items.every((item) => selectedSourceDocIds.includes(item.source_doc_id));
 
   return (
-    <Page title={"原本検索"} description={"APIから取得した原本一覧を検索し、関連モジュールと詳細情報を確認できます。"}>
+    <Page title={"原本検索"} description={"登録済みの原本を検索し、内容、承認状態、利用モジュールを確認できます。"}>
       <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
         <label>{"キーワード"}<input placeholder="例: M1確認用 / MOD-001 / 原本A" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} /></label>
         <fieldset className="module-tag-filter-field">
@@ -6597,6 +6664,8 @@ function DocumentSearchPage() {
             <section className="empty-state"><h2>{"該当する原本はありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
           ) : (
             <DataTable
+              stickyFirstColumn
+              stickyLastColumn
               columns={["選択", "原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "タグ", "作成者", "更新日", "操作"]}
               rows={sourceDocListState.items.map((item) => [
                 <input key={`select-${item.source_doc_id}`} type="checkbox" aria-label={`${item.source_doc_key}を選択`} checked={selectedSourceDocIds.includes(item.source_doc_id)} onChange={() => toggleSourceDocSelection(item.source_doc_id)} />,
@@ -6626,17 +6695,19 @@ function DocumentSearchPage() {
       </div>
 
       {isTagDeleteDialogOpen && activeTag ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsTagDeleteDialogOpen(false)}>
-          <section className="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="source-doc-tag-delete-title" onMouseDown={(event) => event.stopPropagation()}>
-            <span className="modal-icon" aria-hidden="true">×</span>
-            <h2 id="source-doc-tag-delete-title">タグを削除しますか？</h2>
-            <p>「{activeTag}」を削除します。他にタグがない原本だけ「未分類」へ移動します。</p>
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={() => setIsTagDeleteDialogOpen(false)}>キャンセル</button>
-              <button className="danger" type="button" disabled={tagDeleteState.status === "submitting"} onClick={() => void handleDeleteTag()}>タグを削除</button>
-            </div>
-          </section>
-        </div>
+        <ConfirmationDialog
+          id="source-doc-tag-delete-dialog"
+          title="タグを削除しますか？"
+          subjectLabel="削除するタグ"
+          subject={activeTag}
+          description="このタグだけが設定されている原本は「未分類」へ移動します。原本自体は削除されません。"
+          confirmLabel="タグを削除"
+          tone="danger"
+          busy={tagDeleteState.status === "submitting"}
+          busyLabel="削除中"
+          onCancel={() => setIsTagDeleteDialogOpen(false)}
+          onConfirm={() => void handleDeleteTag()}
+        />
       ) : null}
     </Page>
   );
@@ -6704,7 +6775,7 @@ function LegacyDocumentEditPage() {
         setModuleListState({
           status: "unavailable",
           items: [],
-          message: "モジュール一覧を API から取得できませんでした。",
+          message: "モジュール一覧を取得できませんでした。",
         });
       }
     }
@@ -6817,7 +6888,7 @@ function LegacyDocumentEditPage() {
   const createdItem = createState.item;
 
   return (
-    <Page title="原本作成 / 更新" description="モジュールを組み合わせて原本の初版を保存します。POST /api/v1/source-docs の結果をこの画面から確認できます。">
+    <Page title="原本作成 / 更新" description="承認済みのモジュールを組み合わせて、原本を作成します。">
       <form className="register-form" onSubmit={handleSubmit}>
         <FormGrid>
           <label>
@@ -6954,7 +7025,7 @@ function LegacyDocumentEditPage() {
             </button>
           ) : null}
           <button className="primary" type="submit" disabled={createState.status === "submitting"}>
-            <span aria-hidden="true">✎</span>{createState.status === "submitting" ? "保存中..." : "保存実行"}
+            <span aria-hidden="true">✎</span>{createState.status === "submitting" ? "保存中..." : "原本を保存"}
           </button>
         </Toolbar>
       </form>
@@ -7034,7 +7105,7 @@ function DocumentEditPage() {
         setModuleListState({
           status: "unavailable",
           items: [],
-          message: "モジュール一覧を API から取得できませんでした。",
+          message: "モジュール一覧を取得できませんでした。",
         });
       }
     }
@@ -7236,8 +7307,8 @@ function DocumentEditPage() {
       title="原本作成 / 更新"
       description={
         isEditMode
-          ? "既存の原本を読み込み、更新版を保存します。PUT /api/v1/source-docs/{source_doc_id} をこの画面から確認できます。"
-          : "モジュールを組み合わせて原本の初版を保存します。POST /api/v1/source-docs の結果をこの画面から確認できます。"
+          ? "既存の原本をもとに、モジュール構成を変更した次の版を作成します。"
+          : "承認済みのモジュールを組み合わせて、原本の初版を作成します。"
       }
     >
       <form className="register-form" onSubmit={handleSubmit}>
@@ -7273,7 +7344,7 @@ function DocumentEditPage() {
             />
           </label>
           <label>
-            原本名
+            <RequiredFieldLabel>原本名</RequiredFieldLabel>
             <input value={sourceDocNameInput} onChange={(event) => setSourceDocNameInput(event.target.value)} required />
           </label>
           <label>
@@ -7329,7 +7400,7 @@ function DocumentEditPage() {
                 </div>
                 <div className="register-step-grid">
                   <label>
-                    モジュール
+                    <RequiredFieldLabel>モジュール</RequiredFieldLabel>
                     <select
                       value={item.moduleId}
                       onChange={(event) => updateItemModule(item.rowId, event.target.value)}
@@ -7401,7 +7472,7 @@ function DocumentEditPage() {
           ) : null}
           <button className="primary" type="submit" disabled={submitDisabled}>
             <span aria-hidden="true">✎</span>
-            {createState.status === "submitting" ? "保存中..." : isEditMode ? "更新実行" : "保存実行"}
+            {createState.status === "submitting" ? "保存中..." : isEditMode ? "原本を更新" : "原本を保存"}
           </button>
         </Toolbar>
       </form>
@@ -7463,7 +7534,7 @@ function useSourceDocDetailState(id: string | undefined): SourceDocDetailState {
         setSourceDocDetailState({
           status: "unavailable",
           item: null,
-          message: "APIに接続できませんでした。",
+          message: "サーバーに接続できませんでした。",
         });
       }
     }
@@ -7559,14 +7630,23 @@ function DocumentDetailPage() {
       }
 
       setIsCancellationDialogOpen(false);
-      navigate("/documents/search", { replace: true });
+      navigate("/documents/search", {
+        replace: true,
+        state: {
+          operationNotice: {
+            tone: "success",
+            title: "原本登録を取り消しました",
+            message: `${item.source_doc_key} / ${item.source_doc_name} を通常の一覧から除外しました。`,
+          },
+        } satisfies OperationNoticeLocationState,
+      });
     } catch {
-      setCancellationState({ status: "error", message: "原本登録取消中にAPI接続で失敗しました。" });
+      setCancellationState({ status: "error", message: "原本の登録を取り消せませんでした。しばらくしてから再度お試しください。" });
     }
   }
 
   return (
-    <Page title="原本詳細" description="原本の版、状態、関連モジュール構成を API から確認します。">
+    <Page title="原本詳細" description="原本の基本情報、承認状態、利用モジュール、版の違いを確認します。">
       <section className={`list-status list-status-${sourceDocDetailState.status}`} aria-live="polite">
         <div>
           <span>取得状態</span>
@@ -7662,7 +7742,7 @@ function DocumentDetailPage() {
       {item && isPreviewOverlayOpen ? (
         <PreviewOverlay
           title={`${item.source_doc_name} / 原本プレビュー`}
-          description="原本に紐づくモジュール構成を、同ページ内の全画面 overlay で確認します。"
+          description="原本に含まれるモジュール構成を全画面で確認します。"
           onClose={() => setIsPreviewOverlayOpen(false)}
           actions={
             <button className="secondary" type="button" onClick={() => window.print()}>
@@ -7690,18 +7770,24 @@ function DocumentDetailPage() {
           <section
             aria-labelledby="source-doc-cancellation-dialog-title"
             aria-modal="true"
-            className="modal-dialog module-cancellation-dialog"
-            role="dialog"
+            className="modal-dialog module-cancellation-dialog confirmation-dialog confirmation-dialog-danger"
+            role="alertdialog"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <span className="modal-icon" aria-hidden="true">×</span>
-            <h2 id="source-doc-cancellation-dialog-title">原本登録を取り消しますか？</h2>
-            <p>
-              {item.source_doc_key} / {item.source_doc_name} を一覧・承認管理・案件化から非表示にします。
-              版、構成モジュール、記録は保持されます。
-            </p>
+            <div className="confirmation-dialog-heading">
+              <span className="modal-icon" aria-hidden="true">!</span>
+              <div>
+                <span className="confirmation-dialog-kicker">取消確認</span>
+                <h2 id="source-doc-cancellation-dialog-title">原本登録を取り消しますか？</h2>
+              </div>
+            </div>
+            <div className="confirmation-dialog-target">
+              <span>対象原本</span>
+              <strong>{item.source_doc_key} / {item.source_doc_name}</strong>
+            </div>
+            <p className="confirmation-dialog-description">一覧・承認管理・案件化から非表示になります。版、構成モジュール、操作記録は保持されます。</p>
             <label className="module-cancellation-reason-field">
-              確認のため原本IDを入力
+              <RequiredFieldLabel>確認のため原本IDを入力</RequiredFieldLabel>
               <input
                 value={sourceDocKeyConfirmation}
                 onChange={(event) => {
@@ -7717,7 +7803,7 @@ function DocumentDetailPage() {
               />
             </label>
             <label className="module-cancellation-reason-field">
-              取消理由
+              <RequiredFieldLabel>取消理由</RequiredFieldLabel>
               <textarea
                 value={cancellationReason}
                 onChange={(event) => {
@@ -7733,11 +7819,11 @@ function DocumentDetailPage() {
                 placeholder="例: 対象外のモジュール構成で誤って登録したため"
               />
             </label>
-            {cancellationState.message ? (
-              <p className={cancellationState.status === "error" ? "form-error" : "form-hint"} role="alert">
-                {cancellationState.message}
-              </p>
-            ) : null}
+            <FormFeedback
+              message={cancellationState.message}
+              tone={cancellationState.status === "error" ? "error" : cancellationState.status === "submitting" ? "pending" : "neutral"}
+              compact
+            />
             <div className="modal-actions">
               <button
                 className="secondary"
@@ -8080,7 +8166,7 @@ function IndentedExcelText({
 
 const caseDocText = {
   title: "案件化",
-  description: "原本とAccess由来のマスタ値を紐づけ、案件CS生成に使う値を確認します。",
+  description: "原本、設置場所、対象装置を選び、案件CSを作成します。",
   sourceDoc: "原本",
   prefecture: "都道府県",
   building: "ビル",
@@ -8121,7 +8207,7 @@ const caseDocText = {
   buildingLoaded: "ビルを取得しました。",
   unitConfigFailed: "ユニット構成の取得に失敗しました。",
   unitConfigLoaded: "ユニット構成を取得しました。",
-  apiFailed: "APIに接続できませんでした。",
+  apiFailed: "サーバーに接続できませんでした。",
   selectRequired: "原本、都道府県、ビル、ユニット構成を選択してください。",
   resolving: "案件CS生成用の値を解決しています。",
   resolveFailed: "値の解決に失敗しました。",
@@ -8145,7 +8231,7 @@ const caseDocPlaceholderText = {
   loading: "プレースホルダ定義を取得しています。",
   loaded: "プレースホルダ定義を取得しました。",
   failed: "プレースホルダ定義の取得に失敗しました。",
-  apiFailed: "APIに接続できませんでした。",
+  apiFailed: "サーバーに接続できませんでした。",
   total: "定義数",
   visible: "表示件数",
   all: "すべて",
@@ -8358,6 +8444,7 @@ function CaseDocsPage() {
   const [selectedBuilding, setSelectedBuilding] = useState("");
   const [selectedUnitConfigId, setSelectedUnitConfigId] = useState("");
   const [selectedTargetSlotKeys, setSelectedTargetSlotKeys] = useState<string[]>([]);
+  const [caseName, setCaseName] = useState("");
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -8503,6 +8590,18 @@ function CaseDocsPage() {
     system: item.system,
     host_name: item.host_name,
   }));
+  const resolveInputComplete = Boolean(
+    selectedSourceDocId && selectedPrefecture && selectedBuilding && selectedUnitConfig,
+  );
+  const caseInstanceBlockedReason = !resolveState.item
+    ? "先に「解決値を確認」を実行してください。"
+    : selectedTargetSlotKeys.length === 0
+      ? "対象装置を1台以上選択してください。"
+      : !caseName.trim()
+        ? "案件名を入力してください。"
+        : null;
+  const canCreateCaseInstance = caseInstanceBlockedReason === null
+    && instanceCreateState.status !== "submitting";
 
   function toggleTargetSlotKey(slotKey: string): void {
     setSelectedTargetSlotKeys((current) =>
@@ -8633,6 +8732,11 @@ function CaseDocsPage() {
       setInstanceCreateState({ status: "error", filename: null, message: caseDocText.selectTargetRequired });
       return;
     }
+    const normalizedCaseName = caseName.trim();
+    if (!normalizedCaseName) {
+      setInstanceCreateState({ status: "error", filename: null, message: "案件名を入力してください。" });
+      return;
+    }
 
     setInstanceCreateState({ status: "submitting", filename: null, message: "案件CSを保存しています。" });
     try {
@@ -8640,6 +8744,7 @@ function CaseDocsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          case_name: normalizedCaseName,
           source_doc_id: Number(selectedSourceDocId),
           prefecture: selectedPrefecture,
           building: selectedBuilding,
@@ -8681,8 +8786,8 @@ function CaseDocsPage() {
           }}
         >
           <label>
-            {caseDocText.sourceDoc}
-            <select value={selectedSourceDocId} onChange={(event) => setSelectedSourceDocId(event.target.value)}>
+            <RequiredFieldLabel>{caseDocText.sourceDoc}</RequiredFieldLabel>
+            <select required value={selectedSourceDocId} onChange={(event) => setSelectedSourceDocId(event.target.value)}>
               {sourceDocListState.items.map((item) => (
                 <option key={item.source_doc_id} value={item.source_doc_id}>
                   {item.source_doc_key} / {item.source_doc_name}
@@ -8691,24 +8796,24 @@ function CaseDocsPage() {
             </select>
           </label>
           <label>
-            {caseDocText.prefecture}
-            <select value={selectedPrefecture} onChange={(event) => setSelectedPrefecture(event.target.value)}>
+            <RequiredFieldLabel>{caseDocText.prefecture}</RequiredFieldLabel>
+            <select required value={selectedPrefecture} onChange={(event) => setSelectedPrefecture(event.target.value)}>
               {prefectureState.items.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
             </select>
           </label>
           <label>
-            {caseDocText.building}
-            <select value={selectedBuilding} onChange={(event) => setSelectedBuilding(event.target.value)}>
+            <RequiredFieldLabel>{caseDocText.building}</RequiredFieldLabel>
+            <select required value={selectedBuilding} onChange={(event) => setSelectedBuilding(event.target.value)}>
               {buildingState.items.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
             </select>
           </label>
           <label>
-            {caseDocText.unitConfig}
-            <select value={selectedUnitConfigId} onChange={(event) => setSelectedUnitConfigId(event.target.value)}>
+            <RequiredFieldLabel>{caseDocText.unitConfig}</RequiredFieldLabel>
+            <select required value={selectedUnitConfigId} onChange={(event) => setSelectedUnitConfigId(event.target.value)}>
               {unitConfigState.items.map((item) => (
                 <option key={item.unit_config_id} value={item.unit_config_id}>
                   {item.fs_cluster_name} / {item.block}
@@ -8716,7 +8821,12 @@ function CaseDocsPage() {
               ))}
             </select>
           </label>
-          <button className="primary" type="submit" disabled={resolveState.status === "submitting"}>
+          <button
+            className="primary"
+            type="submit"
+            disabled={resolveState.status === "submitting" || !resolveInputComplete}
+            title={resolveInputComplete ? "選択した条件で案件CS生成用の値を確認します。" : "原本、設置場所、ユニット構成を選択してください。"}
+          >
             {caseDocText.resolve}
           </button>
         </form>
@@ -8764,19 +8874,52 @@ function CaseDocsPage() {
             <strong>{generateState.filename ?? (generateState.status === "submitting" ? caseDocText.generating : caseDocText.generateReady)}</strong>
           </div>
           <p>{generateState.message}</p>
-          <button className="primary" type="button" onClick={() => void handleGenerateCaseDoc()} disabled={generateState.status === "submitting"}>
+          <button className="secondary" type="button" onClick={() => void handleGenerateCaseDoc()} disabled={generateState.status === "submitting"}>
+            <span aria-hidden="true">⇩</span>
             {caseDocText.generate}
           </button>
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => void handleCreateCaseDocInstance()}
-            disabled={instanceCreateState.status === "submitting"}
-          >
-            <span aria-hidden="true">✓</span>
-            {instanceCreateState.status === "submitting" ? "保存中" : "WebUI実行用に保存"}
-          </button>
-          <p className={instanceCreateState.status === "error" ? "form-error" : ""}>{instanceCreateState.message}</p>
+          <div className="case-doc-instance-create">
+            <label>
+              <RequiredFieldLabel>案件名</RequiredFieldLabel>
+              <input
+                value={caseName}
+                onChange={(event) => setCaseName(event.target.value)}
+                maxLength={200}
+                placeholder="例: 東京第1ビル SBC更改"
+                required
+                aria-invalid={instanceCreateState.status === "error" && !caseName.trim()}
+              />
+            </label>
+            <button
+              className="primary"
+              type="button"
+              onClick={() => void handleCreateCaseDocInstance()}
+              disabled={!canCreateCaseInstance}
+              title={caseInstanceBlockedReason ?? "案件CSを保存し、そのまま実行前準備へ進みます。"}
+            >
+              <span aria-hidden="true">→</span>
+              {instanceCreateState.status === "submitting" ? "保存中" : "案件CSを保存して実行へ"}
+            </button>
+            <FormFeedback
+              message={
+                instanceCreateState.status === "error"
+                  ? instanceCreateState.message
+                  : caseInstanceBlockedReason ?? "保存後、案件CS実行管理の実行前準備へ移動します。"
+              }
+              tone={
+                instanceCreateState.status === "error"
+                  ? "error"
+                  : instanceCreateState.status === "submitting"
+                    ? "pending"
+                    : instanceCreateState.status === "success"
+                      ? "success"
+                      : caseInstanceBlockedReason
+                        ? "warning"
+                        : "neutral"
+              }
+              compact
+            />
+          </div>
         </section>
       ) : null}
 
@@ -8924,6 +9067,16 @@ type CaseDocExecutionRowGroup = {
   rowOrders: number[];
 };
 
+type CaseDocExecutionBulkAction = {
+  label: string;
+  status: CaseDocExecutionBulkStatus;
+  items: CaseDocExecutionItemData[];
+};
+
+type CaseDocExecutionPendingNavigation =
+  | { kind: "instance"; nextId: string }
+  | { kind: "row-group"; nextIndex: number };
+
 function buildCaseDocExecutionRowGroups(items: CaseDocExecutionItemData[]): CaseDocExecutionRowGroup[] {
   const rowOrders = [...new Set(items.map((item) => item.row_order))].sort((left, right) => left - right);
   const groups: CaseDocExecutionRowGroup[] = [];
@@ -9027,18 +9180,75 @@ function CaseDocExecutionTimeCell({
   );
 }
 
+function CaseDocExecutionBulkButtons({
+  label,
+  pendingCount,
+  disabled,
+  compact = false,
+  onSelect,
+}: {
+  label: string;
+  pendingCount: number;
+  disabled: boolean;
+  compact?: boolean;
+  onSelect: (status: CaseDocExecutionBulkStatus) => void;
+}) {
+  const unavailable = disabled || pendingCount === 0;
+  return (
+    <div className={`case-execution-bulk-actions${compact ? " case-execution-bulk-actions-compact" : ""}`}>
+      {!compact ? <span>{label}</span> : null}
+      <small>未 {pendingCount}</small>
+      <div>
+        <button
+          type="button"
+          className="case-execution-icon-button case-execution-check-button"
+          title={`${label}の未実施${pendingCount}件を一括チェック`}
+          aria-label={`${label}の未実施${pendingCount}件を一括チェック`}
+          onClick={() => onSelect("checked")}
+          disabled={unavailable}
+        >
+          ✓
+        </button>
+        <button
+          type="button"
+          className="case-execution-icon-button case-execution-skip-button"
+          title={`${label}の未実施${pendingCount}件を一括スキップ`}
+          aria-label={`${label}の未実施${pendingCount}件を一括スキップ`}
+          onClick={() => onSelect("skipped")}
+          disabled={unavailable}
+        >
+          −
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CaseDocExecutionPage() {
   const { caseDocumentId } = useParams<{ caseDocumentId: string }>();
   const navigate = useNavigate();
+  const showOperationNotice = useOperationNotice();
   const { user: currentUser } = useAuth();
   const [instances, setInstances] = useState<CaseDocInstanceListItemData[]>([]);
+  const [availableCaseDocTags, setAvailableCaseDocTags] = useState<string[]>([]);
+  const [searchKeywordInput, setSearchKeywordInput] = useState("");
+  const [searchTagInputs, setSearchTagInputs] = useState<string[]>([]);
+  const [caseDocListTab, setCaseDocListTab] = useState<CaseDocExecutionListTab>("in_progress");
+  const [appliedSearch, setAppliedSearch] = useState<{
+    keyword: string;
+    tagPaths: string[];
+  }>({ keyword: "", tagPaths: [] });
   const [selectedId, setSelectedId] = useState(caseDocumentId ?? "");
   const [detail, setDetail] = useState<CaseDocInstanceDetailData | null>(null);
-  const [listMessage, setListMessage] = useState("案件CS実行一覧を取得しています。");
+  const [listMessage, setListMessage] = useState("案件CS一覧を取得しています。");
   const [detailMessage, setDetailMessage] = useState("案件CSを選択してください。");
   const [mutatingItemId, setMutatingItemId] = useState<number | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportingOriginalId, setExportingOriginalId] = useState<number | null>(null);
+  const [originalExportMessage, setOriginalExportMessage] = useState("");
+  const [exportingCompletedId, setExportingCompletedId] = useState<number | null>(null);
+  const [completedExportMessage, setCompletedExportMessage] = useState("");
   const [isSavingPreparation, setIsSavingPreparation] = useState(false);
   const [preparationForm, setPreparationForm] = useState<CaseDocPreparationFormState>({
     construction_name: "",
@@ -9051,25 +9261,72 @@ function CaseDocExecutionPage() {
   const [preparationUnitConfigs, setPreparationUnitConfigs] = useState<CaseDocUnitConfigItemData[]>([]);
   const [currentRowGroupIndex, setCurrentRowGroupIndex] = useState(0);
   const [expandedExecutionImage, setExpandedExecutionImage] = useState<ModuleRowImageData | null>(null);
+  const [bulkAction, setBulkAction] = useState<CaseDocExecutionBulkAction | null>(null);
+  const [bulkSkipReason, setBulkSkipReason] = useState("");
+  const [bulkActionMessage, setBulkActionMessage] = useState("");
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentMessage, setCommentMessage] = useState("小項番を選択してください。");
+  const [isSavingComment, setIsSavingComment] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<CaseDocExecutionPendingNavigation | null>(null);
+
+  useEffect(() => {
+    if (!bulkAction || isBulkUpdating) {
+      return;
+    }
+
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setBulkAction(null);
+        setBulkActionMessage("");
+      }
+    }
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [bulkAction, isBulkUpdating]);
 
   useEffect(() => {
     const abortController = new AbortController();
     async function loadInstances(): Promise<void> {
       try {
-        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/instances"), { signal: abortController.signal });
+        const endpoint = new URL(buildApiUrl("/api/v1/case-docs/instances"), window.location.origin);
+        if (appliedSearch.keyword) endpoint.searchParams.set("keyword", appliedSearch.keyword);
+        appliedSearch.tagPaths.forEach((tagPath) => endpoint.searchParams.append("tag_path", tagPath));
+        const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = await readApiResponse<CaseDocInstanceListData>(response);
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
-          setListMessage(responseBody.message || "案件CS実行一覧の取得に失敗しました。");
+          setListMessage(responseBody.message || "案件CS一覧の取得に失敗しました。");
           return;
         }
         const loadedInstances = responseBody.data.items;
         const activeInstances = loadedInstances.filter((instance) => instance.status === "active");
+        const loadedInProgressInstances = activeInstances.filter((instance) => (
+          instance.checked_count + instance.skipped_count > 0
+        ));
+        const loadedNotStartedInstances = activeInstances.filter((instance) => (
+          instance.checked_count + instance.skipped_count === 0
+        ));
         const completedCount = loadedInstances.length - activeInstances.length;
         setInstances(loadedInstances);
+        setAvailableCaseDocTags(responseBody.data.tags ?? []);
+        setCaseDocListTab((current) => {
+          const currentHasItems = current === "in_progress"
+            ? loadedInProgressInstances.length > 0
+            : current === "not_started"
+              ? loadedNotStartedInstances.length > 0
+              : completedCount > 0;
+          if (currentHasItems || loadedInstances.length === 0) {
+            return current;
+          }
+          if (loadedInProgressInstances.length > 0) return "in_progress";
+          if (loadedNotStartedInstances.length > 0) return "not_started";
+          return "completed";
+        });
         setListMessage(
           loadedInstances.length > 0
-            ? `実施中 ${activeInstances.length}件、完了済み ${completedCount}件を取得しました。`
-            : "保存済みの案件CSはありません。",
+            ? `検索結果 ${loadedInstances.length}件（実行中 ${loadedInProgressInstances.length}件、未着手 ${loadedNotStartedInstances.length}件、完了済み ${completedCount}件）`
+            : "検索条件に一致する案件CSはありません。",
         );
         setSelectedId((current) => (
           activeInstances.some((instance) => String(instance.case_document_id) === current)
@@ -9080,12 +9337,34 @@ function CaseDocExecutionPage() {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
         }
-        setListMessage("APIに接続できませんでした。");
+        setListMessage("サーバーに接続できませんでした。");
       }
     }
     void loadInstances();
     return () => abortController.abort();
-  }, []);
+  }, [appliedSearch]);
+
+  function toggleCaseDocSearchTag(tagPath: string): void {
+    const normalizedTag = normalizeModuleFolderPath(tagPath);
+    setSearchTagInputs((current) => (
+      current.includes(normalizedTag)
+        ? current.filter((currentTag) => currentTag !== normalizedTag)
+        : [...current, normalizedTag]
+    ));
+  }
+
+  function applyCaseDocSearch(): void {
+    setAppliedSearch({
+      keyword: searchKeywordInput.trim(),
+      tagPaths: Array.from(new Set(searchTagInputs.map(normalizeModuleFolderPath))),
+    });
+  }
+
+  function resetCaseDocSearch(): void {
+    setSearchKeywordInput("");
+    setSearchTagInputs([]);
+    setAppliedSearch({ keyword: "", tagPaths: [] });
+  }
 
   useEffect(() => {
     if (!selectedId) {
@@ -9096,13 +9375,13 @@ function CaseDocExecutionPage() {
     }
     const abortController = new AbortController();
     async function loadDetail(): Promise<void> {
-      setDetailMessage("案件CS実行詳細を取得しています。");
+      setDetailMessage("案件CS詳細を取得しています。");
       try {
         const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/instances/${selectedId}`), { signal: abortController.signal });
         const responseBody = await readApiResponse<CaseDocInstanceDetailData>(response);
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setDetail(null);
-          setDetailMessage(responseBody.message || "案件CS実行詳細の取得に失敗しました。");
+          setDetailMessage(responseBody.message || "案件CS詳細の取得に失敗しました。");
           return;
         }
         const loadedDetail = responseBody.data;
@@ -9121,14 +9400,14 @@ function CaseDocExecutionPage() {
         setDetailMessage(
           hasExecutionProgress && loadedDetail.pending_count > 0 && resumeGroup
             ? `未完了の小項番 ${resumeGroup.label} から再開します。`
-            : "案件CS実行詳細を取得しました。",
+            : "案件CS詳細を取得しました。",
         );
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
         }
         setDetail(null);
-        setDetailMessage("APIに接続できませんでした。");
+        setDetailMessage("サーバーに接続できませんでした。");
       }
     }
     void loadDetail();
@@ -9177,13 +9456,39 @@ function CaseDocExecutionPage() {
     navigate(selectedId ? `/case-docs/executions/${selectedId}` : "/case-docs/executions", { replace: true });
   }, [caseDocumentId, navigate, selectedId]);
 
-  function selectInstance(nextId: string): void {
+  function hasUnsavedExecutionComment(): boolean {
+    if (!detail) {
+      return false;
+    }
+    const groups = buildCaseDocExecutionRowGroups(detail.execution_items);
+    const group = groups[Math.min(currentRowGroupIndex, Math.max(groups.length - 1, 0))];
+    const groupStartRowOrder = group?.rowOrders[0];
+    const savedComment = detail.execution_comments.find((comment) => (
+      comment.group_start_row_order === groupStartRowOrder
+    ));
+    return commentDraft !== (savedComment?.comment_text ?? "");
+  }
+
+  function applyInstanceSelection(nextId: string): void {
+    setPendingNavigation(null);
     setDetail(null);
     setSelectedId(nextId);
     setCurrentRowGroupIndex(0);
     setExpandedExecutionImage(null);
+    setBulkAction(null);
+    setBulkActionMessage("");
+    setCommentDraft("");
+    setCommentMessage(nextId ? "コメントを取得しています。" : "小項番を選択してください。");
     setPreparationMessage(nextId ? "案件CSの工事情報を取得しています。" : "案件CSを選択してください。");
     navigate(nextId ? `/case-docs/executions/${nextId}` : "/case-docs/executions", { replace: true });
+  }
+
+  function selectInstance(nextId: string): void {
+    if (nextId !== selectedId && hasUnsavedExecutionComment()) {
+      setPendingNavigation({ kind: "instance", nextId });
+      return;
+    }
+    applyInstanceSelection(nextId);
   }
 
   function updatePreparationField<TKey extends keyof CaseDocPreparationFormState>(
@@ -9246,7 +9551,7 @@ function CaseDocExecutionPage() {
       )));
       setPreparationMessage("工事情報を保存しました。");
     } catch {
-      setPreparationMessage("APIに接続できませんでした。");
+      setPreparationMessage("サーバーに接続できませんでした。");
     } finally {
       setIsSavingPreparation(false);
     }
@@ -9291,9 +9596,126 @@ function CaseDocExecutionPage() {
       )));
       setDetailMessage("実施状態を更新しました。");
     } catch {
-      setDetailMessage("APIに接続できませんでした。");
+      setDetailMessage("サーバーに接続できませんでした。");
     } finally {
       setMutatingItemId(null);
+    }
+  }
+
+  function openBulkAction(
+    label: string,
+    items: CaseDocExecutionItemData[],
+    status: CaseDocExecutionBulkStatus,
+  ): void {
+    const pendingItems = items.filter((item) => item.status === "pending");
+    if (pendingItems.length === 0) {
+      setDetailMessage(`${label}に未実施の項目はありません。`);
+      return;
+    }
+    setBulkSkipReason("");
+    setBulkActionMessage("");
+    setBulkAction({ label, status, items: pendingItems });
+  }
+
+  async function applyBulkAction(): Promise<void> {
+    if (!detail || !bulkAction || isBulkUpdating || !executionIsUnlocked) {
+      return;
+    }
+    setIsBulkUpdating(true);
+    try {
+      const response = await apiFetch(
+        buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/items/bulk`),
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: bulkAction.status,
+            items: bulkAction.items.map((item) => ({
+              execution_item_id: item.execution_item_id,
+              expected_lock_version: item.lock_version,
+            })),
+            skip_reason: bulkAction.status === "skipped" ? bulkSkipReason.trim() || null : null,
+          }),
+        },
+      );
+      const responseBody = await readApiResponse<CaseDocInstanceDetailData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        const message = responseBody.message || "実施状態の一括更新に失敗しました。";
+        setBulkActionMessage(message);
+        setDetailMessage(message);
+        return;
+      }
+      const updatedDetail = responseBody.data;
+      setDetail(updatedDetail);
+      setInstances((current) => current.map((instance) => (
+        instance.case_document_id === updatedDetail.case_document_id ? updatedDetail : instance
+      )));
+      setDetailMessage(
+        `${bulkAction.label}の${bulkAction.items.length}件を一括${bulkAction.status === "checked" ? "チェック" : "スキップ"}しました。`,
+      );
+      setBulkAction(null);
+      setBulkSkipReason("");
+      setBulkActionMessage("");
+    } catch {
+      setBulkActionMessage("サーバーに接続できませんでした。");
+      setDetailMessage("サーバーに接続できませんでした。");
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  }
+
+  async function saveExecutionComment(): Promise<void> {
+    if (!detail || detail.status === "completed" || !executionIsUnlocked || isSavingComment) {
+      return;
+    }
+    const groups = buildCaseDocExecutionRowGroups(detail.execution_items);
+    const group = groups[Math.min(currentRowGroupIndex, Math.max(groups.length - 1, 0))];
+    const groupStartRowOrder = group?.rowOrders[0];
+    if (!groupStartRowOrder) {
+      setCommentMessage("コメントを登録する小項番が見つかりません。");
+      return;
+    }
+    const savedComment = detail.execution_comments.find((comment) => (
+      comment.group_start_row_order === groupStartRowOrder
+    ));
+
+    setIsSavingComment(true);
+    setCommentMessage("コメントを保存しています。");
+    try {
+      const response = await apiFetch(
+        buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/comments/${groupStartRowOrder}`),
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            comment_text: commentDraft,
+            expected_lock_version: savedComment?.lock_version ?? 0,
+          }),
+        },
+      );
+      const responseBody = await readApiResponse<CaseDocInstanceDetailData>(response);
+      if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
+        setCommentMessage(responseBody.message || "コメントの保存に失敗しました。");
+        return;
+      }
+      const updatedDetail = responseBody.data;
+      const updatedComment = updatedDetail.execution_comments.find((comment) => (
+        comment.group_start_row_order === groupStartRowOrder
+      ));
+      setDetail(updatedDetail);
+      setInstances((current) => current.map((instance) => (
+        instance.case_document_id === updatedDetail.case_document_id ? updatedDetail : instance
+      )));
+      setCommentDraft(updatedComment?.comment_text ?? "");
+      setCommentMessage(
+        updatedComment?.comment_text
+          ? `コメントを保存しました。${formatCaseDocExecutionUpdatedAt(updatedComment.updated_at)}`
+          : "コメントをクリアしました。",
+      );
+    } catch {
+      setCommentMessage("サーバーに接続できませんでした。");
+    } finally {
+      setIsSavingComment(false);
     }
   }
 
@@ -9302,6 +9724,10 @@ function CaseDocExecutionPage() {
       if (!executionIsUnlocked) {
         setDetailMessage("工事情報を入力して保存してから案件CSを実行してください。");
       }
+      return;
+    }
+    if (hasUnsavedExecutionComment()) {
+      setDetailMessage("保存されていないコメントがあります。コメントを保存してから完了してください。");
       return;
     }
     setIsCompleting(true);
@@ -9322,9 +9748,15 @@ function CaseDocExecutionPage() {
       )));
       setDetail(null);
       setListMessage("案件CSを完了し、完了済み一覧へ移動しました。");
+      setCaseDocListTab("completed");
+      showOperationNotice({
+        tone: "success",
+        title: "案件CSを完了しました",
+        message: `${completedInstance.case_document_key} / ${completedInstance.case_name} を完了済み一覧へ移動しました。`,
+      });
       selectInstance("");
     } catch {
-      setDetailMessage("APIに接続できませんでした。");
+      setDetailMessage("サーバーに接続できませんでした。");
     } finally {
       setIsCompleting(false);
     }
@@ -9332,6 +9764,10 @@ function CaseDocExecutionPage() {
 
   async function exportEvidence(): Promise<void> {
     if (!detail) {
+      return;
+    }
+    if (hasUnsavedExecutionComment()) {
+      setDetailMessage("保存されていないコメントがあります。コメントを保存してから証跡Excelを出力してください。");
       return;
     }
     setIsExporting(true);
@@ -9352,9 +9788,79 @@ function CaseDocExecutionPage() {
       URL.revokeObjectURL(downloadUrl);
       setDetailMessage("証跡Excelをダウンロードしました。");
     } catch {
-      setDetailMessage("APIに接続できませんでした。");
+      setDetailMessage("サーバーに接続できませんでした。");
     } finally {
       setIsExporting(false);
+    }
+  }
+
+  async function exportUnstartedCaseDoc(instance: CaseDocInstanceListItemData): Promise<void> {
+    if (exportingOriginalId !== null) {
+      return;
+    }
+    setExportingOriginalId(instance.case_document_id);
+    setOriginalExportMessage(`${instance.case_name} の案件CS Excelを生成しています。`);
+    try {
+      const response = await apiFetch(
+        buildApiUrl(`/api/v1/case-docs/instances/${instance.case_document_id}/workbook`),
+      );
+      if (!response.ok) {
+        let message = `案件CS Excelの生成に失敗しました。HTTP ${response.status}`;
+        try {
+          const responseBody = await readApiResponse<unknown>(response);
+          message = responseBody.message || message;
+        } catch {
+          // Download failures do not always return JSON.
+        }
+        setOriginalExportMessage(message);
+        return;
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `${instance.case_document_key}.xlsm`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+      setOriginalExportMessage(`${instance.case_name} の案件CS Excelをダウンロードしました。`);
+    } catch {
+      setOriginalExportMessage("サーバーに接続できませんでした。");
+    } finally {
+      setExportingOriginalId(null);
+    }
+  }
+
+  async function exportCompletedEvidence(instance: CaseDocInstanceListItemData): Promise<void> {
+    if (exportingCompletedId !== null) {
+      return;
+    }
+    setExportingCompletedId(instance.case_document_id);
+    setCompletedExportMessage(`${instance.case_document_key} の証跡Excelを生成しています。`);
+    try {
+      const response = await apiFetch(
+        buildApiUrl(`/api/v1/case-docs/instances/${instance.case_document_id}/export`),
+      );
+      if (!response.ok) {
+        setCompletedExportMessage(`証跡Excelの生成に失敗しました。HTTP ${response.status}`);
+        return;
+      }
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `${instance.case_document_key}-evidence.xlsm`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+      setCompletedExportMessage(`${instance.case_document_key} の証跡Excelをダウンロードしました。`);
+    } catch {
+      setCompletedExportMessage("サーバーに接続できませんでした。");
+    } finally {
+      setExportingCompletedId(null);
     }
   }
 
@@ -9364,6 +9870,12 @@ function CaseDocExecutionPage() {
   const visibleRowOrders = currentRowGroup?.rowOrders ?? [];
   const currentRowOrderSet = new Set(visibleRowOrders);
   const currentGroupItems = detail?.execution_items.filter((item) => currentRowOrderSet.has(item.row_order)) ?? [];
+  const currentGroupStartRowOrder = currentRowGroup?.rowOrders[0];
+  const currentGroupComment = detail?.execution_comments.find((comment) => (
+    comment.group_start_row_order === currentGroupStartRowOrder
+  ));
+  const currentSavedCommentText = currentGroupComment?.comment_text ?? "";
+  const commentHasUnsavedChanges = commentDraft !== currentSavedCommentText;
   const currentGroupCompletedCount = currentGroupItems.filter((item) => item.status !== "pending").length;
   const currentGroupPendingCount = currentGroupItems.length - currentGroupCompletedCount;
   const currentGroupHasPending = currentGroupPendingCount > 0;
@@ -9384,6 +9896,23 @@ function CaseDocExecutionPage() {
     && preparationIsSaved
     && !preparationHasUnsavedChanges,
   );
+  const bulkActionsDisabled = Boolean(
+    !executionIsUnlocked
+    || detail?.status === "completed"
+    || mutatingItemId !== null
+    || isBulkUpdating,
+  );
+  const completionBlockedReason = !detail
+    ? null
+    : detail.status === "completed"
+      ? null
+      : !executionIsUnlocked
+        ? "工事情報を入力して保存してください。"
+        : detail.pending_count > 0
+          ? `未実施の時刻欄が${detail.pending_count}件あります。`
+          : commentHasUnsavedChanges
+            ? "小項番コメントを保存してください。"
+            : null;
   const preparationBlockOptions = [...new Set([
     preparationForm.block,
     ...preparationUnitConfigs.map((item) => item.block),
@@ -9392,9 +9921,62 @@ function CaseDocExecutionPage() {
     .filter((item) => item.block === preparationForm.block)
     .map((item) => item.fs_cluster_name)
     .filter(Boolean))];
+  const pendingNavigationSubject = (() => {
+    const navigation = pendingNavigation;
+    if (!navigation) {
+      return "";
+    }
+    if (navigation.kind === "row-group") {
+      return rowGroups[navigation.nextIndex]?.label ?? "選択した小項番";
+    }
+    if (!navigation.nextId) {
+      return "案件CS一覧";
+    }
+    const targetInstance = instances.find((instance) => String(instance.case_document_id) === navigation.nextId);
+    return targetInstance ? `${targetInstance.case_document_key} / ${targetInstance.case_name}` : "選択した案件CS";
+  })();
+
+  useEffect(() => {
+    setCommentDraft(currentSavedCommentText);
+    setCommentMessage(
+      currentGroupComment?.updated_at
+        ? `保存済み ${formatCaseDocExecutionUpdatedAt(currentGroupComment.updated_at)}`
+        : "コメントは未入力です。",
+    );
+  }, [currentGroupComment?.updated_at, currentRowGroup?.key, currentSavedCommentText, detail?.case_document_id]);
+
+  function moveToRowGroup(nextIndex: number): void {
+    if (commentHasUnsavedChanges) {
+      setPendingNavigation({ kind: "row-group", nextIndex });
+      return;
+    }
+    setPendingNavigation(null);
+    setCurrentRowGroupIndex(nextIndex);
+  }
+
   return (
-    <Page title="案件CS実行" description="案件CSの時刻欄をチェックまたはスキップし、実施証跡をExcelで出力します。">
-      <section className="case-execution-flow section-band" aria-labelledby="case-execution-flow-title">
+    <Page title="案件CS実行管理" description="案件CSを検索し、実行状況の確認、作業の実施、証跡Excelの出力を行います。">
+      {detail ? (
+        <>
+          <section className="case-execution-work-header" aria-labelledby="case-execution-work-title">
+            <button className="secondary" type="button" onClick={() => selectInstance("")}>
+              <span aria-hidden="true">←</span>案件一覧へ戻る
+            </button>
+            <div>
+              <span>{detail.checked_count + detail.skipped_count > 0 ? "実行中" : "未着手"}</span>
+              <h2 id="case-execution-work-title">{detail.case_name}</h2>
+              <p>{detail.case_document_key} / {detail.source_doc_key} / {detail.source_doc_name}</p>
+            </div>
+            <div className="case-execution-work-progress">
+              <span>全体進捗</span>
+              <strong>{detail.checked_count + detail.skipped_count} / {detail.total_count}</strong>
+              <progress
+                value={detail.checked_count + detail.skipped_count}
+                max={Math.max(detail.total_count, 1)}
+              />
+            </div>
+          </section>
+          <section className="case-execution-flow section-band" aria-labelledby="case-execution-flow-title">
         <div className="case-execution-flow-heading">
           <div>
             <h2 id="case-execution-flow-title">実行前準備</h2>
@@ -9418,31 +10000,117 @@ function CaseDocExecutionPage() {
             <span><strong>工事情報を保存</strong><small>{executionIsUnlocked ? "保存済み" : preparationHasUnsavedChanges ? "変更内容を保存してください" : "工事情報入力後に保存"}</small></span>
           </li>
         </ol>
-      </section>
-      <section className="case-execution-queue section-band" aria-labelledby="case-execution-queue-title">
+          </section>
+        </>
+      ) : null}
+      {!selectedId ? (
+        <>
+          <section className="case-execution-search section-band" aria-labelledby="case-execution-search-title">
+        <div className="case-execution-search-heading">
+          <h2 id="case-execution-search-title">案件CSを探す</h2>
+          <span>{instances.length}件</span>
+        </div>
+        <form
+          className="case-execution-search-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            applyCaseDocSearch();
+          }}
+        >
+          <label>
+            キーワード
+            <input
+              value={searchKeywordInput}
+              onChange={(event) => setSearchKeywordInput(event.target.value)}
+              placeholder="案件名 / 案件CS / 原本 / 工事名"
+              maxLength={200}
+            />
+          </label>
+          <fieldset className="module-tag-filter-field">
+            <legend>タグ</legend>
+            <details className="module-tag-filter-select">
+              <summary>
+                <span>{searchTagInputs.length > 0 ? `${searchTagInputs.length}件選択` : "すべて"}</span>
+                <small>{searchTagInputs.length > 0 ? searchTagInputs.join("、") : "タグを選択"}</small>
+              </summary>
+              <div className="module-tag-filter-menu">
+                <div className="module-tag-filter-options">
+                  {(availableCaseDocTags.length > 0 ? availableCaseDocTags : ["未分類"]).map((tagPath) => (
+                    <label key={tagPath}>
+                      <input
+                        type="checkbox"
+                        checked={searchTagInputs.includes(tagPath)}
+                        onChange={() => toggleCaseDocSearchTag(tagPath)}
+                      />
+                      <span>{tagPath}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="module-tag-filter-footer">
+                  <small>複数選択時は、すべてのタグを持つ案件CSを表示します。</small>
+                </div>
+              </div>
+            </details>
+          </fieldset>
+          <div className="case-execution-search-actions">
+            <button className="secondary" type="button" onClick={resetCaseDocSearch}>条件をクリア</button>
+            <button className="primary" type="submit"><span aria-hidden="true">⌕</span>検索</button>
+          </div>
+        </form>
+          </section>
+          <section className="case-execution-queue section-band" aria-labelledby="case-execution-queue-title">
         <div className="case-execution-queue-heading">
           <div>
-            <h2 id="case-execution-queue-title">実行する案件CS</h2>
+            <h2 id="case-execution-queue-title">案件CS一覧</h2>
             <p>{listMessage}</p>
-          </div>
-          <div className="case-execution-queue-counts" aria-label="案件CS件数">
-            <span><strong>{inProgressInstances.length}</strong>件 実行中</span>
-            <span><strong>{notStartedInstances.length}</strong>件 未着手</span>
           </div>
         </div>
 
-        <div className="case-execution-queue-group">
+        <div className="case-execution-list-tabs" role="tablist" aria-label="案件CSの実行状態">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={caseDocListTab === "in_progress"}
+            className={caseDocListTab === "in_progress" ? "active" : ""}
+            onClick={() => setCaseDocListTab("in_progress")}
+          >
+            実行中 <span>{inProgressInstances.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={caseDocListTab === "not_started"}
+            className={caseDocListTab === "not_started" ? "active" : ""}
+            onClick={() => setCaseDocListTab("not_started")}
+          >
+            未着手 <span>{notStartedInstances.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={caseDocListTab === "completed"}
+            className={caseDocListTab === "completed" ? "active" : ""}
+            onClick={() => setCaseDocListTab("completed")}
+          >
+            完了済み <span>{completedInstances.length}</span>
+          </button>
+        </div>
+
+        {caseDocListTab === "in_progress" ? (
+          <div className="case-execution-queue-group">
           <div className="case-execution-queue-group-heading">
             <h3>実行中</h3>
             <span>未完了の小項番から再開します</span>
           </div>
           {inProgressInstances.length > 0 ? (
-            <div className="table-wrap case-execution-queue-table-wrap">
+            <div className="table-wrap table-wrap-sticky-last case-execution-queue-table-wrap">
               <table className="case-execution-queue-table">
                 <thead>
                   <tr>
                     <th>案件CS</th>
+                    <th>案件名</th>
                     <th>原本</th>
+                    <th>タグ</th>
                     <th>進捗</th>
                     <th>次の項番</th>
                     <th>最終更新</th>
@@ -9456,7 +10124,9 @@ function CaseDocExecutionPage() {
                     return (
                       <tr key={instance.case_document_id} className={isSelected ? "case-execution-queue-selected" : undefined}>
                         <td><strong>{instance.case_document_key}</strong></td>
+                        <td>{instance.case_name}</td>
                         <td>{instance.source_doc_key} / {instance.source_doc_name}</td>
+                        <td><CaseDocTagMembershipList tagPaths={instance.tag_paths} /></td>
                         <td>
                           <div className="case-execution-progress">
                             <progress value={completedCount} max={Math.max(instance.total_count, 1)} />
@@ -9477,20 +10147,24 @@ function CaseDocExecutionPage() {
               </table>
             </div>
           ) : <p className="case-execution-queue-empty">実行中の案件CSはありません。</p>}
-        </div>
+          </div>
+        ) : null}
 
-        <div className="case-execution-queue-group">
+        {caseDocListTab === "not_started" ? (
+          <div className="case-execution-queue-group">
           <div className="case-execution-queue-group-heading">
             <h3>未着手</h3>
             <span>工事情報を保存して実行を開始します</span>
           </div>
           {notStartedInstances.length > 0 ? (
-            <div className="table-wrap case-execution-queue-table-wrap">
+            <div className="table-wrap table-wrap-sticky-last case-execution-queue-table-wrap">
               <table className="case-execution-queue-table">
                 <thead>
                   <tr>
                     <th>案件CS</th>
+                    <th>案件名</th>
                     <th>原本</th>
+                    <th>タグ</th>
                     <th>進捗</th>
                     <th>開始項番</th>
                     <th>作成日時</th>
@@ -9503,14 +10177,27 @@ function CaseDocExecutionPage() {
                     return (
                       <tr key={instance.case_document_id} className={isSelected ? "case-execution-queue-selected" : undefined}>
                         <td><strong>{instance.case_document_key}</strong></td>
+                        <td>{instance.case_name}</td>
                         <td>{instance.source_doc_key} / {instance.source_doc_name}</td>
+                        <td><CaseDocTagMembershipList tagPaths={instance.tag_paths} /></td>
                         <td>0 / {instance.total_count}</td>
                         <td><strong>{instance.resume_item_label ?? "-"}</strong></td>
                         <td>{formatCaseDocExecutionUpdatedAt(instance.created_at)}</td>
                         <td>
-                          <button className="secondary case-execution-queue-action" type="button" onClick={() => selectInstance(String(instance.case_document_id))} disabled={isSelected}>
-                            <span aria-hidden="true">→</span>{isSelected ? "表示中" : "実行開始"}
-                          </button>
+                          <div className="case-execution-queue-actions">
+                            <button
+                              className="secondary case-execution-queue-action"
+                              type="button"
+                              onClick={() => void exportUnstartedCaseDoc(instance)}
+                              disabled={exportingOriginalId !== null}
+                            >
+                              <span aria-hidden="true">⇩</span>
+                              {exportingOriginalId === instance.case_document_id ? "生成中" : "案件CS Excel"}
+                            </button>
+                            <button className="primary case-execution-queue-action" type="button" onClick={() => selectInstance(String(instance.case_document_id))} disabled={isSelected}>
+                              <span aria-hidden="true">→</span>{isSelected ? "表示中" : "実行開始"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -9519,14 +10206,56 @@ function CaseDocExecutionPage() {
               </table>
             </div>
           ) : <p className="case-execution-queue-empty">未着手の案件CSはありません。</p>}
-        </div>
-      </section>
+          {originalExportMessage ? <p className="case-execution-export-message" aria-live="polite">{originalExportMessage}</p> : null}
+          </div>
+        ) : null}
+
+        {caseDocListTab === "completed" ? (
+          <div className="case-execution-queue-group case-execution-completed-section">
+            <div className="case-execution-queue-group-heading">
+              <div>
+                <h3>完了済み</h3>
+                <p aria-live="polite">{completedExportMessage}</p>
+              </div>
+              <span>証跡Excelを再出力できます</span>
+            </div>
+            {completedInstances.length > 0 ? (
+              <DataTable
+                stickyLastColumn
+                columns={["案件CS", "案件名", "原本", "タグ", "進捗", "作成者", "最終更新", "操作"]}
+                rows={completedInstances.map((instance) => [
+                  instance.case_document_key,
+                  instance.case_name,
+                  `${instance.source_doc_key} / ${instance.source_doc_name}`,
+                  <CaseDocTagMembershipList tagPaths={instance.tag_paths} />,
+                  `${instance.checked_count + instance.skipped_count} / ${instance.total_count}`,
+                  instance.created_by ?? "-",
+                  formatCaseDocExecutionUpdatedAt(instance.updated_at),
+                  <button
+                    className="secondary case-execution-completed-export"
+                    type="button"
+                    onClick={() => void exportCompletedEvidence(instance)}
+                    disabled={exportingCompletedId !== null}
+                  >
+                    <span aria-hidden="true">⇩</span>
+                    {exportingCompletedId === instance.case_document_id ? "生成中" : "証跡Excel"}
+                  </button>,
+                ])}
+              />
+            ) : <p className="case-execution-queue-empty">完了済みの案件CSはありません。</p>}
+          </div>
+        ) : null}
+          </section>
+        </>
+      ) : null}
 
       {detail ? (
         <>
           <section className="case-execution-summary">
             <Fact label="案件CS" value={detail.case_document_key} />
+            <Fact label="案件名" value={detail.case_name} />
             <Fact label="原本" value={`${detail.source_doc_key} / ${detail.source_doc_name}`} />
+            <Fact label="タグ" value={(detail.tag_paths.length > 0 ? detail.tag_paths : ["未分類"]).join("、")} />
             <Fact label="進捗" value={`${detail.checked_count + detail.skipped_count} / ${detail.total_count}`} />
             <Fact label="状態" value={detail.status === "completed" ? "完了" : "実施中"} />
           </section>
@@ -9537,7 +10266,7 @@ function CaseDocExecutionPage() {
             </div>
             <form className="case-execution-preparation-form" onSubmit={(event) => void savePreparation(event)}>
               <label className="case-execution-preparation-wide">
-                工事名
+                <RequiredFieldLabel>工事名</RequiredFieldLabel>
                 <input
                   value={preparationForm.construction_name}
                   onChange={(event) => updatePreparationField("construction_name", event.target.value)}
@@ -9546,7 +10275,7 @@ function CaseDocExecutionPage() {
                 />
               </label>
               <label>
-                工事日
+                <RequiredFieldLabel>工事日</RequiredFieldLabel>
                 <input
                   type="date"
                   value={preparationForm.construction_date}
@@ -9556,7 +10285,7 @@ function CaseDocExecutionPage() {
                 />
               </label>
               <label>
-                工事実施者
+                <RequiredFieldLabel>工事実施者</RequiredFieldLabel>
                 <input
                   value={preparationForm.construction_executor}
                   onChange={(event) => updatePreparationField("construction_executor", event.target.value)}
@@ -9565,7 +10294,7 @@ function CaseDocExecutionPage() {
                 />
               </label>
               <label>
-                ブロック
+                <RequiredFieldLabel>ブロック</RequiredFieldLabel>
                 <select
                   value={preparationForm.block}
                   onChange={(event) => updatePreparationBlock(event.target.value)}
@@ -9577,7 +10306,7 @@ function CaseDocExecutionPage() {
                 </select>
               </label>
               <label>
-                工事対象FS
+                <RequiredFieldLabel>工事対象FS</RequiredFieldLabel>
                 <input
                   list="case-execution-target-fs-options"
                   value={preparationForm.target_fs}
@@ -9590,7 +10319,21 @@ function CaseDocExecutionPage() {
                 </datalist>
               </label>
               <div className="case-execution-preparation-actions">
-                <p aria-live="polite">{preparationMessage}</p>
+                <FormFeedback
+                  message={preparationMessage}
+                  tone={
+                    isSavingPreparation
+                      ? "pending"
+                      : preparationIsSaved && !preparationHasUnsavedChanges
+                        ? "success"
+                        : preparationMessage.includes("失敗") || preparationMessage.includes("接続できません") || preparationMessage.includes("すべての工事情報")
+                          ? "error"
+                          : preparationHasUnsavedChanges
+                            ? "warning"
+                            : "neutral"
+                  }
+                  compact
+                />
                 <button className="primary" type="submit" disabled={isSavingPreparation || detail.status === "completed"}>
                   <span aria-hidden="true">✓</span>{isSavingPreparation ? "保存中" : "工事情報を保存"}
                 </button>
@@ -9604,16 +10347,33 @@ function CaseDocExecutionPage() {
             </section>
           ) : null}
           <section className="case-execution-toolbar section-band">
-            <p aria-live="polite">{detailMessage}</p>
+            <div className="case-execution-toolbar-status">
+              <p aria-live="polite">{detailMessage}</p>
+              {completionBlockedReason ? (
+                <p className="case-execution-action-guidance">完了するには: {completionBlockedReason}</p>
+              ) : null}
+            </div>
             <Toolbar>
-              <button className="secondary" type="button" onClick={() => void exportEvidence()} disabled={isExporting}>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => void exportEvidence()}
+                disabled={isExporting || commentHasUnsavedChanges}
+              >
                 <span aria-hidden="true">⇩</span>{isExporting ? "生成中" : "証跡Excel"}
               </button>
               <button
                 className="primary"
                 type="button"
                 onClick={() => void completeInstance()}
-                disabled={isCompleting || detail.pending_count > 0 || detail.status === "completed" || !executionIsUnlocked}
+                disabled={
+                  isCompleting
+                  || detail.pending_count > 0
+                  || detail.status === "completed"
+                  || !executionIsUnlocked
+                  || commentHasUnsavedChanges
+                }
+                title={completionBlockedReason ?? (detail.status === "completed" ? "この案件CSは完了済みです。" : "案件CSを完了します。")}
               >
                 <span aria-hidden="true">✓</span>{detail.status === "completed" ? "完了済み" : "案件CSを完了"}
               </button>
@@ -9636,7 +10396,7 @@ function CaseDocExecutionPage() {
               <button
                 className="secondary"
                 type="button"
-                onClick={() => setCurrentRowGroupIndex((index) => Math.max(0, index - 1))}
+                onClick={() => moveToRowGroup(Math.max(0, effectiveRowGroupIndex - 1))}
                 disabled={effectiveRowGroupIndex === 0}
               >
                 <span aria-hidden="true">←</span>前へ
@@ -9646,6 +10406,16 @@ function CaseDocExecutionPage() {
                 <strong>{currentRowGroup?.label ?? "-"}</strong>
                 <span>{rowGroups.length > 0 ? `${effectiveRowGroupIndex + 1} / ${rowGroups.length}` : "0 / 0"}</span>
                 <span>実施済み {currentGroupCompletedCount} / {currentGroupItems.length}</span>
+                <CaseDocExecutionBulkButtons
+                  label={`表示中の小項番 ${currentRowGroup?.label ?? "-"}`}
+                  pendingCount={currentGroupPendingCount}
+                  disabled={bulkActionsDisabled}
+                  onSelect={(status) => openBulkAction(
+                    `表示中の小項番 ${currentRowGroup?.label ?? "-"}`,
+                    currentGroupItems,
+                    status,
+                  )}
+                />
                 {currentGroupHasPending ? (
                   <span className="case-execution-step-validation" role="alert">
                     未入力 {currentGroupPendingCount}件: 次へ進むにはチェックまたはスキップを選択してください。
@@ -9655,12 +10425,52 @@ function CaseDocExecutionPage() {
               <button
                 className="secondary"
                 type="button"
-                onClick={() => setCurrentRowGroupIndex((index) => Math.min(rowGroups.length - 1, index + 1))}
+                onClick={() => moveToRowGroup(Math.min(rowGroups.length - 1, effectiveRowGroupIndex + 1))}
                 disabled={rowGroups.length === 0 || effectiveRowGroupIndex >= rowGroups.length - 1 || currentGroupHasPending || !executionIsUnlocked}
               >
                 次へ<span aria-hidden="true">→</span>
               </button>
             </nav>
+            <div className="case-execution-comment-panel">
+              <div className="case-execution-comment-heading">
+                <label htmlFor="case-execution-comment">
+                  <strong>小項番 {currentRowGroup?.label ?? "-"} のコメント</strong>
+                  <span>ヒヤリハット・想定との差異</span>
+                </label>
+                <span>{commentDraft.length} / 4000</span>
+              </div>
+              <textarea
+                id="case-execution-comment"
+                rows={3}
+                maxLength={4000}
+                value={commentDraft}
+                onChange={(event) => {
+                  setCommentDraft(event.target.value);
+                  setCommentMessage("コメントは未保存です。");
+                }}
+                placeholder="この小項番で発生した事象や、想定と異なった点を入力"
+                disabled={!currentRowGroup || detail.status === "completed" || !executionIsUnlocked || isSavingComment}
+              />
+              <div className="case-execution-comment-actions">
+                <p className={commentHasUnsavedChanges ? "case-execution-comment-unsaved" : undefined} aria-live="polite">
+                  {commentMessage}
+                </p>
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={() => void saveExecutionComment()}
+                  disabled={
+                    !currentRowGroup
+                    || !commentHasUnsavedChanges
+                    || detail.status === "completed"
+                    || !executionIsUnlocked
+                    || isSavingComment
+                  }
+                >
+                  <span aria-hidden="true">✓</span>{isSavingComment ? "保存中" : "コメントを保存"}
+                </button>
+              </div>
+            </div>
             <div className="excel-sheet-wrap excel-sheet-wrap-case excel-sheet-scroll-with-sticky-left excel-sheet-scroll-case case-execution-table-wrap">
               <table className="excel-sheet excel-sheet-case excel-sheet-multi-device excel-sheet-sticky-left excel-sheet-case-sticky case-execution-sheet case-execution-sticky">
                 <colgroup>
@@ -9742,7 +10552,22 @@ function CaseDocExecutionPage() {
                       const toneClass = targetIndex % 2 === 0 ? "excel-device-block-odd" : "excel-device-block-even";
                       return (
                         <Fragment key={`execution-header-${target.excel_no}`}>
-                          <th className={toneClass}>時刻</th>
+                          <th className={`${toneClass} case-execution-bulk-header`}>
+                            <span>時刻</span>
+                            <CaseDocExecutionBulkButtons
+                              label={`${target.host_name}の縦方向`}
+                              pendingCount={currentGroupItems.filter((item) => (
+                                item.target_no === target.excel_no && item.status === "pending"
+                              )).length}
+                              disabled={bulkActionsDisabled}
+                              compact
+                              onSelect={(status) => openBulkAction(
+                                `${target.host_name}の縦方向`,
+                                currentGroupItems.filter((item) => item.target_no === target.excel_no),
+                                status,
+                              )}
+                            />
+                          </th>
                           <th className={toneClass}>window</th>
                           <th className={toneClass}>P</th>
                           <th className={toneClass}>コマンド</th>
@@ -9770,12 +10595,21 @@ function CaseDocExecutionPage() {
                             onImageClick={setExpandedExecutionImage}
                           />
                         </td>
-                        <td className="case-execution-content-cell">
-                          <span>{baseItem.check_text ?? ""}</span>
-                          <ModuleRowImageList
-                            images={baseItem.images ?? []}
-                            placement="expected"
-                            onImageClick={setExpandedExecutionImage}
+                        <td className="case-execution-content-cell case-execution-content-with-bulk">
+                          <div>
+                            <span>{baseItem.check_text ?? ""}</span>
+                            <ModuleRowImageList
+                              images={baseItem.images ?? []}
+                              placement="expected"
+                              onImageClick={setExpandedExecutionImage}
+                            />
+                          </div>
+                          <CaseDocExecutionBulkButtons
+                            label={`行 ${rowOrder} の横方向`}
+                            pendingCount={rowItems.filter((item) => item.status === "pending").length}
+                            disabled={bulkActionsDisabled}
+                            compact
+                            onSelect={(status) => openBulkAction(`行 ${rowOrder} の横方向`, rowItems, status)}
                           />
                         </td>
                         {detail.targets.map((target) => {
@@ -9786,7 +10620,7 @@ function CaseDocExecutionPage() {
                               <CaseDocExecutionTimeCell
                                 item={item}
                                 busy={isBusy}
-                                disabled={detail.status === "completed" || !executionIsUnlocked}
+                                disabled={detail.status === "completed" || !executionIsUnlocked || isBulkUpdating}
                                 onUpdate={(targetItem, status) => void updateExecutionItem(targetItem, status)}
                               />
                               <td>{item?.window_text ?? ""}</td>
@@ -9818,31 +10652,102 @@ function CaseDocExecutionPage() {
             </PreviewOverlay>
           ) : null}
 
+          {bulkAction ? (
+            <div
+              className="modal-backdrop"
+              role="presentation"
+              onMouseDown={() => {
+                if (!isBulkUpdating) {
+                  setBulkAction(null);
+                  setBulkActionMessage("");
+                }
+              }}
+            >
+              <section
+                aria-labelledby="case-execution-bulk-dialog-title"
+                aria-modal="true"
+                className="modal-dialog case-execution-bulk-dialog confirmation-dialog"
+                role="dialog"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="confirmation-dialog-heading">
+                  <span className="modal-icon" aria-hidden="true">{bulkAction.status === "checked" ? "✓" : "−"}</span>
+                  <div>
+                    <span className="confirmation-dialog-kicker">一括操作</span>
+                    <h2 id="case-execution-bulk-dialog-title">
+                      一括{bulkAction.status === "checked" ? "チェック" : "スキップ"}
+                    </h2>
+                  </div>
+                </div>
+                <div className="confirmation-dialog-target">
+                  <span>対象範囲</span>
+                  <strong>{bulkAction.label} / 未実施 {bulkAction.items.length}件</strong>
+                </div>
+                <p className="confirmation-dialog-description">対象範囲の未実施項目だけを更新します。実施済みの項目は変更しません。</p>
+                {bulkAction.status === "skipped" ? (
+                  <label>
+                    スキップ理由（任意）
+                    <textarea
+                      rows={3}
+                      value={bulkSkipReason}
+                      onChange={(event) => setBulkSkipReason(event.target.value)}
+                      disabled={isBulkUpdating}
+                    />
+                  </label>
+                ) : null}
+                <FormFeedback message={bulkActionMessage} tone="error" compact />
+                <div className="modal-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => {
+                      setBulkAction(null);
+                      setBulkActionMessage("");
+                    }}
+                    disabled={isBulkUpdating}
+                  >
+                    キャンセル
+                  </button>
+                  <button className="primary" type="button" onClick={() => void applyBulkAction()} disabled={isBulkUpdating}>
+                    {isBulkUpdating ? "更新中" : `${bulkAction.items.length}件を更新`}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
+
+          {pendingNavigation ? (
+            <ConfirmationDialog
+              id="case-execution-unsaved-comment-dialog"
+              title="未保存のコメントを破棄しますか？"
+              subjectLabel="移動先"
+              subject={pendingNavigationSubject}
+              description="現在の小項番に入力したコメントは保存されていません。移動すると入力内容を復元できません。"
+              confirmLabel="破棄して移動"
+              tone="danger"
+              onCancel={() => setPendingNavigation(null)}
+              onConfirm={() => {
+                const navigation = pendingNavigation;
+                setPendingNavigation(null);
+                if (navigation.kind === "instance") {
+                  applyInstanceSelection(navigation.nextId);
+                } else {
+                  setCurrentRowGroupIndex(navigation.nextIndex);
+                }
+              }}
+            />
+          ) : null}
+
         </>
-      ) : (
-        <section className="empty-state">
-          <h2>案件CSを選択してください</h2>
+      ) : selectedId ? (
+        <section className="empty-state case-execution-loading-state">
+          <h2>案件CSを読み込んでいます</h2>
           <p>{detailMessage}</p>
+          <button className="secondary" type="button" onClick={() => selectInstance("")}>
+            <span aria-hidden="true">←</span>案件一覧へ戻る
+          </button>
         </section>
-      )}
-      <section className="section-band case-execution-completed-section">
-        <div className="case-execution-completed-heading">
-          <h2>完了済み案件CS</h2>
-          <span>{completedInstances.length}件</span>
-        </div>
-        {completedInstances.length > 0 ? (
-          <DataTable
-            columns={["案件CS", "原本", "進捗", "作成者", "最終更新"]}
-            rows={completedInstances.map((instance) => [
-              instance.case_document_key,
-              `${instance.source_doc_key} / ${instance.source_doc_name}`,
-              `${instance.checked_count + instance.skipped_count} / ${instance.total_count}`,
-              instance.created_by ?? "-",
-              formatCaseDocExecutionUpdatedAt(instance.updated_at),
-            ])}
-          />
-        ) : <p>完了済みの案件CSはありません。</p>}
-      </section>
+      ) : null}
     </Page>
   );
 }
@@ -9867,6 +10772,7 @@ function formatManagedUserDateTime(value: string | null): string {
 
 function UserManagementPage() {
   const { user: currentUser } = useAuth();
+  const showOperationNotice = useOperationNotice();
   const [listState, setListState] = useState<ManagedUserListState>({
     status: "loading",
     items: [],
@@ -9894,6 +10800,24 @@ function UserManagementPage() {
     password_confirmation: "",
     role: "member",
   });
+
+  useEffect(() => {
+    if (mutationState.status === "submitting" || (!isCreateDialogOpen && !passwordResetTarget && !deleteTarget)) {
+      return;
+    }
+
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key !== "Escape") {
+        return;
+      }
+      setIsCreateDialogOpen(false);
+      setPasswordResetTarget(null);
+      setDeleteTarget(null);
+    }
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [deleteTarget, isCreateDialogOpen, mutationState.status, passwordResetTarget]);
 
   useEffect(() => {
     if (currentUser?.role !== "admin") {
@@ -9930,7 +10854,7 @@ function UserManagementPage() {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
         }
-        setListState({ status: "unavailable", items: [], message: "ユーザー管理APIへ接続できませんでした。" });
+        setListState({ status: "unavailable", items: [], message: "ユーザー一覧を取得できませんでした。" });
       }
     }
 
@@ -10001,9 +10925,14 @@ function UserManagementPage() {
 
       setIsCreateDialogOpen(false);
       setMutationState({ status: "success", message: body.message || "ユーザーを追加しました。" });
+      showOperationNotice({
+        tone: "success",
+        title: "ユーザーを追加しました",
+        message: `${body.data.display_name}（${body.data.username}）を${getAuthRoleLabel(body.data.role)}として登録しました。`,
+      });
       setReloadTick((current) => current + 1);
     } catch {
-      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+      setMutationState({ status: "error", message: "ユーザーを追加できませんでした。" });
     }
   }
 
@@ -10028,10 +10957,15 @@ function UserManagementPage() {
       }
 
       setMutationState({ status: "success", message: body.message || "ロールを変更しました。" });
+      showOperationNotice({
+        tone: "success",
+        title: "ユーザーのロールを変更しました",
+        message: `${item.display_name}（${item.username}）を${getAuthRoleLabel(nextRole)}へ変更しました。`,
+      });
       setReloadTick((current) => current + 1);
     } catch {
       setRoleDrafts((current) => ({ ...current, [item.user_id]: item.role }));
-      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+      setMutationState({ status: "error", message: "ロールを変更できませんでした。" });
     }
   }
 
@@ -10053,9 +10987,14 @@ function UserManagementPage() {
       }
 
       setMutationState({ status: "success", message: body.message });
+      showOperationNotice({
+        tone: "success",
+        title: item.is_active ? "ユーザーを無効化しました" : "ユーザーを再有効化しました",
+        message: `${item.display_name}（${item.username}）の利用状態を変更しました。`,
+      });
       setReloadTick((current) => current + 1);
     } catch {
-      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+      setMutationState({ status: "error", message: "利用状態を変更できませんでした。" });
     } finally {
       setActiveChangeTarget(null);
     }
@@ -10093,9 +11032,14 @@ function UserManagementPage() {
       setDeleteTarget(null);
       setDeleteReason("");
       setMutationState({ status: "success", message: body.message });
+      showOperationNotice({
+        tone: "success",
+        title: "ユーザーを削除しました",
+        message: `${deleteTarget.display_name}（${deleteTarget.username}）を削除済み一覧へ移動しました。`,
+      });
       setReloadTick((current) => current + 1);
     } catch {
-      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+      setMutationState({ status: "error", message: "ユーザーを削除できませんでした。" });
     }
   }
 
@@ -10113,9 +11057,14 @@ function UserManagementPage() {
 
       setRestoreTarget(null);
       setMutationState({ status: "success", message: body.message });
+      showOperationNotice({
+        tone: "success",
+        title: "ユーザーを復元しました",
+        message: `${item.display_name}（${item.username}）を無効状態で復元しました。`,
+      });
       setReloadTick((current) => current + 1);
     } catch {
-      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+      setMutationState({ status: "error", message: "ユーザーを復元できませんでした。" });
     }
   }
 
@@ -10152,9 +11101,14 @@ function UserManagementPage() {
       setTemporaryPassword("");
       setTemporaryPasswordConfirmation("");
       setMutationState({ status: "success", message: body.message });
+      showOperationNotice({
+        tone: "success",
+        title: "仮パスワードを再設定しました",
+        message: `${passwordResetTarget.display_name}（${passwordResetTarget.username}）は次回ログイン時にパスワード変更が必要です。`,
+      });
       setReloadTick((current) => current + 1);
     } catch {
-      setMutationState({ status: "error", message: "ユーザー管理APIへ接続できませんでした。" });
+      setMutationState({ status: "error", message: "仮パスワードを再設定できませんでした。" });
     }
   }
 
@@ -10209,6 +11163,7 @@ function UserManagementPage() {
         {visibleUsers.length > 0 ? (
           userListView === "available" ? (
             <DataTable
+              stickyLastColumn
               columns={["メールアドレス", "表示名", "状態", "ロール", "パスワード", "最終ログイン", "操作"]}
               rowClassNames={availableUsers.map((item) => item.is_active ? undefined : "user-management-row-inactive")}
               rows={availableUsers.map((item) => {
@@ -10284,6 +11239,7 @@ function UserManagementPage() {
             />
           ) : (
             <DataTable
+              stickyLastColumn
               columns={["メールアドレス", "表示名", "削除日時", "削除者", "削除理由", "操作"]}
               rowClassNames={deletedUsers.map(() => "user-management-row-deleted")}
               rows={deletedUsers.map((item) => [
@@ -10312,7 +11268,15 @@ function UserManagementPage() {
       </section>
 
       {isCreateDialogOpen ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsCreateDialogOpen(false)}>
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={() => {
+            if (mutationState.status !== "submitting") {
+              setIsCreateDialogOpen(false);
+            }
+          }}
+        >
           <section
             aria-labelledby="user-create-dialog-title"
             aria-modal="true"
@@ -10323,7 +11287,7 @@ function UserManagementPage() {
             <h2 id="user-create-dialog-title">ユーザー追加</h2>
             <form className="user-create-form" onSubmit={(event) => void handleCreateUser(event)}>
               <label>
-                メールアドレス
+                <RequiredFieldLabel>メールアドレス</RequiredFieldLabel>
                 <input
                   autoComplete="email"
                   maxLength={254}
@@ -10335,7 +11299,7 @@ function UserManagementPage() {
                 <span className="field-hint">ログイン時に使用します。大文字・小文字は区別しません。</span>
               </label>
               <label>
-                表示名
+                <RequiredFieldLabel>表示名</RequiredFieldLabel>
                 <input
                   maxLength={200}
                   required
@@ -10344,8 +11308,9 @@ function UserManagementPage() {
                 />
               </label>
               <label>
-                ロール
+                <RequiredFieldLabel>ロール</RequiredFieldLabel>
                 <select
+                  required
                   value={createForm.role}
                   onChange={(event) => setCreateForm((current) => ({ ...current, role: event.target.value as AuthRole }))}
                 >
@@ -10355,7 +11320,7 @@ function UserManagementPage() {
                 </select>
               </label>
               <label>
-                パスワード
+                <RequiredFieldLabel>パスワード</RequiredFieldLabel>
                 <input
                   autoComplete="new-password"
                   minLength={8}
@@ -10368,7 +11333,7 @@ function UserManagementPage() {
                 <span className="field-hint">登録後、本人が初回ログイン時に変更します。</span>
               </label>
               <label>
-                パスワード（確認）
+                <RequiredFieldLabel>パスワード（確認）</RequiredFieldLabel>
                 <input
                   autoComplete="new-password"
                   minLength={8}
@@ -10378,13 +11343,13 @@ function UserManagementPage() {
                   onChange={(event) => setCreateForm((current) => ({ ...current, password_confirmation: event.target.value }))}
                 />
               </label>
-              {mutationState.status === "error" ? <p className="form-error">{mutationState.message}</p> : null}
+              <FormFeedback message={mutationState.status === "error" ? mutationState.message : ""} tone="error" compact />
               <div className="modal-actions">
-                <button className="secondary" type="button" onClick={() => setIsCreateDialogOpen(false)}>
+                <button className="secondary" type="button" onClick={() => setIsCreateDialogOpen(false)} disabled={mutationState.status === "submitting"}>
                   キャンセル
                 </button>
                 <button className="primary" type="submit" disabled={mutationState.status === "submitting"}>
-                  追加
+                  {mutationState.status === "submitting" ? "追加中" : "追加"}
                 </button>
               </div>
             </form>
@@ -10393,7 +11358,15 @@ function UserManagementPage() {
       ) : null}
 
       {passwordResetTarget ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setPasswordResetTarget(null)}>
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={() => {
+            if (mutationState.status !== "submitting") {
+              setPasswordResetTarget(null);
+            }
+          }}
+        >
           <section
             aria-labelledby="user-password-reset-dialog-title"
             aria-modal="true"
@@ -10405,7 +11378,7 @@ function UserManagementPage() {
             <p>{passwordResetTarget.display_name}（{passwordResetTarget.username}）</p>
             <form className="user-create-form" onSubmit={(event) => void handlePasswordReset(event)}>
               <label>
-                仮パスワード
+                <RequiredFieldLabel>仮パスワード</RequiredFieldLabel>
                 <input
                   autoComplete="new-password"
                   minLength={8}
@@ -10417,7 +11390,7 @@ function UserManagementPage() {
                 <span className="field-hint">設定後、対象ユーザーは初回ログイン時に変更します。</span>
               </label>
               <label>
-                仮パスワード（確認）
+                <RequiredFieldLabel>仮パスワード（確認）</RequiredFieldLabel>
                 <input
                   autoComplete="new-password"
                   minLength={8}
@@ -10427,13 +11400,13 @@ function UserManagementPage() {
                   onChange={(event) => setTemporaryPasswordConfirmation(event.target.value)}
                 />
               </label>
-              {mutationState.status === "error" ? <p className="form-error">{mutationState.message}</p> : null}
+              <FormFeedback message={mutationState.status === "error" ? mutationState.message : ""} tone="error" compact />
               <div className="modal-actions">
-                <button className="secondary" type="button" onClick={() => setPasswordResetTarget(null)}>
+                <button className="secondary" type="button" onClick={() => setPasswordResetTarget(null)} disabled={mutationState.status === "submitting"}>
                   キャンセル
                 </button>
                 <button className="primary" type="submit" disabled={mutationState.status === "submitting"}>
-                  再設定
+                  {mutationState.status === "submitting" ? "再設定中" : "再設定"}
                 </button>
               </div>
             </form>
@@ -10442,54 +11415,57 @@ function UserManagementPage() {
       ) : null}
 
       {activeChangeTarget ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setActiveChangeTarget(null)}>
-          <section
-            aria-labelledby="user-active-dialog-title"
-            aria-modal="true"
-            className="modal-dialog"
-            role="dialog"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <h2 id="user-active-dialog-title">
-              ユーザーを{activeChangeTarget.is_active ? "無効化" : "再有効化"}しますか？
-            </h2>
-            <p>
-              {activeChangeTarget.display_name}（{activeChangeTarget.username}）
-              {activeChangeTarget.is_active
-                ? "は直ちにログインできなくなり、既存セッションも失効します。"
-                : "は再びログインできるようになります。"}
-            </p>
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={() => setActiveChangeTarget(null)}>
-                キャンセル
-              </button>
-              <button
-                className={activeChangeTarget.is_active ? "danger" : "primary"}
-                type="button"
-                disabled={mutationState.status === "submitting"}
-                onClick={() => void handleActiveStateUpdate(activeChangeTarget)}
-              >
-                {activeChangeTarget.is_active ? "無効化" : "再有効化"}
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmationDialog
+          id="user-active-dialog"
+          title={`ユーザーを${activeChangeTarget.is_active ? "無効化" : "再有効化"}しますか？`}
+          subjectLabel="対象ユーザー"
+          subject={`${activeChangeTarget.display_name}（${activeChangeTarget.username}）`}
+          description={
+            activeChangeTarget.is_active
+              ? "直ちにログインできなくなり、既存セッションも失効します。ユーザー情報と操作記録は保持されます。"
+              : "このユーザーは再びログインできるようになります。"
+          }
+          confirmLabel={activeChangeTarget.is_active ? "ユーザーを無効化" : "ユーザーを再有効化"}
+          tone={activeChangeTarget.is_active ? "danger" : "default"}
+          busy={mutationState.status === "submitting"}
+          busyLabel="変更中"
+          onCancel={() => setActiveChangeTarget(null)}
+          onConfirm={() => void handleActiveStateUpdate(activeChangeTarget)}
+        />
       ) : null}
 
       {deleteTarget ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setDeleteTarget(null)}>
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={() => {
+            if (mutationState.status !== "submitting") {
+              setDeleteTarget(null);
+            }
+          }}
+        >
           <section
             aria-labelledby="user-delete-dialog-title"
             aria-modal="true"
-            className="modal-dialog user-create-dialog"
-            role="dialog"
+            className="modal-dialog user-create-dialog confirmation-dialog confirmation-dialog-danger"
+            role="alertdialog"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <h2 id="user-delete-dialog-title">ユーザーを削除しますか？</h2>
-            <p>{deleteTarget.display_name}（{deleteTarget.username}）</p>
+            <div className="confirmation-dialog-heading">
+              <span className="modal-icon" aria-hidden="true">!</span>
+              <div>
+                <span className="confirmation-dialog-kicker">削除確認</span>
+                <h2 id="user-delete-dialog-title">ユーザーを削除しますか？</h2>
+              </div>
+            </div>
+            <div className="confirmation-dialog-target">
+              <span>対象ユーザー</span>
+              <strong>{deleteTarget.display_name}（{deleteTarget.username}）</strong>
+            </div>
+            <p className="confirmation-dialog-description">利用ユーザー一覧から外れ、ログインできなくなります。ユーザー情報と操作記録は保持されます。</p>
             <form className="user-create-form" onSubmit={(event) => void handleDeleteUser(event)}>
               <label>
-                削除理由
+                <RequiredFieldLabel>削除理由</RequiredFieldLabel>
                 <textarea
                   maxLength={500}
                   required
@@ -10498,13 +11474,13 @@ function UserManagementPage() {
                   onChange={(event) => setDeleteReason(event.target.value)}
                 />
               </label>
-              {mutationState.status === "error" ? <p className="form-error" role="alert">{mutationState.message}</p> : null}
+              <FormFeedback message={mutationState.status === "error" ? mutationState.message : ""} tone="error" compact />
               <div className="modal-actions">
-                <button className="secondary" type="button" onClick={() => setDeleteTarget(null)}>
+                <button className="secondary" type="button" onClick={() => setDeleteTarget(null)} disabled={mutationState.status === "submitting"}>
                   キャンセル
                 </button>
                 <button className="danger" type="submit" disabled={mutationState.status === "submitting"}>
-                  削除
+                  {mutationState.status === "submitting" ? "削除中" : "ユーザーを削除"}
                 </button>
               </div>
             </form>
@@ -10513,31 +11489,18 @@ function UserManagementPage() {
       ) : null}
 
       {restoreTarget ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setRestoreTarget(null)}>
-          <section
-            aria-labelledby="user-restore-dialog-title"
-            aria-modal="true"
-            className="modal-dialog"
-            role="dialog"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <h2 id="user-restore-dialog-title">ユーザーを復元しますか？</h2>
-            <p>{restoreTarget.display_name}（{restoreTarget.username}）を無効状態で復元します。</p>
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={() => setRestoreTarget(null)}>
-                キャンセル
-              </button>
-              <button
-                className="primary"
-                type="button"
-                disabled={mutationState.status === "submitting"}
-                onClick={() => void handleRestoreUser(restoreTarget)}
-              >
-                復元
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmationDialog
+          id="user-restore-dialog"
+          title="ユーザーを復元しますか？"
+          subjectLabel="対象ユーザー"
+          subject={`${restoreTarget.display_name}（${restoreTarget.username}）`}
+          description="削除済み一覧から利用ユーザー一覧へ戻します。復元直後は無効状態のため、必要に応じて再有効化してください。"
+          confirmLabel="ユーザーを復元"
+          busy={mutationState.status === "submitting"}
+          busyLabel="復元中"
+          onCancel={() => setRestoreTarget(null)}
+          onConfirm={() => void handleRestoreUser(restoreTarget)}
+        />
       ) : null}
     </Page>
   );
@@ -11387,7 +12350,7 @@ function CaseDocPlaceholdersPage() {
             ) : null}
             <form className="placeholder-editor-form" onSubmit={(event) => void handleSubmitPlaceholder(event)}>
               <label>
-                {caseDocPlaceholderText.name}
+                <RequiredFieldLabel>{caseDocPlaceholderText.name}</RequiredFieldLabel>
                 <input value={formState.name} onChange={(event) => updateFormField("name", event.target.value)} required pattern="[A-Z0-9_]+" />
               </label>
               <label className="checkbox-field placeholder-checkbox-field">
@@ -11411,7 +12374,7 @@ function CaseDocPlaceholdersPage() {
                 <span className="field-hint">{caseDocPlaceholderText.sourceDeviceTypeHelp}</span>
               </label>
               <label>
-                {caseDocPlaceholderText.sourceFile}
+                <RequiredFieldLabel>{caseDocPlaceholderText.sourceFile}</RequiredFieldLabel>
                 {sourceFileState.status === "available" ? (
                   <select value={formState.source_file} onChange={(event) => updateSourceFile(event.target.value)} required>
                     <option value="">{caseDocPlaceholderText.selectSourceFile}</option>
@@ -11428,7 +12391,7 @@ function CaseDocPlaceholdersPage() {
                 <span className="field-hint">{sourceFileState.message}</span>
               </label>
               <label>
-                {caseDocPlaceholderText.keyColumn}
+                <RequiredFieldLabel>{caseDocPlaceholderText.keyColumn}</RequiredFieldLabel>
                 {selectedSourceFile ? (
                   <select value={formState.key_column} onChange={(event) => updateFormField("key_column", event.target.value)} required>
                     <option value="">{caseDocPlaceholderText.selectColumn}</option>
@@ -11442,7 +12405,7 @@ function CaseDocPlaceholdersPage() {
                 )}
               </label>
               <label>
-                {caseDocPlaceholderText.valueColumn}
+                <RequiredFieldLabel>{caseDocPlaceholderText.valueColumn}</RequiredFieldLabel>
                 {selectedSourceFile ? (
                   <select value={formState.value_column} onChange={(event) => updateFormField("value_column", event.target.value)} required>
                     <option value="">{caseDocPlaceholderText.selectColumn}</option>
@@ -11468,7 +12431,9 @@ function CaseDocPlaceholdersPage() {
                 {caseDocPlaceholderText.descriptionColumn}
                 <textarea value={formState.description} onChange={(event) => updateFormField("description", event.target.value)} rows={3} />
               </label>
-              {mutationState.status === "error" ? <p className="placeholder-editor-error">{mutationState.message}</p> : null}
+              <div className="placeholder-editor-feedback wide">
+                <FormFeedback message={mutationState.status === "error" ? mutationState.message : ""} tone="error" compact />
+              </div>
               <div className="modal-actions wide">
                 <button className="secondary" type="button" onClick={closeEditor}>
                   {caseDocPlaceholderText.cancel}
@@ -11487,6 +12452,7 @@ function CaseDocPlaceholdersPage() {
 
 function ModuleApprovalStatusPage() {
   const navigate = useNavigate();
+  const showOperationNotice = useOperationNotice();
   const [moduleListState, setModuleListState] = useState<ModuleListState>({
     status: "loading",
     items: [],
@@ -11500,7 +12466,7 @@ function ModuleApprovalStatusPage() {
   });
   const [approvalMutationState, setApprovalMutationState] = useState<ApprovalStatusMutationState>({
     status: "idle",
-    message: "実行できる操作を選ぶと状態変更APIを呼び出します。",
+    message: "現在の状態で実行できる承認操作を選択してください。",
   });
   const { user: currentUser } = useAuth();
   const approvalActor = currentUser?.displayName ?? "";
@@ -11559,7 +12525,7 @@ function ModuleApprovalStatusPage() {
         setModuleListState({
           status: "unavailable",
           items: [],
-          message: "モジュール一覧の取得中にAPI接続で失敗しました。",
+          message: "モジュール一覧を取得できませんでした。",
         });
       }
     }
@@ -11626,7 +12592,7 @@ function ModuleApprovalStatusPage() {
         setApprovalDetailState({
           status: "unavailable",
           item: null,
-          message: "モジュール承認状態詳細の取得中にAPI接続で失敗しました。",
+          message: "モジュールの承認情報を取得できませんでした。",
         });
       }
     }
@@ -11641,7 +12607,7 @@ function ModuleApprovalStatusPage() {
   useEffect(() => {
     setApprovalMutationState({
       status: "idle",
-      message: "実行できる操作を選ぶと状態変更APIを呼び出します。",
+      message: "現在の状態で実行できる承認操作を選択してください。",
     });
     setApprovalComment("");
     setIsContentPreviewOpen(false);
@@ -11744,6 +12710,11 @@ function ModuleApprovalStatusPage() {
         status: "success",
         message: responseBody.message || "モジュール承認状態を更新しました。",
       });
+      showOperationNotice({
+        tone: "success",
+        title: "モジュールの承認状態を更新しました",
+        message: `${selectedSummary.module_key} / ${selectedSummary.module_name} を「${responseBody.data.status_label}」へ変更しました。`,
+      });
       setApprovalComment("");
       setModuleListState((current) => ({
         ...current,
@@ -11765,7 +12736,7 @@ function ModuleApprovalStatusPage() {
     } catch (error) {
       setApprovalMutationState({
         status: "error",
-        message: "モジュール承認状態変更の実行中にAPI接続で失敗しました。",
+        message: "モジュールの承認状態を変更できませんでした。",
       });
     }
   }
@@ -11839,6 +12810,8 @@ function ModuleApprovalStatusPage() {
         </section>
       ) : (
         <DataTable
+          stickyFirstColumn
+          stickyLastColumn
           columns={["選択", "モジュールID", "モジュール名", "版", "承認状態", "次の操作", "作成者", "更新日", "タグ", "行数", "選択状態"]}
           rows={filteredModuleItems.map((item) => [
             <label className="approval-selection-radio">
@@ -12016,6 +12989,7 @@ function ModuleApprovalStatusPage() {
 
 function ApprovalPage() {
   const navigate = useNavigate();
+  const showOperationNotice = useOperationNotice();
   const [approvalListState, setApprovalListState] = useState<ApprovalStatusListState>({
     status: "loading",
     items: [],
@@ -12029,7 +13003,7 @@ function ApprovalPage() {
   });
   const [approvalMutationState, setApprovalMutationState] = useState<ApprovalStatusMutationState>({
     status: "idle",
-    message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
+    message: "現在の状態で実行できる承認操作を選択してください。",
   });
   const { user: currentUser } = useAuth();
   const approvalActor = currentUser?.displayName ?? "";
@@ -12090,7 +13064,7 @@ function ApprovalPage() {
         setApprovalListState({
           status: "unavailable",
           items: [],
-          message: "承認状態一覧の取得中に API 接続で失敗しました。",
+          message: "原本一覧を取得できませんでした。",
         });
       }
     }
@@ -12150,7 +13124,7 @@ function ApprovalPage() {
         setApprovalDetailState({
           status: "unavailable",
           item: null,
-          message: "承認状態詳細の取得中に API 接続で失敗しました。",
+          message: "原本の承認情報を取得できませんでした。",
         });
       }
     }
@@ -12165,7 +13139,7 @@ function ApprovalPage() {
   useEffect(() => {
     setApprovalMutationState({
       status: "idle",
-      message: "実行できる操作を選ぶと状態変更 API を呼び出します。",
+      message: "現在の状態で実行できる承認操作を選択してください。",
     });
     setApprovalComment("");
     setIsContentPreviewOpen(false);
@@ -12271,12 +13245,17 @@ function ApprovalPage() {
         status: "success",
         message: responseBody.message || "承認状態を更新しました。",
       });
+      showOperationNotice({
+        tone: "success",
+        title: "原本の承認状態を更新しました",
+        message: `${selectedItem.target_key} / ${selectedItem.target_name} を「${responseBody.data.status_label}」へ変更しました。`,
+      });
       setApprovalComment("");
       setReloadTick((current) => current + 1);
     } catch (error) {
       setApprovalMutationState({
         status: "error",
-        message: "承認状態変更の実行中に API 接続で失敗しました。",
+        message: "原本の承認状態を変更できませんでした。",
       });
     }
   }
@@ -12350,6 +13329,8 @@ function ApprovalPage() {
         </section>
       ) : (
         <DataTable
+          stickyFirstColumn
+          stickyLastColumn
           columns={["選択", "原本ID", "原本名", "版", "承認状態", "次の操作", "作成者", "更新日", "利用モジュール", "選択状態"]}
           rows={filteredApprovalItems.map((item) => [
             <label className="approval-selection-radio">
@@ -12515,9 +13496,8 @@ function ApprovalPage() {
       <section className="section-band">
         <h2>版管理ルール</h2>
         <p>
-          M1 では最小ルールとして、メンバーが <code>draft</code> または <code>returned</code> から承認依頼を行い、
-          承認者が <code>review_requested</code> を確認して承認または差戻しします。
-          承認されたものは <code>published</code> へ移行し、最終的に <code>archived</code> へ保管します。
+          メンバーは作成中または差戻しの原本を承認依頼できます。
+          承認者は依頼内容を確認して承認または差戻しを行い、利用を終えた原本は保管します。
         </p>
       </section>
 
@@ -12669,13 +13649,10 @@ function ApprovalActionPanel({
   isSubmitting: boolean;
   onTransition: (toStatus: ModuleApiStatus) => void;
 }) {
+  const [pendingTransition, setPendingTransition] = useState<ApprovalTransitionData | null>(null);
+
   function handleTransition(transition: ApprovalTransitionData): void {
-    const confirmed = window.confirm(
-      `${targetLabel}\n「${transition.action_label}」を実行します。よろしいですか？`,
-    );
-    if (confirmed) {
-      onTransition(transition.to_status);
-    }
+    setPendingTransition(transition);
   }
 
   return (
@@ -12758,6 +13735,24 @@ function ApprovalActionPanel({
             : "この状態から実行できる承認操作はありません。"}
         </p>
       )}
+      {pendingTransition ? (
+        <ConfirmationDialog
+          id={`${idPrefix}-transition-dialog`}
+          title={`「${pendingTransition.action_label}」を実行しますか？`}
+          subjectLabel="承認対象"
+          subject={targetLabel}
+          description={`現在の状態「${statusLabel}」から「${pendingTransition.to_status_label}」へ変更します。入力したコメントも承認履歴へ記録されます。`}
+          confirmLabel={`${pendingTransition.action_label}を実行`}
+          confirmIcon={pendingTransition.to_status === "returned" ? "↩" : "✓"}
+          tone={pendingTransition.to_status === "returned" || pendingTransition.to_status === "archived" ? "danger" : "default"}
+          onCancel={() => setPendingTransition(null)}
+          onConfirm={() => {
+            const nextStatus = pendingTransition.to_status;
+            setPendingTransition(null);
+            onTransition(nextStatus);
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -12841,14 +13836,22 @@ function DataTable({
   rows,
   rowClassNames,
   rowAriaSelected,
+  stickyFirstColumn = false,
+  stickyLastColumn = false,
 }: {
   columns: ReactNode[];
   rows: ReactNode[][];
   rowClassNames?: Array<string | undefined>;
   rowAriaSelected?: boolean[];
+  stickyFirstColumn?: boolean;
+  stickyLastColumn?: boolean;
 }) {
+  const stickyClasses = [
+    stickyFirstColumn ? "table-wrap-sticky-first" : "",
+    stickyLastColumn ? "table-wrap-sticky-last" : "",
+  ].filter(Boolean).join(" ");
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap${stickyClasses ? ` ${stickyClasses}` : ""}`}>
       <table>
         <thead>
           <tr>{columns.map((column, index) => <th key={index}>{column}</th>)}</tr>
@@ -12877,6 +13880,148 @@ function Toolbar({ children }: { children: ReactNode }) {
   return <div className="toolbar">{children}</div>;
 }
 
+function RequiredFieldLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="field-label-row">
+      <span>{children}</span>
+      <span className="required-field-badge">必須</span>
+    </span>
+  );
+}
+
+type FormFeedbackTone = "neutral" | "pending" | "success" | "warning" | "error";
+
+function FormFeedback({
+  message,
+  tone = "neutral",
+  compact = false,
+}: {
+  message: string;
+  tone?: FormFeedbackTone;
+  compact?: boolean;
+}) {
+  if (!message) {
+    return null;
+  }
+  const icon = tone === "success" ? "✓" : tone === "pending" ? "…" : tone === "neutral" ? "i" : "!";
+  return (
+    <p
+      className={`form-feedback form-feedback-${tone}${compact ? " form-feedback-compact" : ""}`}
+      role={tone === "error" ? "alert" : "status"}
+      aria-live={tone === "error" ? "assertive" : "polite"}
+    >
+      <span className="form-feedback-icon" aria-hidden="true">{icon}</span>
+      <span>{message}</span>
+    </p>
+  );
+}
+
+function OperationNotice({
+  notice,
+  onClose,
+}: {
+  notice: OperationNoticeData;
+  onClose: () => void;
+}) {
+  const icon = notice.tone === "success" ? "✓" : "!";
+  return (
+    <section className={`operation-notice operation-notice-${notice.tone}`} role="status" aria-live="polite">
+      <span className="operation-notice-icon" aria-hidden="true">{icon}</span>
+      <div className="operation-notice-copy">
+        <strong>{notice.title}</strong>
+        <p>{notice.message}</p>
+      </div>
+      <button className="operation-notice-close" type="button" onClick={onClose} aria-label="通知を閉じる" title="通知を閉じる">
+        ×
+      </button>
+    </section>
+  );
+}
+
+function ConfirmationDialog({
+  id,
+  title,
+  subjectLabel = "対象",
+  subject,
+  description,
+  confirmLabel,
+  confirmIcon,
+  tone = "default",
+  busy = false,
+  busyLabel = "処理中",
+  onCancel,
+  onConfirm,
+}: {
+  id: string;
+  title: string;
+  subjectLabel?: string;
+  subject?: ReactNode;
+  description: ReactNode;
+  confirmLabel: string;
+  confirmIcon?: string;
+  tone?: "default" | "danger";
+  busy?: boolean;
+  busyLabel?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape" && !busy) {
+        onCancel();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onCancel]);
+
+  const isDanger = tone === "danger";
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={() => {
+        if (!busy) {
+          onCancel();
+        }
+      }}
+    >
+      <section
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-description`}
+        aria-modal="true"
+        className={`modal-dialog confirmation-dialog${isDanger ? " confirmation-dialog-danger" : ""}`}
+        role="alertdialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="confirmation-dialog-heading">
+          <span className="modal-icon" aria-hidden="true">{isDanger ? "!" : confirmIcon ?? "✓"}</span>
+          <div>
+            <span className="confirmation-dialog-kicker">操作の確認</span>
+            <h2 id={`${id}-title`}>{title}</h2>
+          </div>
+        </div>
+        {subject ? (
+          <div className="confirmation-dialog-target">
+            <span>{subjectLabel}</span>
+            <strong>{subject}</strong>
+          </div>
+        ) : null}
+        <p id={`${id}-description`} className="confirmation-dialog-description">{description}</p>
+        <div className="modal-actions">
+          <button className="secondary" type="button" onClick={onCancel} disabled={busy} autoFocus>
+            キャンセル
+          </button>
+          <button className={isDanger ? "danger" : "primary"} type="button" onClick={onConfirm} disabled={busy}>
+            {confirmIcon ? <span aria-hidden="true">{confirmIcon}</span> : null}
+            {busy ? busyLabel : confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function FormGrid({ children }: { children: ReactNode }) {
   return <section className="form-grid">{children}</section>;
 }
@@ -12900,7 +14045,7 @@ function routeTitle(path: string) {
     "/documents/search": "原本一覧",
     "/documents/create": "原本新規作成 / 更新",
     "/case-docs": "新規案件化",
-    "/case-docs/executions": "案件CS実行 / 完了",
+    "/case-docs/executions": "案件CS実行管理",
     "/case-docs/placeholders": "プレースホルダ設定",
     "/admin/users": "ユーザー管理",
     "/approval": "原本承認管理",
@@ -12909,7 +14054,7 @@ function routeTitle(path: string) {
     return "モジュール詳細";
   }
   if (path.startsWith("/case-docs/executions/")) {
-    return "案件CS実行";
+    return "案件CS実行管理";
   }
   return map[path] ?? "一覧 / 詳細画面";
 }

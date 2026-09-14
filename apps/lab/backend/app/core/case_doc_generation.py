@@ -42,6 +42,7 @@ IMAGE_ROW_HEIGHT_POINTS = 150
 IMAGE_MAX_WIDTH_PX = 520
 IMAGE_MAX_HEIGHT_PX = 190
 EVIDENCE_SHEET_NAME = "\u5b9f\u65bd\u5c65\u6b74"
+EXECUTION_COMMENTS_SHEET_NAME = "\u30b3\u30e1\u30f3\u30c8\u4e00\u89a7"
 JAPAN_TIME_ZONE = ZoneInfo("Asia/Tokyo")
 EXTERNAL_LINK_CONTENT_TYPE_RE = re.compile(
     r'<Override PartName="/xl/externalLinks/[^"]+" '
@@ -1001,6 +1002,44 @@ def _write_case_doc_evidence_sheet(workbook, detail: CaseDocInstanceDetailData) 
     sheet.auto_filter.ref = sheet.dimensions
 
 
+def _write_case_doc_execution_comments_sheet(workbook, detail: CaseDocInstanceDetailData) -> None:
+    if EXECUTION_COMMENTS_SHEET_NAME in workbook.sheetnames:
+        workbook.remove(workbook[EXECUTION_COMMENTS_SHEET_NAME])
+    sheet = workbook.create_sheet(EXECUTION_COMMENTS_SHEET_NAME)
+    sheet.append([
+        "\u5c0f\u9805\u756a",
+        "\u5148\u982d\u884c",
+        "\u30b3\u30e1\u30f3\u30c8",
+        "\u66f4\u65b0\u8005",
+        "\u66f4\u65b0\u65e5\u6642",
+    ])
+    header_fill = PatternFill(fill_type="solid", fgColor="E4DFEC")
+    for cell in sheet[1]:
+        cell.font = Font(b=True)
+        cell.fill = header_fill
+
+    for comment in detail.execution_comments:
+        if not comment.comment_text.strip():
+            continue
+        sheet.append([
+            comment.item_label,
+            comment.group_start_row_order,
+            comment.comment_text,
+            comment.updated_by or "",
+            _format_evidence_time(comment.updated_at, include_date=True),
+        ])
+        sheet.cell(row=sheet.max_row, column=3).alignment = Alignment(
+            vertical="top",
+            wrap_text=True,
+        )
+
+    widths = {"A": 16, "B": 12, "C": 72, "D": 24, "E": 22}
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+
+
 def build_case_doc_evidence_workbook_bytes(
     original_workbook_bytes: bytes,
     detail: CaseDocInstanceDetailData,
@@ -1023,6 +1062,7 @@ def build_case_doc_evidence_workbook_bytes(
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     _write_case_doc_evidence_sheet(workbook, detail)
+    _write_case_doc_execution_comments_sheet(workbook, detail)
     output = BytesIO()
     workbook.save(output)
     return _sanitize_cd_creator_package(output.getvalue())

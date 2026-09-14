@@ -957,6 +957,7 @@ class CaseDocGenerateRequest(CaseDocResolveContextRequest):
 class CaseDocInstanceCreateRequest(CaseDocResolveContextRequest):
     """Request payload for creating a persistent case document instance."""
 
+    case_name: str = Field(default="", max_length=200)
     created_by: str | None = None
 
 
@@ -994,6 +995,17 @@ class CaseDocExecutionHistoryData(BaseModel):
     note: str | None = None
 
 
+class CaseDocExecutionCommentData(BaseModel):
+    """Current comment recorded for one minor-number execution group."""
+
+    group_start_row_order: int = Field(ge=1)
+    item_label: str
+    comment_text: str
+    updated_by: str | None = None
+    updated_at: str
+    lock_version: int = Field(ge=0)
+
+
 class CaseDocExecutionItemData(BaseModel):
     """One actionable time cell in a generated case document."""
 
@@ -1026,6 +1038,8 @@ class CaseDocInstanceListItemData(BaseModel):
 
     case_document_id: int
     case_document_key: str
+    case_name: str = ""
+    tag_paths: list[str] = Field(default_factory=lambda: ["未分類"])
     source_doc_id: int
     source_doc_key: str
     source_doc_name: str
@@ -1045,6 +1059,7 @@ class CaseDocInstanceListData(BaseModel):
     """Persistent case document instance list."""
 
     items: list[CaseDocInstanceListItemData]
+    tags: list[str] = Field(default_factory=list)
 
 
 class CaseDocInstanceDetailData(CaseDocInstanceListItemData):
@@ -1055,6 +1070,7 @@ class CaseDocInstanceDetailData(CaseDocInstanceListItemData):
     preparation: CaseDocPreparationData = Field(default_factory=CaseDocPreparationData)
     targets: list[CaseDocTargetDeviceSlotData]
     execution_items: list[CaseDocExecutionItemData]
+    execution_comments: list[CaseDocExecutionCommentData] = Field(default_factory=list)
 
 
 class CaseDocExecutionUpdateRequest(BaseModel):
@@ -1063,6 +1079,28 @@ class CaseDocExecutionUpdateRequest(BaseModel):
     status: Literal["pending", "checked", "skipped"]
     performed_by: str = Field(min_length=1)
     skip_reason: str | None = None
+    expected_lock_version: int = Field(ge=0)
+
+
+class CaseDocExecutionBulkItemRequest(BaseModel):
+    """One pending time cell selected for a bulk update."""
+
+    execution_item_id: int = Field(ge=1)
+    expected_lock_version: int = Field(ge=0)
+
+
+class CaseDocExecutionBulkUpdateRequest(BaseModel):
+    """Apply the same result to pending cells in one case document."""
+
+    status: Literal["checked", "skipped"]
+    items: list[CaseDocExecutionBulkItemRequest] = Field(min_length=1, max_length=2000)
+    skip_reason: str | None = None
+
+
+class CaseDocExecutionCommentUpdateRequest(BaseModel):
+    """Save the comment attached to one minor-number execution group."""
+
+    comment_text: str = Field(max_length=4000)
     expected_lock_version: int = Field(ge=0)
 
 
