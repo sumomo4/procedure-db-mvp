@@ -223,6 +223,57 @@ def test_untrusted_origin_is_rejected_before_login(test_settings) -> None:
         application.dependency_overrides.clear()
 
 
+def test_forwarded_https_same_origin_is_allowed_for_login(test_settings, monkeypatch) -> None:
+    authenticated_user = AuthUserData(
+        user_id=8,
+        username="member@example.co.jp",
+        display_name="メンバーユーザー",
+        role="member",
+    )
+    monkeypatch.setattr(
+        "app.routers.auth.authenticate_user",
+        lambda settings, username, password: authenticated_user,
+    )
+    monkeypatch.setattr(
+        "app.routers.auth.create_auth_session",
+        lambda settings, user_id: "quick-tunnel-session-token",
+    )
+    application, client = _client_without_auth_override(test_settings)
+    try:
+        response = client.post(
+            "/api/v1/auth/login",
+            headers={
+                "Origin": "https://temporary-demo.trycloudflare.com",
+                "Host": "temporary-demo.trycloudflare.com",
+                "X-Forwarded-Proto": "https",
+            },
+            json={"username": "member@example.co.jp", "password": "password"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert "Secure" in response.headers["set-cookie"]
+    finally:
+        client.close()
+        application.dependency_overrides.clear()
+
+
+def test_forwarded_origin_with_mismatched_scheme_is_rejected(test_settings) -> None:
+    application, client = _client_without_auth_override(test_settings)
+    try:
+        response = client.post(
+            "/api/v1/auth/login",
+            headers={
+                "Origin": "https://temporary-demo.trycloudflare.com",
+                "Host": "temporary-demo.trycloudflare.com",
+                "X-Forwarded-Proto": "http",
+            },
+            json={"username": "member@example.co.jp", "password": "password"},
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+    finally:
+        client.close()
+        application.dependency_overrides.clear()
+
+
 def test_role_hierarchy_is_inclusive() -> None:
     assert role_allows("admin", "approver") is True
     assert role_allows("admin", "member") is True
