@@ -405,6 +405,9 @@ def test_build_module_create_request_from_sheet_data_maps_indent_level() -> None
 
     assert payload.rows[0].work_text == "child step"
     assert payload.rows[0].indent_level == 2
+    assert payload.rows[0].major_no is None
+    assert payload.rows[0].middle_no is None
+    assert payload.rows[0].minor_no is None
 
 
 def test_build_module_create_request_from_sheet_data_skips_empty_rows() -> None:
@@ -415,6 +418,7 @@ def test_build_module_create_request_from_sheet_data_skips_empty_rows() -> None:
         row_cells=[
             {"A": None, "E": " "},
             {"A": "1", "E": "first"},
+            {"A": "99", "B": "99", "C": "99"},
             {"A": None, "device_entries": []},
             {"A": "2", "F": "second"},
         ],

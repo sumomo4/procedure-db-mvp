@@ -12,6 +12,7 @@ from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import ModuleCreateRequest, ModuleCreateRowImageInput, ModuleCreateRowInput, ModuleDetailData, ModuleRowData
 from app.db.modules import (
     build_module_diff_data,
+    cancel_module_registration,
     create_module,
     get_module_detail,
     get_module_diff_preview,
@@ -369,6 +370,7 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
     )
     assert "folder_filter_0.folder_path = %(folder_path_0)s" in filtered_query
     assert "folder_filter_1.folder_path = %(folder_path_1)s" in filtered_query
+    assert "m.deleted_at IS NULL" in filtered_query
     assert result.items[0].module_id == 1
     assert result.items[0].module_key == "MOD-001"
     assert result.items[0].module_name == "初期点検手順"
@@ -387,6 +389,80 @@ def test_list_modules_raises_for_connection_error(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(DatabaseConnectionError):
         list_modules(AppSettings())
+
+
+def test_cancel_module_registration_marks_initial_draft_as_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unused module with one draft version should be logically deleted."""
+
+    cancelled_at = datetime(2026, 9, 3, 10, 0, tzinfo=timezone.utc)
+    fake_cursor = install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(
+            rows=[],
+            fetchone_results=[
+                (4, "MOD-004", "誤登録モジュール", None, 1, 40, "draft", False),
+                (cancelled_at,),
+            ],
+        ),
+    )
+
+    result = cancel_module_registration(
+        AppSettings(),
+        module_id=4,
+        cancelled_by="メンバーユーザー",
+        reason="誤ったExcelを登録したため",
+    )
+
+    assert result is not None
+    assert result.module_key == "MOD-004"
+    assert result.cancelled_at == "2026-09-03T10:00:00+00:00"
+    update_query, update_parameters = next(
+        (query, parameters)
+        for query, parameters in fake_cursor.executions
+        if "UPDATE proc.modules" in query and "deleted_at = CURRENT_TIMESTAMP" in query
+    )
+    assert "delete_reason = %(reason)s" in update_query
+    assert update_parameters["reason"] == "誤ったExcelを登録したため"
+
+
+@pytest.mark.parametrize(
+    ("module_row", "expected_message"),
+    [
+        (
+            (4, "MOD-004", "複数版モジュール", None, 2, 40, "draft", False),
+            "初版だけが存在するモジュールのみ登録取消できます。",
+        ),
+        (
+            (4, "MOD-004", "承認依頼中モジュール", None, 1, 40, "review_requested", False),
+            "作成中のモジュールのみ登録取消できます。",
+        ),
+        (
+            (4, "MOD-004", "原本使用中モジュール", None, 1, 40, "draft", True),
+            "原本で使用中のモジュールは登録取消できません。",
+        ),
+    ],
+)
+def test_cancel_module_registration_enforces_safety_rules(
+    monkeypatch: pytest.MonkeyPatch,
+    module_row: tuple[object, ...],
+    expected_message: str,
+) -> None:
+    """Cancellation must reject modules that are no longer safe to hide."""
+
+    install_fake_psycopg(
+        monkeypatch,
+        FakeCursor(rows=[], fetchone_results=[module_row]),
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        cancel_module_registration(
+            AppSettings(),
+            module_id=4,
+            cancelled_by="メンバーユーザー",
+            reason="誤登録",
+        )
 
 
 def test_list_module_versions_returns_version_list(monkeypatch: pytest.MonkeyPatch) -> None:

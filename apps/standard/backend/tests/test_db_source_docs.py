@@ -230,6 +230,10 @@ def test_create_source_doc_returns_created_detail(monkeypatch: pytest.MonkeyPatc
         FakeCursor(
             rows_per_fetchall=[
                 [
+                    (300, 1000, 1, True, 1, "step", 1, "Check before work."),
+                    (301, 1001, 2, False, 1, "step", 0, "Run work."),
+                ],
+                [
                     (
                         3,
                         "BP-STD-003",
@@ -281,9 +285,9 @@ def test_create_source_doc_returns_created_detail(monkeypatch: pytest.MonkeyPatc
                         1000,
                         1,
                         "step",
-                        "1",
-                        "1",
-                        "1",
+                        "0",
+                        "0",
+                        "0",
                         "Tech doc",
                         "Check before work.",
                         1,
@@ -298,9 +302,9 @@ def test_create_source_doc_returns_created_detail(monkeypatch: pytest.MonkeyPatc
                         1001,
                         1,
                         "step",
-                        "1",
-                        "1",
-                        "1",
+                        None,
+                        None,
+                        None,
                         "Tech doc",
                         "Run work.",
                         0,
@@ -346,6 +350,7 @@ def test_create_source_doc_returns_created_detail(monkeypatch: pytest.MonkeyPatc
     assert "INSERT INTO proc.blueprints" in executed_queries
     assert "INSERT INTO proc.blueprint_versions" in executed_queries
     assert "INSERT INTO proc.blueprint_items" in executed_queries
+    assert "INSERT INTO proc.blueprint_item_row_numbers" in executed_queries
 
 
 def test_create_source_doc_rejects_duplicate_module_id() -> None:
@@ -383,6 +388,10 @@ def test_update_source_doc_returns_updated_detail(monkeypatch: pytest.MonkeyPatc
         monkeypatch,
         FakeCursor(
             rows_per_fetchall=[
+                [
+                    (310, 1000, 1, True, 1, "step", 1, "Check before work."),
+                    (311, 1001, 2, True, 1, "step", 0, "Run work."),
+                ],
                 [
                     (
                         1,
@@ -435,9 +444,9 @@ def test_update_source_doc_returns_updated_detail(monkeypatch: pytest.MonkeyPatc
                         1000,
                         1,
                         "step",
-                        "1",
-                        "1",
-                        "1",
+                        "0",
+                        "0",
+                        "0",
                         "Tech doc",
                         "Check before work.",
                         1,
@@ -453,8 +462,8 @@ def test_update_source_doc_returns_updated_detail(monkeypatch: pytest.MonkeyPatc
                         1,
                         "step",
                         "1",
-                        "1",
-                        "1",
+                        "0",
+                        "0",
                         "Tech doc",
                         "Run work.",
                         0,
@@ -501,6 +510,7 @@ def test_update_source_doc_returns_updated_detail(monkeypatch: pytest.MonkeyPatc
     assert "UPDATE proc.blueprints" in executed_queries
     assert "INSERT INTO proc.blueprint_versions" in executed_queries
     assert "INSERT INTO proc.blueprint_items" in executed_queries
+    assert "INSERT INTO proc.blueprint_item_row_numbers" in executed_queries
 
 
 def test_update_source_doc_returns_none_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -553,7 +563,7 @@ def test_cancel_source_doc_registration_marks_initial_unused_draft_deleted(
 ) -> None:
     """An unused initial draft should be logically cancelled with its audit values."""
 
-    cancelled_at = datetime(2026, 9, 10, 10, 30, tzinfo=timezone.utc)
+    cancelled_at = datetime(2026, 9, 9, 10, 30, tzinfo=timezone.utc)
     fake_cursor = install_fake_psycopg(
         monkeypatch,
         FakeCursor(
@@ -577,7 +587,7 @@ def test_cancel_source_doc_registration_marks_initial_unused_draft_deleted(
     assert result.source_doc_key == "BP-STD-001"
     assert result.cancelled_by == "Admin User"
     assert result.reason == "Wrong module composition"
-    assert result.cancelled_at == "2026-09-10T10:30:00+00:00"
+    assert result.cancelled_at == "2026-09-09T10:30:00+00:00"
     executed_queries = "\n".join(query for query, _ in fake_cursor.executions)
     assert "FROM proc.case_documents" in executed_queries
     assert "UPDATE proc.blueprints" in executed_queries

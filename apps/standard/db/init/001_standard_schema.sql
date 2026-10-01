@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS proc.modules (
     name text NOT NULL,
     description text,
     folder_path text NOT NULL DEFAULT '未分類',
+    deleted_at timestamptz,
+    deleted_by text,
+    delete_reason text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -62,6 +65,14 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at
     ON proc.auth_sessions (expires_at);
+
+ALTER TABLE proc.modules
+    ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+    ADD COLUMN IF NOT EXISTS deleted_by text,
+    ADD COLUMN IF NOT EXISTS delete_reason text;
+
+CREATE INDEX IF NOT EXISTS idx_modules_deleted_at
+    ON proc.modules (deleted_at);
 
 CREATE TABLE IF NOT EXISTS proc.module_versions (
     module_version_id bigserial PRIMARY KEY,
@@ -326,6 +337,21 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_items_blueprint_version_id
 
 CREATE INDEX IF NOT EXISTS idx_blueprint_items_module_version_id
     ON proc.blueprint_items (module_version_id);
+
+CREATE TABLE IF NOT EXISTS proc.blueprint_item_row_numbers (
+    blueprint_item_row_number_id bigserial PRIMARY KEY,
+    blueprint_item_id bigint NOT NULL REFERENCES proc.blueprint_items (blueprint_item_id) ON DELETE CASCADE,
+    module_row_id bigint NOT NULL REFERENCES proc.module_rows (module_row_id),
+    major_no text,
+    middle_no text,
+    minor_no text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (blueprint_item_id, module_row_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blueprint_item_row_numbers_item
+    ON proc.blueprint_item_row_numbers (blueprint_item_id);
 
 CREATE TABLE IF NOT EXISTS proc.case_documents (
     case_document_id bigserial PRIMARY KEY,
