@@ -3505,7 +3505,7 @@ textarea {
   margin-top: 6px;
 }
 
-.placeholder-source-pagination {
+.placeholder-pagination {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3513,19 +3513,47 @@ textarea {
   color: #4d5c66;
 }
 
-.placeholder-source-pagination > div {
+.placeholder-pagination > div {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.placeholder-source-pagination button {
+.placeholder-pagination button {
   min-width: 92px;
 }
 
-.placeholder-source-pagination strong {
+.placeholder-pagination strong {
   min-width: 72px;
   text-align: center;
+}
+
+.placeholder-source-result-count {
+  color: #4d5c66;
+  font-weight: 700;
+}
+
+.placeholder-list-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.placeholder-list-heading h2 {
+  margin: 0;
+}
+
+.placeholder-list-heading span {
+  color: #596971;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.placeholder-list-pagination {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #d8dfe1;
 }
 
 .placeholder-editor-source {
@@ -6434,13 +6462,13 @@ th {
     max-width: 100%;
   }
 
-  .placeholder-source-pagination,
-  .placeholder-source-pagination > div {
+  .placeholder-pagination,
+  .placeholder-pagination > div {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .placeholder-source-pagination button {
+  .placeholder-pagination button {
     width: 100%;
   }
 }

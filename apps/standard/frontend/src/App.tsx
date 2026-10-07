@@ -12064,7 +12064,6 @@ function CaseDocPlaceholdersPage() {
     block: "",
     prefecture: "",
   });
-  const [previewPage, setPreviewPage] = useState(1);
   const [previewState, setPreviewState] = useState<CaseDocPlaceholderSourcePreviewState>({
     status: "idle",
     data: null,
@@ -12073,6 +12072,7 @@ function CaseDocPlaceholdersPage() {
   const [statusFilter, setStatusFilter] = useState<CaseDocPlaceholderStatusFilter>("all");
   const [deviceTypeFilter, setDeviceTypeFilter] = useState("all");
   const [keywordFilter, setKeywordFilter] = useState("");
+  const [listPage, setListPage] = useState(1);
   const [reloadTick, setReloadTick] = useState(0);
   const [editorMode, setEditorMode] = useState<CaseDocPlaceholderEditorMode | null>(null);
   const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
@@ -12082,6 +12082,10 @@ function CaseDocPlaceholdersPage() {
     status: "idle",
     message: caseDocPlaceholderText.mutationReady,
   });
+
+  useEffect(() => {
+    setListPage(1);
+  }, [statusFilter, deviceTypeFilter, keywordFilter]);
 
   useEffect(() => {
     if (currentUser?.role !== "admin") {
@@ -12189,27 +12193,36 @@ function CaseDocPlaceholdersPage() {
         data: null,
         message: caseDocPlaceholderText.sourcePreviewLoading,
       });
-      const searchParams = new URLSearchParams({
+      const baseSearchParams = new URLSearchParams({
         source_file: previewSourceFile,
-        page: String(previewPage),
-        page_size: "50",
+        page_size: "200",
       });
       if (previewFilters.fs_cluster_name) {
-        searchParams.set("fs_cluster_name", previewFilters.fs_cluster_name);
+        baseSearchParams.set("fs_cluster_name", previewFilters.fs_cluster_name);
       }
       if (previewFilters.block) {
-        searchParams.set("block", previewFilters.block);
+        baseSearchParams.set("block", previewFilters.block);
       }
       if (previewFilters.prefecture) {
-        searchParams.set("prefecture", previewFilters.prefecture);
+        baseSearchParams.set("prefecture", previewFilters.prefecture);
       }
 
       try {
-        const response = await apiFetch(
-          buildApiUrl(`/api/v1/case-docs/placeholders/source-preview?${searchParams.toString()}`),
-          { signal: abortController.signal },
-        );
-        const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderSourcePreviewData>;
+        async function fetchPreviewPage(page: number): Promise<{
+          response: Response;
+          responseBody: ApiResponse<CaseDocPlaceholderSourcePreviewData>;
+        }> {
+          const searchParams = new URLSearchParams(baseSearchParams.toString());
+          searchParams.set("page", String(page));
+          const response = await apiFetch(
+            buildApiUrl(`/api/v1/case-docs/placeholders/source-preview?${searchParams.toString()}`),
+            { signal: abortController.signal },
+          );
+          const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderSourcePreviewData>;
+          return { response, responseBody };
+        }
+
+        const { response, responseBody } = await fetchPreviewPage(1);
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setPreviewState({
             status: "unavailable",
@@ -12219,9 +12232,31 @@ function CaseDocPlaceholdersPage() {
           return;
         }
 
+        const previewData = responseBody.data;
+        const allRows = [...previewData.rows];
+        for (let page = 2; page <= previewData.total_pages; page += 1) {
+          const nextPage = await fetchPreviewPage(page);
+          if (!nextPage.response.ok || nextPage.responseBody.result !== "success" || nextPage.responseBody.data === null) {
+            setPreviewState({
+              status: "unavailable",
+              data: null,
+              message: nextPage.responseBody.message
+                || `${caseDocPlaceholderText.sourcePreviewUnavailable} HTTP ${nextPage.response.status}`,
+            });
+            return;
+          }
+          allRows.push(...nextPage.responseBody.data.rows);
+        }
+
         setPreviewState({
           status: "available",
-          data: responseBody.data,
+          data: {
+            ...previewData,
+            rows: allRows,
+            page: 1,
+            page_size: allRows.length || previewData.page_size,
+            total_pages: allRows.length > 0 ? 1 : 0,
+          },
           message: caseDocPlaceholderText.sourcePreviewLoaded,
         });
       } catch (error) {
@@ -12243,7 +12278,6 @@ function CaseDocPlaceholdersPage() {
     previewFilters.block,
     previewFilters.fs_cluster_name,
     previewFilters.prefecture,
-    previewPage,
     previewSourceFile,
     reloadTick,
   ]);
@@ -12332,11 +12366,17 @@ function CaseDocPlaceholdersPage() {
 
     return searchableText.includes(normalizedKeyword);
   });
+  const listPageSize = 20;
+  const listTotalPages = Math.max(1, Math.ceil(filteredItems.length / listPageSize));
+  const currentListPage = Math.min(listPage, listTotalPages);
+  const listStartIndex = (currentListPage - 1) * listPageSize;
+  const visibleItems = filteredItems.slice(listStartIndex, listStartIndex + listPageSize);
+  const visibleRangeStart = filteredItems.length === 0 ? 0 : listStartIndex + 1;
+  const visibleRangeEnd = Math.min(listStartIndex + listPageSize, filteredItems.length);
 
   function updatePreviewSourceFile(sourceFile: string): void {
     setPreviewSourceFile(sourceFile);
     setPreviewFilters({ fs_cluster_name: "", block: "", prefecture: "" });
-    setPreviewPage(1);
   }
 
   function updatePreviewFilter<TKey extends keyof CaseDocPlaceholderSourcePreviewFilters>(
@@ -12344,12 +12384,10 @@ function CaseDocPlaceholdersPage() {
     value: CaseDocPlaceholderSourcePreviewFilters[TKey],
   ): void {
     setPreviewFilters((current) => ({ ...current, [key]: value }));
-    setPreviewPage(1);
   }
 
   function resetPreviewFilters(): void {
     setPreviewFilters({ fs_cluster_name: "", block: "", prefecture: "" });
-    setPreviewPage(1);
   }
 
   function openCreateEditor(): void {
@@ -12738,33 +12776,7 @@ function CaseDocPlaceholdersPage() {
               <div className="placeholder-source-preview-message">{caseDocPlaceholderText.sourcePreviewEmpty}</div>
             )}
 
-            <div className="placeholder-source-pagination">
-              <span>{previewData.total_count}件</span>
-              <div>
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => setPreviewPage((current) => Math.max(1, current - 1))}
-                  disabled={previewData.page <= 1}
-                >
-                  <span aria-hidden="true">←</span>
-                  {caseDocPlaceholderText.previousPage}
-                </button>
-                <strong>{previewData.page} / {Math.max(previewData.total_pages, 1)}</strong>
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => setPreviewPage((current) => current + 1)}
-                  disabled={
-                    previewData.total_pages === 0
-                    || previewData.page >= previewData.total_pages
-                  }
-                >
-                  {caseDocPlaceholderText.nextPage}
-                  <span aria-hidden="true">→</span>
-                </button>
-              </div>
-            </div>
+            <div className="placeholder-source-result-count">{previewData.total_count}件</div>
           </>
         ) : null}
       </section>
@@ -12821,7 +12833,10 @@ function CaseDocPlaceholdersPage() {
 
           {filteredItems.length > 0 ? (
             <section className="section-band placeholder-list-section">
-              <h2>{caseDocPlaceholderText.title}</h2>
+              <div className="placeholder-list-heading">
+                <h2>{caseDocPlaceholderText.title}</h2>
+                <span>{visibleRangeStart}–{visibleRangeEnd} / {filteredItems.length}件</span>
+              </div>
               <DataTable
                 columns={[
                   caseDocPlaceholderText.status,
@@ -12837,7 +12852,7 @@ function CaseDocPlaceholdersPage() {
                   caseDocPlaceholderText.sourceColumn,
                   caseDocPlaceholderText.actions,
                 ]}
-                rows={filteredItems.map((item) => [
+                rows={visibleItems.map((item) => [
                   <span className={item.enabled ? "placeholder-state placeholder-state-enabled" : "placeholder-state placeholder-state-disabled"}>
                     {item.enabled ? caseDocPlaceholderText.enabled : caseDocPlaceholderText.disabled}
                   </span>,
@@ -12861,6 +12876,30 @@ function CaseDocPlaceholdersPage() {
                   </div>,
                 ])}
               />
+              <nav className="placeholder-pagination placeholder-list-pagination" aria-label="プレースホルダ一覧のページ切り替え">
+                <span>{visibleRangeStart}–{visibleRangeEnd} / {filteredItems.length}件</span>
+                <div>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => setListPage(Math.max(1, currentListPage - 1))}
+                    disabled={currentListPage <= 1}
+                  >
+                    <span aria-hidden="true">←</span>
+                    {caseDocPlaceholderText.previousPage}
+                  </button>
+                  <strong>{currentListPage} / {listTotalPages}</strong>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => setListPage(Math.min(listTotalPages, currentListPage + 1))}
+                    disabled={currentListPage >= listTotalPages}
+                  >
+                    {caseDocPlaceholderText.nextPage}
+                    <span aria-hidden="true">→</span>
+                  </button>
+                </div>
+              </nav>
             </section>
           ) : (
             <section className="empty-state">
