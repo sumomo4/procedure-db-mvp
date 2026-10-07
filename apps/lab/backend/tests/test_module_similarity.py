@@ -116,6 +116,55 @@ def test_signature_ignores_module_identity_and_source_path() -> None:
     assert first_signature.combined_text == second_signature.combined_text
 
 
+def test_signature_ignores_legacy_fields_mirrored_from_first_device() -> None:
+    """Workbook and Web UI payloads should produce the same signature."""
+
+    base_payload = build_module()
+    base_row = base_payload.rows[0]
+    imported = base_payload.model_copy(
+        update={
+            "rows": [
+                base_row.model_copy(
+                    update={"device_entries": [base_row.device_entries[0]]}
+                )
+            ]
+        }
+    )
+    first_header = imported.device_headers[0]
+    mirrored_rows = []
+    for row in imported.rows:
+        first_entry = row.device_entries[0]
+        mirrored_rows.append(
+            row.model_copy(
+                update={
+                    "time_text": first_entry.time_text,
+                    "window_text": first_entry.window_text,
+                    "p_text": first_entry.p_text,
+                    "command_text": first_entry.command_text,
+                    "device_entries": [
+                        *row.device_entries,
+                        ModuleCreateRowDeviceEntryInput(slot_no=2),
+                    ],
+                }
+            )
+        )
+    webui_payload = imported.model_copy(
+        update={
+            "header_time_text": first_header.header_time_text,
+            "target_text": first_header.target_text,
+            "common_p_text": first_header.p_text,
+            "target_device_text": first_header.target_device_text,
+            "rows": mirrored_rows,
+        }
+    )
+
+    imported_signature = build_module_similarity_signature(imported)
+    webui_signature = build_module_similarity_signature(webui_payload)
+
+    assert imported_signature.exact_sha256 == webui_signature.exact_sha256
+    assert imported_signature.combined_text == webui_signature.combined_text
+
+
 def test_identical_modules_have_full_similarity() -> None:
     """Identical procedure content should produce a complete match."""
 

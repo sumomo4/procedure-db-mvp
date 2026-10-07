@@ -355,7 +355,24 @@ def _build_source_doc_list_query(
         parameters[parameter_name] = tag_path
 
     if created_by:
-        conditions.append("COALESCE(bv.created_by, '') ILIKE %(created_by)s")
+        conditions.append(
+            """
+            (
+                COALESCE(bv.created_by, '') ILIKE %(created_by)s
+                OR EXISTS (
+                    SELECT 1
+                    FROM proc.app_users author_user
+                    WHERE author_user.is_active = true
+                      AND author_user.deleted_at IS NULL
+                      AND author_user.display_name = bv.created_by
+                      AND (
+                          author_user.username ILIKE %(created_by)s
+                          OR author_user.display_name ILIKE %(created_by)s
+                      )
+                )
+            )
+            """
+        )
         parameters["created_by"] = f"%{created_by}%"
 
     if updated_from:

@@ -148,6 +148,45 @@ def test_read_source_docs_returns_error_response(
     }
 
 
+def test_non_admin_can_search_source_docs_by_tag(
+    non_admin_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Members and approvers may use tag filters for source document searches."""
+
+    monkeypatch.setattr(
+        source_docs,
+        "list_source_docs",
+        lambda settings, **filters: SourceDocListData(items=[], tags=["ネットワーク"]),
+    )
+
+    response = non_admin_client.get("/api/v1/source-docs?tag_path=ネットワーク")
+
+    assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("PATCH", "/api/v1/source-docs/tags", {"current_tag_path": "旧", "new_tag_path": "新"}),
+        ("DELETE", "/api/v1/source-docs/tags", {"tag_path": "不要"}),
+        ("PATCH", "/api/v1/source-docs/tags/source-docs", {"source_doc_ids": [1], "tag_path": "新規"}),
+    ],
+)
+def test_non_admin_cannot_manage_source_doc_tags(
+    non_admin_client: TestClient,
+    method: str,
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    """Members and approvers must not mutate source document tags."""
+
+    response = non_admin_client.request(method, path, json=payload)
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.json()["message"] == "この操作を実行する権限がありません。"
+
+
 def test_rename_source_doc_tag_returns_success_response(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

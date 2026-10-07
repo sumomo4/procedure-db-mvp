@@ -55,3 +55,26 @@ def client(test_settings: AppSettings) -> Generator[TestClient]:
         yield test_client
 
     application.dependency_overrides.clear()
+
+
+@pytest.fixture(params=["member", "approver"])
+def non_admin_client(
+    request: pytest.FixtureRequest,
+    test_settings: AppSettings,
+) -> Generator[TestClient]:
+    """Create a client authenticated as each non-administrator role."""
+
+    role = str(request.param)
+    application = create_app()
+    application.dependency_overrides[get_app_settings] = lambda: test_settings
+    application.dependency_overrides[get_current_user] = lambda: AuthUserData(
+        user_id=2,
+        username=f"pytest-{role}@example.co.jp",
+        display_name=f"pytest {role}",
+        role=role,
+    )
+
+    with TestClient(application) as test_client:
+        yield test_client
+
+    application.dependency_overrides.clear()

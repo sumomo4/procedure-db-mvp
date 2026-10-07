@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.core.auth import (
     AuthManagedUserData,
     AuthUserData,
+    AuthUserOptionData,
     DuplicateUsernameError,
     ManagedUserConflictError,
     role_allows,
@@ -132,7 +133,8 @@ def test_user_can_self_register_as_member(client, monkeypatch) -> None:
         "/api/v1/auth/register",
         json={
             "username": "new-user@example.co.jp",
-            "display_name": "新規利用者",
+            "family_name": " 新規 ",
+            "given_name": "利用者",
             "password": "self-selected-password",
             "role": "admin",
         },
@@ -142,6 +144,7 @@ def test_user_can_self_register_as_member(client, monkeypatch) -> None:
     assert response.json()["data"]["role"] == "member"
     assert response.json()["data"]["password_change_required"] is False
     assert captured["role"] == "member"
+    assert captured["display_name"] == "新規 利用者"
     assert captured["require_password_change"] is False
     assert "self-registration-token" in response.headers["set-cookie"]
 
@@ -157,7 +160,8 @@ def test_duplicate_self_registration_returns_conflict(client, monkeypatch) -> No
         "/api/v1/auth/register",
         json={
             "username": "member@example.co.jp",
-            "display_name": "重複利用者",
+            "family_name": "重複",
+            "given_name": "利用者",
             "password": "self-selected-password",
         },
     )
@@ -180,7 +184,8 @@ def test_self_registration_requires_email_address(client, monkeypatch) -> None:
         "/api/v1/auth/register",
         json={
             "username": "not-an-email",
-            "display_name": "形式不正ユーザー",
+            "family_name": "形式不正",
+            "given_name": "ユーザー",
             "password": "self-selected-password",
         },
     )
@@ -302,6 +307,30 @@ def test_admin_can_list_managed_users(client, monkeypatch) -> None:
     assert "password_hash" not in response.json()["data"]["items"][0]
 
 
+def test_authenticated_user_can_list_active_user_options(non_admin_client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.auth.list_active_user_options",
+        lambda settings: [
+            AuthUserOptionData(
+                username="member@example.co.jp",
+                display_name="山田 太郎",
+            )
+        ],
+    )
+
+    response = non_admin_client.get("/api/v1/auth/user-options")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"] == {
+        "items": [
+            {
+                "username": "member@example.co.jp",
+                "display_name": "山田 太郎",
+            }
+        ]
+    }
+
+
 def test_member_cannot_manage_users(test_settings, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.core.security.get_auth_session_user",
@@ -339,7 +368,8 @@ def test_admin_can_create_managed_user(client, monkeypatch) -> None:
         "/api/v1/auth/users",
         json={
             "username": "new-member@example.co.jp",
-            "display_name": "新規メンバー",
+            "family_name": "新規",
+            "given_name": "メンバー",
             "password": "initial-password",
             "role": "member",
         },
@@ -349,6 +379,7 @@ def test_admin_can_create_managed_user(client, monkeypatch) -> None:
     assert response.json()["data"]["username"] == "new-member@example.co.jp"
     assert response.json()["data"]["password_change_required"] is True
     assert captured["password"] == "initial-password"
+    assert captured["display_name"] == "新規 メンバー"
     assert "password" not in response.json()["data"]
 
 
@@ -363,7 +394,8 @@ def test_duplicate_managed_username_returns_conflict(client, monkeypatch) -> Non
         "/api/v1/auth/users",
         json={
             "username": "member@example.co.jp",
-            "display_name": "重複ユーザー",
+            "family_name": "重複",
+            "given_name": "ユーザー",
             "password": "initial-password",
             "role": "member",
         },
@@ -387,7 +419,8 @@ def test_managed_user_creation_requires_email_address(client, monkeypatch) -> No
         "/api/v1/auth/users",
         json={
             "username": "not-an-email",
-            "display_name": "形式不正ユーザー",
+            "family_name": "形式不正",
+            "given_name": "ユーザー",
             "password": "initial-password",
             "role": "member",
         },

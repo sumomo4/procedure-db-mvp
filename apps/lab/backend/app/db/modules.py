@@ -359,7 +359,24 @@ def _build_module_list_query(
         parameters[parameter_name] = folder_path
 
     if created_by:
-        conditions.append("COALESCE(mv.created_by, '') ILIKE %(created_by)s")
+        conditions.append(
+            """
+            (
+                COALESCE(mv.created_by, '') ILIKE %(created_by)s
+                OR EXISTS (
+                    SELECT 1
+                    FROM proc.app_users author_user
+                    WHERE author_user.is_active = true
+                      AND author_user.deleted_at IS NULL
+                      AND author_user.display_name = mv.created_by
+                      AND (
+                          author_user.username ILIKE %(created_by)s
+                          OR author_user.display_name ILIKE %(created_by)s
+                      )
+                )
+            )
+            """
+        )
         parameters["created_by"] = f"%{created_by}%"
 
     if updated_from:

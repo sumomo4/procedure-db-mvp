@@ -285,6 +285,45 @@ def test_read_modules_returns_error_response(
     }
 
 
+def test_non_admin_can_search_modules_by_tag(
+    non_admin_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Members and approvers may use tag filters for module searches."""
+
+    monkeypatch.setattr(
+        modules,
+        "list_modules",
+        lambda settings, **filters: ModuleListData(items=[], folders=["ネットワーク"]),
+    )
+
+    response = non_admin_client.get("/api/v1/modules?folder_path=ネットワーク")
+
+    assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("PATCH", "/api/v1/modules/folders", {"current_folder_path": "旧", "new_folder_path": "新"}),
+        ("DELETE", "/api/v1/modules/folders", {"folder_path": "不要"}),
+        ("PATCH", "/api/v1/modules/folders/modules", {"module_ids": [1], "folder_path": "新規"}),
+    ],
+)
+def test_non_admin_cannot_manage_module_tags(
+    non_admin_client: TestClient,
+    method: str,
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    """Members and approvers must not mutate module tags."""
+
+    response = non_admin_client.request(method, path, json=payload)
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.json()["message"] == "この操作を実行する権限がありません。"
+
+
 def test_delete_module_folder_returns_modules_to_uncategorized(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

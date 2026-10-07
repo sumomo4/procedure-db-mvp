@@ -132,6 +132,8 @@ def test_list_source_docs_returns_source_doc_list(monkeypatch: pytest.MonkeyPatc
         keyword="M1",
         status_filter="draft",
         tag_paths=["ネットワーク", "SBC"],
+        created_by="member@",
+        module_name="MOD-001",
     )
 
     list_query_parameters = next(
@@ -144,7 +146,18 @@ def test_list_source_docs_returns_source_doc_list(monkeypatch: pytest.MonkeyPatc
         "status_filter": "draft",
         "tag_path_0": "ネットワーク",
         "tag_path_1": "SBC",
+        "created_by": "%member@%",
+        "module_name": "%MOD-001%",
     }
+    list_query = next(
+        query
+        for query, parameters in fake_cursor.executions
+        if parameters.get("created_by") == "%member@%"
+    )
+    assert "FROM proc.app_users author_user" in list_query
+    assert "author_user.username ILIKE %(created_by)s" in list_query
+    assert "mm.module_key ILIKE %(module_name)s" in list_query
+    assert "mm.name ILIKE %(module_name)s" in list_query
     assert result.items[0].source_doc_id == 1
     assert result.items[0].source_doc_key == "BP-STD-001"
     assert result.items[0].module_count == 2

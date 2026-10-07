@@ -15,6 +15,7 @@ from app.core.auth import (
     AuthManagedUserData,
     AuthRole,
     AuthUserData,
+    AuthUserOptionData,
     CurrentPasswordMismatchError,
     DuplicateUsernameError,
     InvalidCredentialsError,
@@ -450,6 +451,38 @@ def list_managed_users(settings: AppSettings) -> list[AuthManagedUserData]:
                 return [_managed_user_from_row(row) for row in cursor.fetchall()]
     except Exception as exception:
         raise DatabaseConnectionError("User management list query failed.") from exception
+
+
+def list_active_user_options(settings: AppSettings) -> list[AuthUserOptionData]:
+    """Return active users with only the fields needed for creator searches."""
+
+    ensure_auth_storage(settings)
+    try:
+        import psycopg
+    except ModuleNotFoundError as exception:
+        raise DatabaseConnectionError("PostgreSQL driver is not installed.") from exception
+
+    try:
+        with psycopg.connect(
+            settings.database_url,
+            connect_timeout=settings.db_connect_timeout_seconds,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT username, display_name
+                    FROM proc.app_users
+                    WHERE is_active = true
+                      AND deleted_at IS NULL
+                    ORDER BY lower(display_name), lower(username)
+                    """
+                )
+                return [
+                    AuthUserOptionData(username=row[0], display_name=row[1])
+                    for row in cursor.fetchall()
+                ]
+    except Exception as exception:
+        raise DatabaseConnectionError("User option list query failed.") from exception
 
 
 def create_managed_user(

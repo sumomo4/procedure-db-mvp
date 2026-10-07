@@ -1,5 +1,8 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
-import { Fragment, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS as DndCss } from "@dnd-kit/utilities";
 import { DevicePager, PreviewFrame, PreviewOverlay } from "./previewUi";
 import { useAuth, type AuthRole } from "./auth";
 
@@ -213,6 +216,15 @@ type ManagedUserListData = {
   items: ManagedUserData[];
 };
 
+type AuthorOptionData = {
+  username: string;
+  display_name: string;
+};
+
+type AuthorOptionListData = {
+  items: AuthorOptionData[];
+};
+
 type ManagedUserListState = {
   status: "loading" | "available" | "unavailable";
   items: ManagedUserData[];
@@ -226,7 +238,8 @@ type ManagedUserMutationState = {
 
 type ManagedUserCreateForm = {
   username: string;
-  display_name: string;
+  family_name: string;
+  given_name: string;
   password: string;
   password_confirmation: string;
   role: AuthRole;
@@ -1034,6 +1047,23 @@ function buildModuleFolderTreeItems(folders: string[]): ModuleFolderTreeItem[] {
   return Array.from(itemMap.values()).sort((left, right) => left.path.localeCompare(right.path, "ja"));
 }
 
+function filterModuleFolderTreeItems(
+  items: ModuleFolderTreeItem[],
+  keyword: string,
+): ModuleFolderTreeItem[] {
+  const normalizedKeyword = keyword.trim().toLocaleLowerCase("ja-JP");
+  if (!normalizedKeyword) {
+    return items;
+  }
+
+  const matchedItems = items.filter((item) => (
+    item.path.toLocaleLowerCase("ja-JP").includes(normalizedKeyword)
+  ));
+  return items.filter((item) => matchedItems.some((matchedItem) => (
+    matchedItem.path === item.path || matchedItem.path.startsWith(`${item.path}/`)
+  )));
+}
+
 function formatVersionLabel(item: { version_no: number; version_label?: string | null }): string {
   return item.version_label ?? `ver.${item.version_no}.0`;
 }
@@ -1190,6 +1220,239 @@ async function readApiResponse<TData>(response: Response): Promise<ApiResponse<T
   };
 }
 
+type SearchComboboxOption = {
+  id: string;
+  value: string;
+  primary: string;
+  secondary: string;
+};
+
+type SearchComboboxStatus = "loading" | "available" | "unavailable";
+
+function SearchComboboxField({
+  label,
+  className,
+  value,
+  onChange,
+  placeholder,
+  options,
+  status,
+  listboxLabel,
+  unavailableMessage,
+  noMatchesMessage,
+}: {
+  label: string;
+  className?: string;
+  value: string;
+  onChange: (nextValue: string) => void;
+  placeholder: string;
+  options: SearchComboboxOption[];
+  status: SearchComboboxStatus;
+  listboxLabel: string;
+  unavailableMessage: string;
+  noMatchesMessage: string;
+}) {
+  const inputId = useId();
+  const listboxId = `${inputId}-options`;
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const normalizedValue = value.trim().toLocaleLowerCase("ja-JP");
+  const visibleOptions = options
+    .filter((option) => {
+      if (!normalizedValue) return true;
+      return option.value.toLocaleLowerCase("ja-JP").includes(normalizedValue)
+        || option.primary.toLocaleLowerCase("ja-JP").includes(normalizedValue)
+        || option.secondary.toLocaleLowerCase("ja-JP").includes(normalizedValue);
+    })
+    .slice(0, 50);
+
+  function selectOption(option: SearchComboboxOption): void {
+    onChange(option.value);
+    setIsOpen(false);
+    setHighlightedIndex(-1);
+  }
+
+  return (
+    <div className={className ? `search-combobox-field ${className}` : "search-combobox-field"}>
+      <label htmlFor={inputId}>{label}</label>
+      <div
+        className="search-combobox"
+        onBlur={(event) => {
+          if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+            setIsOpen(false);
+            setHighlightedIndex(-1);
+          }
+        }}
+      >
+        <input
+          id={inputId}
+          type="search"
+          autoComplete="off"
+          placeholder={placeholder}
+          value={value}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls={listboxId}
+          aria-activedescendant={highlightedIndex >= 0 ? `${listboxId}-${highlightedIndex}` : undefined}
+          onFocus={() => setIsOpen(true)}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setIsOpen(true);
+            setHighlightedIndex(-1);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setIsOpen(false);
+              setHighlightedIndex(-1);
+              return;
+            }
+            if (event.key === "ArrowDown" && visibleOptions.length > 0) {
+              event.preventDefault();
+              setIsOpen(true);
+              setHighlightedIndex((current) => Math.min(current + 1, visibleOptions.length - 1));
+              return;
+            }
+            if (event.key === "ArrowUp" && visibleOptions.length > 0) {
+              event.preventDefault();
+              setIsOpen(true);
+              setHighlightedIndex((current) => current <= 0 ? visibleOptions.length - 1 : current - 1);
+              return;
+            }
+            if (event.key === "Enter" && isOpen && highlightedIndex >= 0 && visibleOptions[highlightedIndex]) {
+              event.preventDefault();
+              selectOption(visibleOptions[highlightedIndex]);
+            }
+          }}
+        />
+        {isOpen ? (
+          <div id={listboxId} className="search-combobox-options" role="listbox" aria-label={listboxLabel}>
+            {status === "loading" ? <p className="search-combobox-empty">候補を読み込んでいます。</p> : null}
+            {status === "unavailable" ? <p className="search-combobox-empty">{unavailableMessage}</p> : null}
+            {status === "available" && visibleOptions.length === 0 ? <p className="search-combobox-empty">{noMatchesMessage}</p> : null}
+            {status === "available" ? visibleOptions.map((option, index) => (
+              <button
+                id={`${listboxId}-${index}`}
+                key={option.id}
+                className={highlightedIndex === index ? "search-combobox-option active" : "search-combobox-option"}
+                type="button"
+                role="option"
+                aria-selected={highlightedIndex === index}
+                onMouseEnter={() => setHighlightedIndex(index)}
+                onClick={() => selectOption(option)}
+              >
+                <strong>{option.primary}</strong>
+                <small>{option.secondary}</small>
+              </button>
+            )) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function AuthorSearchField({ value, onChange }: { value: string; onChange: (nextValue: string) => void }) {
+  const [options, setOptions] = useState<AuthorOptionData[]>([]);
+  const [status, setStatus] = useState<SearchComboboxStatus>("loading");
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadOptions(): Promise<void> {
+      try {
+        const response = await apiFetch(buildApiUrl("/api/v1/auth/user-options"));
+        const body = await readApiResponse<AuthorOptionListData>(response);
+        if (!isActive) return;
+        if (!response.ok || body.result !== "success" || !body.data) {
+          setStatus("unavailable");
+          return;
+        }
+        setOptions(body.data.items);
+        setStatus("available");
+      } catch {
+        if (isActive) setStatus("unavailable");
+      }
+    }
+
+    void loadOptions();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  return (
+    <SearchComboboxField
+      label="作成者"
+      className="search-field-author"
+      value={value}
+      onChange={onChange}
+      placeholder="メールアドレスまたは名前を入力"
+      options={options.map((option) => ({
+        id: option.username,
+        value: option.display_name,
+        primary: option.display_name,
+        secondary: option.username,
+      }))}
+      status={status}
+      listboxLabel="作成者候補"
+      unavailableMessage="作成者候補を取得できませんでした。"
+      noMatchesMessage="一致するユーザーはいません。"
+    />
+  );
+}
+
+function ModuleSearchField({ value, onChange }: { value: string; onChange: (nextValue: string) => void }) {
+  const [options, setOptions] = useState<ModuleListItemData[]>([]);
+  const [status, setStatus] = useState<SearchComboboxStatus>("loading");
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadOptions(): Promise<void> {
+      try {
+        const endpoint = new URL(buildApiUrl("/api/v1/modules"), window.location.origin);
+        endpoint.searchParams.set("sort", "key_asc");
+        const response = await apiFetch(endpoint);
+        const body = await readApiResponse<ModuleListData>(response);
+        if (!isActive) return;
+        if (!response.ok || body.result !== "success" || !body.data) {
+          setStatus("unavailable");
+          return;
+        }
+        setOptions(body.data.items);
+        setStatus("available");
+      } catch {
+        if (isActive) setStatus("unavailable");
+      }
+    }
+
+    void loadOptions();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  return (
+    <SearchComboboxField
+      label="利用モジュール"
+      className="search-field-module"
+      value={value}
+      onChange={onChange}
+      placeholder="モジュールIDまたは名称を入力"
+      options={options.map((option) => ({
+        id: String(option.module_id),
+        value: option.module_key,
+        primary: option.module_key,
+        secondary: option.module_name,
+      }))}
+      status={status}
+      listboxLabel="利用モジュール候補"
+      unavailableMessage="モジュール候補を取得できませんでした。"
+      noMatchesMessage="一致するモジュールはありません。"
+    />
+  );
+}
 function App() {
   const { status } = useAuth();
 
@@ -1484,7 +1747,8 @@ function SelfRegistrationPage() {
   const navigate = useNavigate();
   const { user: currentUser, register } = useAuth();
   const [username, setUsername] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [familyName, setFamilyName] = useState("");
+  const [givenName, setGivenName] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [registrationError, setRegistrationError] = useState("");
@@ -1498,7 +1762,7 @@ function SelfRegistrationPage() {
 
   async function handleRegistration(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!username.trim() || !displayName.trim() || !password) {
+    if (!username.trim() || !familyName.trim() || !givenName.trim() || !password) {
       setRegistrationError("すべての項目を入力してください。");
       return;
     }
@@ -1509,7 +1773,7 @@ function SelfRegistrationPage() {
     setIsSubmitting(true);
     setRegistrationError("");
     try {
-      await register(username.trim(), displayName.trim(), password);
+      await register(username.trim(), familyName, givenName, password);
       navigate("/home", { replace: true });
     } catch (error) {
       setRegistrationError(error instanceof Error ? error.message : "ユーザー登録に失敗しました。");
@@ -1539,13 +1803,23 @@ function SelfRegistrationPage() {
             />
           </label>
           <label>
-            <RequiredFieldLabel>表示名</RequiredFieldLabel>
+            <RequiredFieldLabel>姓</RequiredFieldLabel>
             <input
-              autoComplete="name"
+              autoComplete="family-name"
               maxLength={200}
               required
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
+              value={familyName}
+              onChange={(event) => setFamilyName(event.target.value)}
+            />
+          </label>
+          <label>
+            <RequiredFieldLabel>名</RequiredFieldLabel>
+            <input
+              autoComplete="given-name"
+              maxLength={200}
+              required
+              value={givenName}
+              onChange={(event) => setGivenName(event.target.value)}
             />
           </label>
           <label>
@@ -2053,6 +2327,8 @@ function HealthStatusRow({
 
 function ModuleSearchPage() {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
+  const canManageTags = currentUser?.role === "admin";
   const [searchParams] = useSearchParams();
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
@@ -2073,7 +2349,7 @@ function ModuleSearchPage() {
   const [keywordInput, setKeywordInput] = useState(initialKeyword);
   const [statusInput, setStatusInput] = useState(initialStatus);
   const [createdByInput, setCreatedByInput] = useState(initialCreatedBy);
-  const [folderPathInputs, setFolderPathInputs] = useState<string[]>(initialFolderPaths);
+  const [tagListKeyword, setTagListKeyword] = useState("");
   const [updatedFromInput, setUpdatedFromInput] = useState(initialUpdatedFrom);
   const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
   const [sortInput, setSortInput] = useState(initialSort);
@@ -2118,7 +2394,6 @@ function ModuleSearchPage() {
     setKeywordInput(initialKeyword);
     setStatusInput(initialStatus);
     setCreatedByInput(initialCreatedBy);
-    setFolderPathInputs(initialFolderPaths);
     setFolderRenameInput(initialFolderPath || "未分類");
     setFolderMoveTarget(initialFolderPath || "未分類");
     setFolderRenameState({ status: "idle", message: "操作対象のタグ名を変更できます。" });
@@ -2226,7 +2501,7 @@ function ModuleSearchPage() {
       keyword: keywordInput,
       status: statusInput,
       createdBy: createdByInput,
-      folderPaths: folderPathInputs,
+      folderPaths: folderPathFilters,
       updatedFrom: updatedFromInput,
       updatedTo: updatedToInput,
       sort: sortInput,
@@ -2251,7 +2526,6 @@ function ModuleSearchPage() {
     const nextFolderPaths = folderPathFilters.includes(normalizedFolderPath)
       ? folderPathFilters.filter((folderPath) => folderPath !== normalizedFolderPath)
       : [normalizedFolderPath, ...folderPathFilters];
-    setFolderPathInputs(nextFolderPaths);
     navigateWithFilters({
       keyword,
       status: statusFilter,
@@ -2264,7 +2538,6 @@ function ModuleSearchPage() {
   }
 
   function handleTagFilterClear(): void {
-    setFolderPathInputs([]);
     navigateWithFilters({
       keyword,
       status: statusFilter,
@@ -2274,15 +2547,6 @@ function ModuleSearchPage() {
       updatedTo: updatedToFilter,
       sort: sortFilter,
     });
-  }
-
-  function toggleTagInput(nextFolderPath: string): void {
-    const normalizedFolderPath = normalizeModuleFolderPath(nextFolderPath);
-    setFolderPathInputs((current) =>
-      current.includes(normalizedFolderPath)
-        ? current.filter((folderPath) => folderPath !== normalizedFolderPath)
-        : [...current, normalizedFolderPath],
-    );
   }
 
   async function handleFolderRenameSubmit(): Promise<void> {
@@ -2322,7 +2586,6 @@ function ModuleSearchPage() {
         nextFolder,
         ...folderPathFilters.filter((folderPath) => folderPath !== currentFolder && folderPath !== nextFolder),
       ];
-      setFolderPathInputs(nextFolderPaths);
       navigateWithFilters({
         keyword,
         status: statusFilter,
@@ -2361,7 +2624,6 @@ function ModuleSearchPage() {
       setIsFolderDeleteConfirmOpen(false);
       setFolderDeleteState({ status: "success", message: responseBody.message || "タグを削除しました。" });
       const nextFolderPaths = folderPathFilters.filter((folderPath) => folderPath !== targetFolder);
-      setFolderPathInputs(nextFolderPaths);
       navigateWithFilters({
         keyword,
         status: statusFilter,
@@ -2483,6 +2745,7 @@ function ModuleSearchPage() {
   const moduleFolderOptions = moduleListState.folders ?? [];
   const folderOptions = moduleFolderOptions.length > 0 ? moduleFolderOptions : ["未分類"];
   const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
+  const visibleFolderTreeItems = filterModuleFolderTreeItems(folderTreeItems, tagListKeyword);
   const selectedTagFilterLabel = folderPathFilters.length > 0 ? folderPathFilters.join("、") : "すべて";
   const selectedFolderLabel = folderPathFilter || "未選択";
   const canRenameFolder = folderPathFilter !== "" && folderRenameState.status !== "submitting";
@@ -2495,50 +2758,12 @@ function ModuleSearchPage() {
   return (
     <Page title={"モジュール検索"} description={"登録済みのモジュールを検索し、内容、承認状態、版の違いを確認できます。"}>
       <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
-        <label>
+        <label className="search-field-keyword">
           {"キーワード"}
-          <input placeholder="MOD-001 / 点検 / TeraTerm" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} />
+          <input placeholder="モジュールID・名称・作業内容などを入力（部分一致）" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} />
         </label>
-        <label>
-          {"承認状態"}
-          <select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>
-            {moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
-        <label>
-          {"作成者"}
-          <input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
-        </label>
-        <fieldset className="module-tag-filter-field">
-          <legend>タグ</legend>
-          <details className="module-tag-filter-select">
-            <summary>
-              <span>{folderPathInputs.length > 0 ? `${folderPathInputs.length}件選択` : "すべて"}</span>
-              <small>{folderPathInputs.length > 0 ? folderPathInputs.join("、") : "タグを選択"}</small>
-            </summary>
-            <div className="module-tag-filter-menu">
-              <div className="module-tag-filter-options">
-                {folderOptions.map((folder) => (
-                  <label key={folder}>
-                    <input
-                      type="checkbox"
-                      checked={folderPathInputs.includes(folder)}
-                      onChange={() => toggleTagInput(folder)}
-                    />
-                    <span>{folder}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="module-tag-filter-footer">
-                <small>複数選択時は、すべてのタグを持つモジュールを表示します。</small>
-                <button className="text-button" type="button" onClick={() => setFolderPathInputs([])}>
-                  選択解除
-                </button>
-              </div>
-            </div>
-          </details>
-        </fieldset>
-        <label>
+        <AuthorSearchField value={createdByInput} onChange={setCreatedByInput} />
+        <label className="search-field-date">
           {"更新日"}
           <input
             type="date"
@@ -2549,7 +2774,7 @@ function ModuleSearchPage() {
             }}
           />
         </label>
-        <label>
+        <label className="search-field-sort">
           {"並び替え"}
           <select value={sortInput} onChange={(event) => setSortInput(event.target.value)}>
             <option value="key_asc">{"ID昇順"}</option>
@@ -2559,7 +2784,7 @@ function ModuleSearchPage() {
             <option value="status_asc">{"承認状態順"}</option>
           </select>
         </label>
-        <button className="primary" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
+        <button className="primary search-submit" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
       </form>
 
       <section className={"list-status list-status-" + moduleListState.status} aria-live="polite">
@@ -2571,12 +2796,22 @@ function ModuleSearchPage() {
         <p>{moduleListState.message}</p>
       </section>
 
-      <div className="module-explorer-layout">
-        <aside className="module-folder-pane" aria-label="モジュールタグ">
-          <div className="module-folder-pane-header">
+      <div className="module-browser-layout">
+        <details className="module-folder-pane" aria-label="モジュールタグ" open>
+          <summary className="module-folder-pane-header">
             <span>タグ</span>
             <strong>{selectedTagFilterLabel}</strong>
-          </div>
+          </summary>
+          <div className="module-folder-pane-body">
+          <label className="module-folder-search">
+            <span>タグを検索</span>
+            <input
+              type="search"
+              value={tagListKeyword}
+              placeholder="タグ名を入力"
+              onChange={(event) => setTagListKeyword(event.target.value)}
+            />
+          </label>
           <button
             type="button"
             className={folderPathFilters.length === 0 ? "module-folder-button active" : "module-folder-button"}
@@ -2586,7 +2821,7 @@ function ModuleSearchPage() {
             <span>すべて</span>
           </button>
           <div className="module-folder-tree" role="tree" aria-label="タグ一覧">
-            {folderTreeItems.map((folder) => (
+            {visibleFolderTreeItems.map((folder) => (
               <button
                 key={folder.path}
                 type="button"
@@ -2601,8 +2836,9 @@ function ModuleSearchPage() {
                 <span>{folder.label}</span>
               </button>
             ))}
+            {visibleFolderTreeItems.length === 0 ? <p className="module-folder-search-empty">該当するタグはありません。</p> : null}
           </div>
-          <div className="module-folder-delete-panel">
+          {canManageTags ? <div className="module-folder-delete-panel">
             <button
               type="button"
               className="danger"
@@ -2614,17 +2850,18 @@ function ModuleSearchPage() {
             <p className={"module-folder-action-message " + folderDeleteState.status}>
               {folderPathFilter === "未分類" ? "未分類タグは削除できません。" : folderDeleteState.message}
             </p>
+          </div> : null}
           </div>
-        </aside>
+        </details>
 
-        <div className="module-explorer-main">
+        <section className="module-results-pane">
           <section className="approval-flow" aria-label="モジュール承認状態フィルター">
             {moduleStatusOptions.map((option) => (
               <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>
             ))}
           </section>
 
-          <section className="module-folder-action-panel" aria-label="モジュールタグ操作">
+          {canManageTags ? <section className="module-folder-action-panel" aria-label="モジュールタグ操作">
             <div className="module-folder-action-summary">
               <span>選択中</span>
               <strong>{selectedModuleIds.length} 件</strong>
@@ -2722,7 +2959,7 @@ function ModuleSearchPage() {
               </form>
               <p className={"module-folder-action-message " + folderMoveState.status}>{folderMoveState.message}</p>
             </div>
-          </section>
+          </section> : null}
 
           <Toolbar>
             <button className="secondary" onClick={() => navigate("/modules/search")}><span aria-hidden="true">↺</span>{"条件をリセット"}</button>
@@ -2735,7 +2972,7 @@ function ModuleSearchPage() {
               stickyFirstColumn
               stickyLastColumn
               columns={[
-                <label className="module-row-select-all">
+                ...(canManageTags ? [<label key="selection" className="module-row-select-all">
                   <input
                     type="checkbox"
                     checked={allVisibleModulesSelected}
@@ -2743,7 +2980,7 @@ function ModuleSearchPage() {
                     aria-label="表示中のモジュールをすべて選択"
                   />
                   選択
-                </label>,
+                </label>] : []),
                 "モジュールID",
                 "モジュール名",
                 "タグ",
@@ -2756,12 +2993,13 @@ function ModuleSearchPage() {
                 "操作",
               ]}
               rows={moduleListState.items.map((item) => [
-                <input
+                ...(canManageTags ? [<input
+                  key={`select-${item.module_id}`}
                   type="checkbox"
                   checked={selectedModuleIds.includes(item.module_id)}
                   onChange={() => toggleSelectedModule(item.module_id)}
                   aria-label={item.module_key + " を選択"}
-                />,
+                />] : []),
                 item.module_key,
                 item.module_name,
                 <ModuleFolderMembershipList item={item} />,
@@ -2775,9 +3013,9 @@ function ModuleSearchPage() {
               ])}
             />
           )}
-        </div>
+        </section>
       </div>
-      {isFolderDeleteConfirmOpen ? (
+      {canManageTags && isFolderDeleteConfirmOpen ? (
         <ConfirmationDialog
           id="module-tag-delete-dialog"
           title="タグを削除しますか？"
@@ -3260,12 +3498,6 @@ function ModuleDetailPage() {
           title={`${item.module_name.replace("_CS ", " ")} / 案件CSプレビュー`}
           description="添付Excelと同じ列構造で、装置が右方向に増える案件CS形式の全画面表示です。"
           onClose={() => setIsPreviewOverlayOpen(false)}
-          actions={
-            <button className="secondary" type="button" onClick={() => window.print()}>
-              <span aria-hidden="true">P</span>
-              印刷
-            </button>
-          }
         >
           <div className="preview-surface preview-surface-sheet">
             <ExcelModulePreview item={item} mode="fullscreen" />
@@ -3704,12 +3936,12 @@ function ModuleSimilarityReview({
         <div>
           <h2>類似モジュール確認</h2>
           <p className="register-section-copy">
-            承認済みモジュールと比較し、類似度が {Math.round((item?.threshold ?? 0.7) * 100)}% 以上の候補を表示します。
+            登録内容を既存の承認済みモジュールと照合し、近いモジュールを確認します。
           </p>
         </div>
         {state.status === "success" ? (
           <span className={hasCandidates ? "module-similarity-count warning" : "module-similarity-count clear"}>
-            {hasCandidates ? `${item?.candidate_count ?? 0}件の候補` : "候補なし"}
+            {`候補：${item?.candidate_count ?? 0}件`}
           </span>
         ) : null}
       </div>
@@ -3742,11 +3974,14 @@ function ModuleSimilarityReview({
         </strong>
         <p>{state.message}</p>
         {item ? (
-          <div className="register-result-meta">
-            <span>{`比較対象 ${item.checked_count}件`}</span>
-            <span>{`判定基準 ${Math.round(item.threshold * 100)}%`}</span>
-            {item.exact_match ? <span>完全一致あり</span> : null}
-          </div>
+          <>
+            <p>{`承認済みモジュール${item.checked_count}件を類似度チェックし、${Math.round(item.threshold * 100)}%以上の${item.candidate_count}件を候補と判定しました。`}</p>
+            <div className="register-result-meta">
+              <span>{`類似度チェック：${item.checked_count}件`}</span>
+              <span>{`候補表示基準：${Math.round(item.threshold * 100)}%以上`}</span>
+              {item.exact_match ? <span>完全一致あり</span> : null}
+            </div>
+          </>
         ) : null}
       </section>
 
@@ -5042,28 +5277,48 @@ function ModuleRegisterPageV2() {
     setRows((currentRows) => (currentRows.length > 1 ? currentRows.filter((row) => row.rowId !== rowId) : currentRows));
   }
 
-  function buildCurrentModulePayload(): ModuleImportPreviewData {
-    const firstHeader = deviceHeaders[0] ?? null;
+  function buildModulePayloadFromDrafts({
+    moduleKey,
+    moduleName,
+    description,
+    changeNote,
+    sourceXlsxPath,
+    sourceSha256,
+    createdBy,
+    draftDeviceHeaders,
+    draftRows,
+  }: {
+    moduleKey: string;
+    moduleName: string;
+    description: string;
+    changeNote: string | null;
+    sourceXlsxPath: string;
+    sourceSha256: string | null;
+    createdBy: string;
+    draftDeviceHeaders: ModuleRegisterDeviceHeaderDraft[];
+    draftRows: RegisterRowDraft[];
+  }): ModuleImportPreviewData {
+    const firstHeader = draftDeviceHeaders[0] ?? null;
     return {
-      module_key: moduleKeyInput.trim() || null,
-      module_name: moduleNameInput.trim(),
-      description: descriptionInput.trim() || null,
-      change_note: importPreviewState.item?.change_note ?? null,
-      source_xlsx_path: sourcePathInput.trim() || null,
-      source_sha256: importPreviewState.item?.source_sha256 ?? null,
-      created_by: createdByInput.trim() || null,
+      module_key: moduleKey.trim() || null,
+      module_name: moduleName.trim(),
+      description: description.trim() || null,
+      change_note: changeNote,
+      source_xlsx_path: sourceXlsxPath.trim() || null,
+      source_sha256: sourceSha256,
+      created_by: createdBy.trim() || null,
       header_time_text: firstHeader?.headerTimeText.trim() || null,
       target_text: firstHeader?.targetText.trim() || null,
       common_p_text: firstHeader?.pText.trim() || null,
       target_device_text: firstHeader?.targetDeviceText.trim() || null,
-      device_headers: deviceHeaders.map((header) => ({
+      device_headers: draftDeviceHeaders.map((header) => ({
         slot_no: header.slotNo,
         header_time_text: header.headerTimeText.trim() || null,
         target_text: header.targetText.trim() || null,
         p_text: header.pText.trim() || null,
         target_device_text: header.targetDeviceText.trim() || null,
       })),
-      rows: rows.map((row, index) => {
+      rows: draftRows.map((row, index) => {
         const firstEntry = row.deviceEntries[0] ?? null;
         return {
           row_order: index + 1,
@@ -5091,6 +5346,20 @@ function ModuleRegisterPageV2() {
         };
       }),
     };
+  }
+
+  function buildCurrentModulePayload(): ModuleImportPreviewData {
+    return buildModulePayloadFromDrafts({
+      moduleKey: moduleKeyInput,
+      moduleName: moduleNameInput,
+      description: descriptionInput,
+      changeNote: importPreviewState.item?.change_note ?? null,
+      sourceXlsxPath: sourcePathInput,
+      sourceSha256: importPreviewState.item?.source_sha256 ?? null,
+      createdBy: createdByInput,
+      draftDeviceHeaders: deviceHeaders,
+      draftRows: rows,
+    });
   }
 
   function resetSimilarityReview(message = "Excel取込後に類似モジュールを確認します。"): void {
@@ -5304,7 +5573,7 @@ function ModuleRegisterPageV2() {
     });
   }
 
-  function applyImportedDraft(item: ModuleImportPreviewData): void {
+  function applyImportedDraft(item: ModuleImportPreviewData): ModuleImportPreviewData {
     const nextHeaders =
       item.device_headers.length > 0
         ? item.device_headers.map((header) => ({
@@ -5350,11 +5619,20 @@ function ModuleRegisterPageV2() {
           }))
         : [createDefaultRow(1)];
 
-    setModuleKeyInput(isNewVersionMode && versionSourceModuleKey !== null ? versionSourceModuleKey : (item.module_key ?? ""));
-    setModuleNameInput(item.module_name);
-    setDescriptionInput(item.description ?? "");
-    setSourcePathInput(item.source_xlsx_path ?? "");
-    setCreatedByInput(item.created_by ?? "webui");
+    const nextModuleKey =
+      isNewVersionMode && versionSourceModuleKey !== null
+        ? versionSourceModuleKey
+        : (item.module_key ?? "");
+    const nextModuleName = item.module_name;
+    const nextDescription = item.description ?? "";
+    const nextSourcePath = item.source_xlsx_path ?? "";
+    const nextCreatedBy = item.created_by ?? "webui";
+
+    setModuleKeyInput(nextModuleKey);
+    setModuleNameInput(nextModuleName);
+    setDescriptionInput(nextDescription);
+    setSourcePathInput(nextSourcePath);
+    setCreatedByInput(nextCreatedBy);
     setDeviceHeaders(nextHeaders);
     setRows(nextRows);
     setRowSeed(nextRows.length + 1);
@@ -5362,6 +5640,17 @@ function ModuleRegisterPageV2() {
       status: "idle",
       item: null,
       message: "取込結果を画面へ反映しました。必要に応じて修正してから保存してください。",
+    });
+    return buildModulePayloadFromDrafts({
+      moduleKey: nextModuleKey,
+      moduleName: nextModuleName,
+      description: nextDescription,
+      changeNote: item.change_note,
+      sourceXlsxPath: nextSourcePath,
+      sourceSha256: item.source_sha256,
+      createdBy: nextCreatedBy,
+      draftDeviceHeaders: nextHeaders,
+      draftRows: nextRows,
     });
   }
 
@@ -5543,14 +5832,14 @@ function ModuleRegisterPageV2() {
         isNewVersionMode && versionSourceModuleKey !== null
           ? { ...responseBody.data, module_key: versionSourceModuleKey }
           : responseBody.data;
-      applyImportedDraft(importedDraft);
+      const normalizedDraft = applyImportedDraft(importedDraft);
       setIsWorkbookImportApplied(true);
       setImportPreviewState({
         status: "success",
-        item: importedDraft,
+        item: normalizedDraft,
         message: responseBody.message || "ワークブック取込結果を画面へ反映しました。",
       });
-      await runSimilarityCheck(importedDraft);
+      await runSimilarityCheck(normalizedDraft);
     } catch (error) {
       setImportPreviewState({
         status: "error",
@@ -5618,12 +5907,23 @@ function ModuleRegisterPageV2() {
         return;
       }
 
+      const normalizedPreview = buildModulePayloadFromDrafts({
+        moduleKey: moduleKeyInput,
+        moduleName: moduleNameInput,
+        description: descriptionInput,
+        changeNote: responseBody.data.change_note,
+        sourceXlsxPath: sourcePathInput,
+        sourceSha256: responseBody.data.source_sha256,
+        createdBy: createdByInput,
+        draftDeviceHeaders: deviceHeaders,
+        draftRows: rows,
+      });
       setImportPreviewState({
         status: "success",
-        item: responseBody.data,
+        item: normalizedPreview,
         message: responseBody.message || "Excel取込プレビューを正規化しました。",
       });
-      await runSimilarityCheck(responseBody.data);
+      await runSimilarityCheck(normalizedPreview);
     } catch (error) {
       setImportPreviewState({
         status: "error",
@@ -6112,12 +6412,6 @@ function ModuleRegisterPageV2() {
           title="Excel取込プレビュー"
           description="現在の取込結果を保存前に全画面で確認します。Excel出力と同じ列構造で、装置が横に増えていく形で表示します。"
           onClose={() => setIsImportPreviewFullscreenOpen(false)}
-          actions={
-            <button className="secondary" type="button" onClick={() => window.print()}>
-              <span aria-hidden="true">P</span>
-              印刷
-            </button>
-          }
         >
           <section className={`list-status list-status-${importPreviewState.status}`} aria-live="polite">
             <div>
@@ -6158,6 +6452,8 @@ function ModuleRegisterPageV2() {
 
 function DocumentSearchPage() {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
+  const canManageTags = currentUser?.role === "admin";
   const [searchParams] = useSearchParams();
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
@@ -6176,7 +6472,7 @@ function DocumentSearchPage() {
   const [updatedToInput, setUpdatedToInput] = useState(initialUpdatedTo);
   const [moduleNameInput, setModuleNameInput] = useState(initialModuleName);
   const [sortInput, setSortInput] = useState(initialSort);
-  const [tagPathInputs, setTagPathInputs] = useState<string[]>(initialTagPaths);
+  const [tagListKeyword, setTagListKeyword] = useState("");
   const keyword = initialKeyword;
   const statusFilter = initialStatus;
   const createdByFilter = initialCreatedBy;
@@ -6221,7 +6517,6 @@ function DocumentSearchPage() {
     setUpdatedToInput(initialUpdatedTo);
     setModuleNameInput(initialModuleName);
     setSortInput(initialSort);
-    setTagPathInputs(initialTagPaths);
     setTagRenameInput(initialTagPaths[0] ?? "未分類");
     setSelectedSourceDocIds([]);
   }, [initialKeyword, initialStatus, initialCreatedBy, initialUpdatedFrom, initialUpdatedTo, initialModuleName, initialSort, searchParams]);
@@ -6296,21 +6591,12 @@ function DocumentSearchPage() {
   }
 
   function handleSubmit(): void {
-    navigateWithFilters({ keyword: keywordInput, status: statusInput, createdBy: createdByInput, updatedFrom: updatedFromInput, updatedTo: updatedToInput, moduleName: moduleNameInput, sort: sortInput, tagPaths: tagPathInputs });
+    navigateWithFilters({ keyword: keywordInput, status: statusInput, createdBy: createdByInput, updatedFrom: updatedFromInput, updatedTo: updatedToInput, moduleName: moduleNameInput, sort: sortInput, tagPaths: tagPathFilters });
   }
 
   function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
     setStatusInput(nextStatus);
     navigateWithFilters({ keyword, status: nextStatus, createdBy: createdByFilter, updatedFrom: updatedFromFilter, updatedTo: updatedToFilter, moduleName: moduleNameFilter, sort: sortFilter, tagPaths: tagPathFilters });
-  }
-
-  function toggleTagInput(tagPath: string): void {
-    const normalizedTag = normalizeModuleFolderPath(tagPath);
-    setTagPathInputs((current) =>
-      current.includes(normalizedTag)
-        ? current.filter((currentTag) => currentTag !== normalizedTag)
-        : [...current, normalizedTag],
-    );
   }
 
   function handleTagFilterToggle(tagPath: string): void {
@@ -6487,6 +6773,7 @@ function DocumentSearchPage() {
     .map(normalizeModuleFolderPath)
     .filter((tagPath, index, all) => all.indexOf(tagPath) === index);
   const tagTreeItems = buildModuleFolderTreeItems(tagOptions);
+  const visibleTagTreeItems = filterModuleFolderTreeItems(tagTreeItems, tagListKeyword);
   const selectedTagLabel = tagPathFilters.length > 0 ? tagPathFilters.join("、") : "すべて";
   const activeTag = tagPathFilters.length === 1 ? tagPathFilters[0] : "";
   const allVisibleSelected = sourceDocListState.items.length > 0
@@ -6494,37 +6781,10 @@ function DocumentSearchPage() {
 
   return (
     <Page title={"原本検索"} description={"登録済みの原本を検索し、内容、承認状態、利用モジュールを確認できます。"}>
-      <form className="search-form module-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
-        <label>{"キーワード"}<input placeholder="例: M1確認用 / MOD-001 / 原本A" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} /></label>
-        <fieldset className="module-tag-filter-field">
-          <legend>タグ</legend>
-          <details className="module-tag-filter-select">
-            <summary>
-              <span>{tagPathInputs.length > 0 ? `${tagPathInputs.length}件選択` : "すべて"}</span>
-              <small>{tagPathInputs.length > 0 ? tagPathInputs.join("、") : "タグを選択"}</small>
-            </summary>
-            <div className="module-tag-filter-menu">
-              <div className="module-tag-filter-options">
-                {tagOptions.map((tagPath) => (
-                  <label key={tagPath}>
-                    <input
-                      type="checkbox"
-                      checked={tagPathInputs.includes(tagPath)}
-                      onChange={() => toggleTagInput(tagPath)}
-                    />
-                    <span>{tagPath}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="module-tag-filter-footer">
-                <small>複数選択時は、すべてのタグを持つ原本を表示します。</small>
-              </div>
-            </div>
-          </details>
-        </fieldset>
-        <label>{"承認状態"}<select value={statusInput} onChange={(event) => setStatusInput(event.target.value as (typeof moduleStatusOptions)[number]["value"])}>{moduleStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-        <label>{"作成者"}<input placeholder="seed / webui" value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} /></label>
-        <label>
+      <form className="search-form module-search-form document-search-form" onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
+        <label className="search-field-keyword">{"キーワード"}<input placeholder="原本キー・原本名・モジュール名などを入力（部分一致）" value={keywordInput} onChange={(event) => setKeywordInput(event.target.value)} /></label>
+        <AuthorSearchField value={createdByInput} onChange={setCreatedByInput} />
+        <label className="search-field-date">
           {"更新日"}
           <input
             type="date"
@@ -6535,9 +6795,9 @@ function DocumentSearchPage() {
             }}
           />
         </label>
-        <label>{"利用モジュール"}<input placeholder="MOD-001 / ボーレート" value={moduleNameInput} onChange={(event) => setModuleNameInput(event.target.value)} /></label>
-        <label>{"並び替え"}<select value={sortInput} onChange={(event) => setSortInput(event.target.value)}><option value="key_asc">{"ID昇順"}</option><option value="key_desc">{"ID降順"}</option><option value="updated_desc">{"更新日が新しい順"}</option><option value="updated_asc">{"更新日が古い順"}</option><option value="status_asc">{"承認状態順"}</option></select></label>
-        <button className="primary" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
+        <ModuleSearchField value={moduleNameInput} onChange={setModuleNameInput} />
+        <label className="search-field-sort">{"並び替え"}<select value={sortInput} onChange={(event) => setSortInput(event.target.value)}><option value="key_asc">{"ID昇順"}</option><option value="key_desc">{"ID降順"}</option><option value="updated_desc">{"更新日が新しい順"}</option><option value="updated_asc">{"更新日が古い順"}</option><option value="status_asc">{"承認状態順"}</option></select></label>
+        <button className="primary search-submit" type="submit"><span aria-hidden="true">⌕</span>{"検索"}</button>
       </form>
 
       <section className={"list-status list-status-" + sourceDocListState.status} aria-live="polite">
@@ -6550,11 +6810,21 @@ function DocumentSearchPage() {
       </section>
 
       <div className="module-browser-layout">
-        <aside className="module-folder-pane" aria-label="原本タグ">
-          <div className="module-folder-pane-header">
+        <details className="module-folder-pane" aria-label="原本タグ" open>
+          <summary className="module-folder-pane-header">
             <span>タグ</span>
             <strong>{selectedTagLabel}</strong>
-          </div>
+          </summary>
+          <div className="module-folder-pane-body">
+          <label className="module-folder-search">
+            <span>タグを検索</span>
+            <input
+              type="search"
+              value={tagListKeyword}
+              placeholder="タグ名を入力"
+              onChange={(event) => setTagListKeyword(event.target.value)}
+            />
+          </label>
           <button
             type="button"
             className={tagPathFilters.length === 0 ? "module-folder-button active" : "module-folder-button"}
@@ -6564,7 +6834,7 @@ function DocumentSearchPage() {
             <span>すべて</span>
           </button>
           <div className="module-folder-tree" role="tree" aria-label="原本タグ一覧">
-            {tagTreeItems.map((tag) => (
+            {visibleTagTreeItems.map((tag) => (
               <button
                 key={tag.path}
                 type="button"
@@ -6579,8 +6849,9 @@ function DocumentSearchPage() {
                 <span>{tag.label}</span>
               </button>
             ))}
+            {visibleTagTreeItems.length === 0 ? <p className="module-folder-search-empty">該当するタグはありません。</p> : null}
           </div>
-          <div className="module-folder-delete-panel">
+          {canManageTags ? <div className="module-folder-delete-panel">
             <button
               className="danger"
               type="button"
@@ -6592,8 +6863,9 @@ function DocumentSearchPage() {
             <p className={"module-folder-action-message " + tagDeleteState.status}>
               {activeTag === "未分類" ? "未分類タグは削除できません。" : tagDeleteState.message}
             </p>
+          </div> : null}
           </div>
-        </aside>
+        </details>
 
         <section className="module-results-pane">
           <section className="approval-flow" aria-label="原本承認状態フィルター">
@@ -6605,7 +6877,7 @@ function DocumentSearchPage() {
             <button className="primary" onClick={() => navigate("/documents/create")}><span aria-hidden="true">+</span>{"原本登録"}</button>
           </Toolbar>
 
-          <section className="module-folder-action-panel" aria-label="原本タグ操作">
+          {canManageTags ? <section className="module-folder-action-panel" aria-label="原本タグ操作">
             <div className="module-folder-action-summary">
               <span>選択中</span>
               <strong>{selectedSourceDocIds.length}件</strong>
@@ -6658,7 +6930,7 @@ function DocumentSearchPage() {
               </div>
               <p className={"module-folder-action-message " + tagAssignState.status}>{tagAssignState.message}</p>
             </div>
-          </section>
+          </section> : null}
 
           {sourceDocListState.status === "available" && sourceDocListState.items.length === 0 ? (
             <section className="empty-state"><h2>{"該当する原本はありません"}</h2><p>{"検索条件を変えて再度確認してください。"}</p></section>
@@ -6666,9 +6938,9 @@ function DocumentSearchPage() {
             <DataTable
               stickyFirstColumn
               stickyLastColumn
-              columns={["選択", "原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "タグ", "作成者", "更新日", "操作"]}
+              columns={[...(canManageTags ? ["選択"] : []), "原本ID", "原本名", "版", "状態", "利用モジュール", "有効数", "タグ", "作成者", "更新日", "操作"]}
               rows={sourceDocListState.items.map((item) => [
-                <input key={`select-${item.source_doc_id}`} type="checkbox" aria-label={`${item.source_doc_key}を選択`} checked={selectedSourceDocIds.includes(item.source_doc_id)} onChange={() => toggleSourceDocSelection(item.source_doc_id)} />,
+                ...(canManageTags ? [<input key={`select-${item.source_doc_id}`} type="checkbox" aria-label={`${item.source_doc_key}を選択`} checked={selectedSourceDocIds.includes(item.source_doc_id)} onChange={() => toggleSourceDocSelection(item.source_doc_id)} />] : []),
                 item.source_doc_key,
                 item.source_doc_name,
                 formatVersionLabel(item),
@@ -6682,7 +6954,7 @@ function DocumentSearchPage() {
               ])}
             />
           )}
-          {sourceDocListState.items.length > 0 ? (
+          {canManageTags && sourceDocListState.items.length > 0 ? (
             <button
               className="secondary module-selection-toggle"
               type="button"
@@ -6694,7 +6966,7 @@ function DocumentSearchPage() {
         </section>
       </div>
 
-      {isTagDeleteDialogOpen && activeTag ? (
+      {canManageTags && isTagDeleteDialogOpen && activeTag ? (
         <ConfirmationDialog
           id="source-doc-tag-delete-dialog"
           title="タグを削除しますか？"
@@ -7033,6 +7305,216 @@ function LegacyDocumentEditPage() {
   );
 }
 
+function SourceDocModuleSelectionDialog({
+  modules,
+  selectedModuleIds,
+  onCancel,
+  onConfirm,
+}: {
+  modules: ModuleListItemData[];
+  selectedModuleIds: number[];
+  onCancel: () => void;
+  onConfirm: (moduleIds: number[]) => void;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const [tagPath, setTagPath] = useState("all");
+  const [pendingModuleIds, setPendingModuleIds] = useState<number[]>([]);
+  const selectedModuleIdSet = new Set(selectedModuleIds);
+  const availableModules = modules.filter((module) => !selectedModuleIdSet.has(module.module_id));
+  const tagOptions = Array.from(
+    new Set(availableModules.flatMap((module) => getModuleFolderPaths(module))),
+  ).sort((left, right) => left.localeCompare(right, "ja"));
+  const normalizedKeyword = keyword.trim().toLocaleLowerCase("ja-JP");
+  const visibleModules = availableModules.filter((module) => {
+    const matchesKeyword = !normalizedKeyword
+      || module.module_key.toLocaleLowerCase("ja-JP").includes(normalizedKeyword)
+      || module.module_name.toLocaleLowerCase("ja-JP").includes(normalizedKeyword);
+    const matchesTag = tagPath === "all" || getModuleFolderPaths(module).includes(tagPath);
+    return matchesKeyword && matchesTag;
+  });
+  const allVisibleSelected = visibleModules.length > 0
+    && visibleModules.every((module) => pendingModuleIds.includes(module.module_id));
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        onCancel();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
+
+  function toggleModule(moduleId: number): void {
+    setPendingModuleIds((current) => (
+      current.includes(moduleId)
+        ? current.filter((currentId) => currentId !== moduleId)
+        : [...current, moduleId]
+    ));
+  }
+
+  function toggleVisibleModules(): void {
+    const visibleIds = visibleModules.map((module) => module.module_id);
+    setPendingModuleIds((current) => (
+      allVisibleSelected
+        ? current.filter((moduleId) => !visibleIds.includes(moduleId))
+        : Array.from(new Set([...current, ...visibleIds]))
+    ));
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+      <section
+        className="modal-dialog source-doc-module-selection-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="source-doc-module-selection-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="source-doc-module-selection-heading">
+          <div>
+            <span>利用モジュール</span>
+            <h2 id="source-doc-module-selection-title">追加するモジュールを選択</h2>
+          </div>
+          <button className="icon-button" type="button" aria-label="モジュール選択を閉じる" title="閉じる" onClick={onCancel}>
+            ×
+          </button>
+        </header>
+
+        <div className="source-doc-module-selection-filters">
+          <label>
+            キーワード
+            <input
+              type="search"
+              autoFocus
+              value={keyword}
+              placeholder="モジュールIDまたは名称を入力"
+              onChange={(event) => setKeyword(event.target.value)}
+            />
+          </label>
+          <label>
+            タグ
+            <select value={tagPath} onChange={(event) => setTagPath(event.target.value)}>
+              <option value="all">すべて</option>
+              {tagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <div className="source-doc-module-selection-summary">
+          <span>候補 {visibleModules.length}件</span>
+          <strong>選択中 {pendingModuleIds.length}件</strong>
+          <button className="text-button" type="button" disabled={visibleModules.length === 0} onClick={toggleVisibleModules}>
+            {allVisibleSelected ? "表示中の選択を解除" : "表示中をすべて選択"}
+          </button>
+        </div>
+
+        <div className="source-doc-module-candidate-list" role="list" aria-label="追加可能なモジュール">
+          {visibleModules.map((module) => (
+            <label key={module.module_id} className="source-doc-module-candidate" role="listitem">
+              <input
+                type="checkbox"
+                checked={pendingModuleIds.includes(module.module_id)}
+                onChange={() => toggleModule(module.module_id)}
+              />
+              <span className="source-doc-module-candidate-name">
+                <strong>{module.module_key}</strong>
+                <span>{module.module_name}</span>
+              </span>
+              <ModuleFolderMembershipList item={module} />
+              <small>{formatVersionLabel(module)} / {module.status_label}</small>
+            </label>
+          ))}
+          {visibleModules.length === 0 ? (
+            <section className="source-doc-module-candidate-empty">
+              <strong>追加できるモジュールがありません</strong>
+              <span>検索条件を変更するか、選択済みモジュールを確認してください。</span>
+            </section>
+          ) : null}
+        </div>
+
+        <footer className="modal-actions source-doc-module-selection-actions">
+          <button className="secondary" type="button" onClick={onCancel}>キャンセル</button>
+          <button
+            className="primary"
+            type="button"
+            disabled={pendingModuleIds.length === 0}
+            onClick={() => onConfirm(pendingModuleIds)}
+          >
+            選択したモジュールを追加
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function SortableSourceDocModuleRow({
+  item,
+  index,
+  module,
+  itemCount,
+  onMoveUp,
+  onMoveDown,
+  onRemove,
+}: {
+  item: SourceDocCreateItemDraft;
+  index: number;
+  module: ModuleListItemData | undefined;
+  itemCount: number;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onRemove: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.rowId });
+  const style = {
+    transform: DndCss.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <section
+      ref={setNodeRef}
+      className={isDragging ? "source-doc-selected-module is-dragging" : "source-doc-selected-module"}
+      style={style}
+    >
+      <button
+        className="source-doc-module-drag-handle"
+        type="button"
+        aria-label={`${module?.module_key ?? `行 ${index + 1}`}をドラッグして並べ替え`}
+        title="ドラッグして並べ替え"
+        {...attributes}
+        {...listeners}
+      >
+        ↕
+      </button>
+      <span className="source-doc-module-order" aria-label={`順番 ${index + 1}`}>{index + 1}</span>
+      <div className="source-doc-selected-module-summary">
+        <strong>{module?.module_key ?? `module_id ${item.moduleId}`}</strong>
+        <span>{module?.module_name ?? "モジュール情報を取得できませんでした。"}</span>
+        {module ? (
+          <div className="source-doc-selected-module-meta">
+            <small>{formatVersionLabel(module)} / {module.status_label}</small>
+            <ModuleFolderMembershipList item={module} />
+          </div>
+        ) : null}
+      </div>
+      <div className="source-doc-selected-module-actions">
+        <button className="icon-button" type="button" disabled={index === 0} aria-label="1つ前へ移動" title="1つ前へ移動" onClick={onMoveUp}>↑</button>
+        <button className="icon-button" type="button" disabled={index === itemCount - 1} aria-label="1つ後へ移動" title="1つ後へ移動" onClick={onMoveDown}>↓</button>
+        <button className="icon-button danger-icon-button" type="button" aria-label="モジュールを削除" title="削除" onClick={onRemove}>×</button>
+      </div>
+    </section>
+  );
+}
+
 function DocumentEditPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -7057,13 +7539,19 @@ function DocumentEditPage() {
     items: [],
     message: "利用可能なモジュールを取得しています。",
   });
-  const [itemSeed, setItemSeed] = useState(2);
-  const [items, setItems] = useState<SourceDocCreateItemDraft[]>([{ rowId: 1, moduleId: initialModuleId, enabled: true }]);
+  const [items, setItems] = useState<SourceDocCreateItemDraft[]>(
+    initialModuleId ? [{ rowId: 1, moduleId: initialModuleId, enabled: true }] : [],
+  );
+  const [isModuleSelectionOpen, setIsModuleSelectionOpen] = useState(false);
   const [createState, setCreateState] = useState<SourceDocCreateState>({
     status: "idle",
     item: null,
     message: "モジュールを選択して原本を保存してください。",
   });
+  const moduleSortSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -7155,15 +7643,14 @@ function DocumentEditPage() {
         setChangeNoteInput(detail.change_note ?? "更新版作成");
         setCreatedByInput(detail.created_by ?? "webui");
         setItems(
-          detail.items.length > 0
-            ? detail.items.map((item, index) => ({
-                rowId: index + 1,
-                moduleId: String(item.module_id),
-                enabled: item.enabled,
-              }))
-            : [{ rowId: 1, moduleId: "", enabled: true }],
+          detail.items
+            .filter((item) => item.enabled)
+            .map((item, index) => ({
+              rowId: index + 1,
+              moduleId: String(item.module_id),
+              enabled: true,
+            })),
         );
-        setItemSeed((detail.items.length || 1) + 1);
         setCreateState({
           status: "idle",
           item: null,
@@ -7192,25 +7679,44 @@ function DocumentEditPage() {
     };
   }, [editSourceDocId, isEditMode]);
 
-  function updateItemModule(rowId: number, moduleId: string): void {
-    setItems((currentItems) =>
-      currentItems.map((item) => (item.rowId === rowId ? { ...item, moduleId } : item)),
-    );
-  }
-
-  function updateItemEnabled(rowId: number, enabled: boolean): void {
-    setItems((currentItems) =>
-      currentItems.map((item) => (item.rowId === rowId ? { ...item, enabled } : item)),
-    );
-  }
-
-  function addItem(): void {
-    setItems((currentItems) => [...currentItems, { rowId: itemSeed, moduleId: "", enabled: true }]);
-    setItemSeed((currentSeed) => currentSeed + 1);
+  function addSelectedModules(moduleIds: number[]): void {
+    setItems((currentItems) => {
+      const currentModuleIds = new Set(currentItems.map((item) => Number(item.moduleId)));
+      let nextRowId = Math.max(0, ...currentItems.map((item) => item.rowId));
+      const addedItems = moduleIds
+        .filter((moduleId) => !currentModuleIds.has(moduleId))
+        .map((moduleId) => {
+          nextRowId += 1;
+          return { rowId: nextRowId, moduleId: String(moduleId), enabled: true };
+        });
+      return [...currentItems, ...addedItems];
+    });
+    setIsModuleSelectionOpen(false);
   }
 
   function removeItem(rowId: number): void {
-    setItems((currentItems) => (currentItems.length > 1 ? currentItems.filter((item) => item.rowId !== rowId) : currentItems));
+    setItems((currentItems) => currentItems.filter((item) => item.rowId !== rowId));
+  }
+
+  function moveItem(rowId: number, direction: -1 | 1): void {
+    setItems((currentItems) => {
+      const currentIndex = currentItems.findIndex((item) => item.rowId === rowId);
+      const nextIndex = currentIndex + direction;
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= currentItems.length) {
+        return currentItems;
+      }
+      return arrayMove(currentItems, currentIndex, nextIndex);
+    });
+  }
+
+  function handleModuleDragEnd(event: DragEndEvent): void {
+    if (!event.over || event.active.id === event.over.id) return;
+    setItems((currentItems) => {
+      const currentIndex = currentItems.findIndex((item) => item.rowId === event.active.id);
+      const nextIndex = currentItems.findIndex((item) => item.rowId === event.over?.id);
+      if (currentIndex < 0 || nextIndex < 0) return currentItems;
+      return arrayMove(currentItems, currentIndex, nextIndex);
+    });
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -7219,7 +7725,7 @@ function DocumentEditPage() {
     const selectedItems = items
       .map((item, index) => ({
         module_id: Number(item.moduleId),
-        enabled: item.enabled,
+        enabled: true,
         item_order: index + 1,
       }))
       .filter((item) => Number.isInteger(item.module_id) && item.module_id > 0);
@@ -7301,6 +7807,7 @@ function DocumentEditPage() {
 
   const createdItem = createState.item;
   const submitDisabled = createState.status === "submitting" || (isEditMode && formLoadState.status === "loading");
+  const moduleById = new Map(moduleListState.items.map((module) => [module.module_id, module]));
 
   return (
     <Page
@@ -7361,11 +7868,16 @@ function DocumentEditPage() {
           </label>
         </FormGrid>
 
-        <section className="register-step-card">
+        <section className="register-step-card source-doc-module-editor">
           <div className="register-step-header">
             <h2>利用モジュール</h2>
-            <button className="secondary" type="button" onClick={addItem}>
-              <span aria-hidden="true">＋</span>行追加
+            <button
+              className="primary"
+              type="button"
+              disabled={moduleListState.status !== "available" || items.length >= moduleListState.items.length}
+              onClick={() => setIsModuleSelectionOpen(true)}
+            >
+              <span aria-hidden="true">＋</span>モジュールを追加
             </button>
           </div>
           <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
@@ -7384,48 +7896,39 @@ function DocumentEditPage() {
               <strong>{moduleListState.items.length}</strong>
             </div>
             <div>
-              <span>先頭キー</span>
-              <strong>{moduleListState.items[0]?.module_key ?? "-"}</strong>
+              <span>選択済み</span>
+              <strong>{items.length}</strong>
             </div>
             <p>{moduleListState.message}</p>
           </section>
-          <div className="register-rows">
-            {items.map((item, index) => (
-              <section key={item.rowId} className="register-row-editor">
-                <div className="register-row-editor-header">
-                  <strong>行 {index + 1}</strong>
-                  <button className="text-button" type="button" onClick={() => removeItem(item.rowId)} disabled={items.length === 1}>
-                    <span aria-hidden="true">−</span>削除
-                  </button>
-                </div>
-                <div className="register-step-grid">
-                  <label>
-                    <RequiredFieldLabel>モジュール</RequiredFieldLabel>
-                    <select
-                      value={item.moduleId}
-                      onChange={(event) => updateItemModule(item.rowId, event.target.value)}
-                      required
-                    >
-                      <option value="">選択してください</option>
-                      {moduleListState.items.map((module) => (
-                        <option key={module.module_id} value={String(module.module_id)}>
-                          {`${module.module_key} ${module.module_name}`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="checkbox-field">
-                    有効
-                    <input
-                      type="checkbox"
-                      checked={item.enabled}
-                      onChange={(event) => updateItemEnabled(item.rowId, event.target.checked)}
+          {items.length === 0 ? (
+            <section className="source-doc-module-empty">
+              <strong>利用モジュールが選択されていません</strong>
+            </section>
+          ) : (
+            <DndContext
+              sensors={moduleSortSensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleModuleDragEnd}
+            >
+              <SortableContext items={items.map((item) => item.rowId)} strategy={verticalListSortingStrategy}>
+                <div className="source-doc-selected-module-list">
+                  {items.map((item, index) => (
+                    <SortableSourceDocModuleRow
+                      key={item.rowId}
+                      item={item}
+                      index={index}
+                      module={moduleById.get(Number(item.moduleId))}
+                      itemCount={items.length}
+                      onMoveUp={() => moveItem(item.rowId, -1)}
+                      onMoveDown={() => moveItem(item.rowId, 1)}
+                      onRemove={() => removeItem(item.rowId)}
                     />
-                  </label>
+                  ))}
                 </div>
-              </section>
-            ))}
-          </div>
+              </SortableContext>
+            </DndContext>
+          )}
         </section>
 
         <section
@@ -7476,6 +7979,14 @@ function DocumentEditPage() {
           </button>
         </Toolbar>
       </form>
+      {isModuleSelectionOpen ? (
+        <SourceDocModuleSelectionDialog
+          modules={moduleListState.items}
+          selectedModuleIds={items.map((item) => Number(item.moduleId))}
+          onCancel={() => setIsModuleSelectionOpen(false)}
+          onConfirm={addSelectedModules}
+        />
+      ) : null}
     </Page>
   );
 }
@@ -7744,12 +8255,6 @@ function DocumentDetailPage() {
           title={`${item.source_doc_name} / 原本プレビュー`}
           description="原本に含まれるモジュール構成を全画面で確認します。"
           onClose={() => setIsPreviewOverlayOpen(false)}
-          actions={
-            <button className="secondary" type="button" onClick={() => window.print()}>
-              <span aria-hidden="true">P</span>
-              印刷
-            </button>
-          }
         >
           <div className="preview-surface">
             <ExcelSourceDocPreview item={item} onOpenModule={(moduleId) => navigate(`/modules/${moduleId}`)} />
@@ -7857,6 +8362,12 @@ function ExcelSourceDocPreview({
   onOpenModule: (moduleId: number) => void;
 }) {
   const moduleNames = item.items.map((module) => module.module_name);
+  const relatedModulePreviewLimit = 5;
+  const [isRelatedModulesExpanded, setIsRelatedModulesExpanded] = useState(false);
+  const visibleModuleNames = isRelatedModulesExpanded
+    ? moduleNames
+    : moduleNames.slice(0, relatedModulePreviewLimit);
+  const hiddenModuleCount = Math.max(0, moduleNames.length - visibleModuleNames.length);
 
   return (
     <section className="excel-preview" aria-label="Excel風原本プレビュー">
@@ -7865,11 +8376,25 @@ function ExcelSourceDocPreview({
         <div className="excel-cell excel-small-heading">版</div>
         <div className="excel-cell excel-small-heading">状態</div>
         <div className="excel-cell excel-small-heading">有効</div>
-        <div className="excel-cell excel-device-cell">関連モジュール</div>
+        <div className="excel-cell excel-device-cell">{`関連モジュール（件数：${moduleNames.length}）`}</div>
         <div className="excel-cell excel-sequence-cell">{formatVersionLabel(item)}</div>
         <div className="excel-cell excel-target-value">{item.status_label}</div>
         <div className="excel-cell excel-target-value">{`${item.enabled_module_count}/${item.module_count}`}</div>
-        <div className="excel-cell excel-device-value">{moduleNames.join(", ") || "-"}</div>
+        <div className="excel-cell excel-device-value">
+          <div className="excel-related-module-content">
+            <span className="excel-related-module-list">{visibleModuleNames.join("、") || "-"}</span>
+            {moduleNames.length > relatedModulePreviewLimit ? (
+              <button
+                className="text-button excel-related-module-toggle"
+                type="button"
+                aria-expanded={isRelatedModulesExpanded}
+                onClick={() => setIsRelatedModulesExpanded((current) => !current)}
+              >
+                {isRelatedModulesExpanded ? "折りたたむ" : `ほか${hiddenModuleCount}件を表示`}
+              </button>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       {item.items.map((module) => {
@@ -10795,7 +11320,8 @@ function UserManagementPage() {
   const [temporaryPasswordConfirmation, setTemporaryPasswordConfirmation] = useState("");
   const [createForm, setCreateForm] = useState<ManagedUserCreateForm>({
     username: "",
-    display_name: "",
+    family_name: "",
+    given_name: "",
     password: "",
     password_confirmation: "",
     role: "member",
@@ -10882,7 +11408,8 @@ function UserManagementPage() {
   function openCreateDialog(): void {
     setCreateForm({
       username: "",
-      display_name: "",
+      family_name: "",
+      given_name: "",
       password: "",
       password_confirmation: "",
       role: "member",
@@ -10912,7 +11439,8 @@ function UserManagementPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: createForm.username,
-          display_name: createForm.display_name,
+          family_name: createForm.family_name,
+          given_name: createForm.given_name,
           password: createForm.password,
           role: createForm.role,
         }),
@@ -11299,13 +11827,25 @@ function UserManagementPage() {
                 <span className="field-hint">ログイン時に使用します。大文字・小文字は区別しません。</span>
               </label>
               <label>
-                <RequiredFieldLabel>表示名</RequiredFieldLabel>
+                <RequiredFieldLabel>姓</RequiredFieldLabel>
                 <input
+                  autoComplete="family-name"
                   maxLength={200}
                   required
-                  value={createForm.display_name}
-                  onChange={(event) => setCreateForm((current) => ({ ...current, display_name: event.target.value }))}
+                  value={createForm.family_name}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, family_name: event.target.value }))}
                 />
+              </label>
+              <label>
+                <RequiredFieldLabel>名</RequiredFieldLabel>
+                <input
+                  autoComplete="given-name"
+                  maxLength={200}
+                  required
+                  value={createForm.given_name}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, given_name: event.target.value }))}
+                />
+                <span className="field-hint">表示名は「姓 名」の形式で登録されます。</span>
               </label>
               <label>
                 <RequiredFieldLabel>ロール</RequiredFieldLabel>

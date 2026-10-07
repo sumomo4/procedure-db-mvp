@@ -14,7 +14,9 @@ import time
 import unicodedata
 
 from app.core.responses import (
+    ModuleCreateDeviceHeaderInput,
     ModuleCreateRequest,
+    ModuleCreateRowDeviceEntryInput,
     ModuleDetailData,
     ModuleSimilarityCalculationData,
     ModuleSimilarityCandidateData,
@@ -53,6 +55,7 @@ class ModuleSimilarityWeights:
 
 DEFAULT_MODULE_SIMILARITY_WEIGHTS = ModuleSimilarityWeights()
 SIMILARITY_CONFIRMATION_TOKEN_VERSION = 1
+MODULE_SIMILARITY_SIGNATURE_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,16 +249,19 @@ def _build_command_text(module: ModuleSimilaritySource) -> str:
     tokens: list[str] = []
     for row in sorted(module.rows, key=lambda item: item.row_order):
         row_tokens: list[str] = []
-        common_values = (
-            normalize_command_text(row.time_text),
-            normalize_command_text(row.window_text),
-            normalize_command_text(row.p_text),
-            normalize_command_text(row.command_text),
-        )
-        if any(common_values):
-            row_tokens.append("common|" + "|".join(common_values))
+        entries = sorted(row.device_entries, key=lambda item: item.slot_no)
+        if not entries:
+            entries = [
+                ModuleCreateRowDeviceEntryInput(
+                    slot_no=1,
+                    time_text=row.time_text,
+                    window_text=row.window_text,
+                    p_text=row.p_text,
+                    command_text=row.command_text,
+                )
+            ]
 
-        for entry in sorted(row.device_entries, key=lambda item: item.slot_no):
+        for entry in entries:
             entry_values = (
                 normalize_command_text(entry.time_text),
                 normalize_command_text(entry.window_text),
@@ -276,11 +282,22 @@ def _build_structure_text(module: ModuleSimilaritySource) -> str:
     """Build normalized row structure without procedure prose."""
 
     tokens: list[str] = []
+    configured_device_slots = ",".join(
+        str(header.slot_no)
+        for header in sorted(module.device_headers, key=lambda item: item.slot_no)
+    )
     for row in sorted(module.rows, key=lambda item: item.row_order):
-        device_slots = ",".join(
-            str(entry.slot_no)
-            for entry in sorted(row.device_entries, key=lambda item: item.slot_no)
-        )
+        device_slots = configured_device_slots
+        if not device_slots:
+            device_slots = ",".join(
+                str(entry.slot_no)
+                for entry in sorted(row.device_entries, key=lambda item: item.slot_no)
+            )
+        if not device_slots and any(
+            value is not None
+            for value in (row.time_text, row.window_text, row.p_text, row.command_text)
+        ):
+            device_slots = "1"
         tokens.append(
             "|".join(
                 [
@@ -301,16 +318,19 @@ def _build_device_header_text(module: ModuleSimilaritySource) -> str:
     """Build normalized device-header values in slot order."""
 
     tokens: list[str] = []
-    legacy_values = (
-        normalize_prose_text(module.header_time_text),
-        normalize_prose_text(module.target_text),
-        normalize_command_text(module.common_p_text),
-        normalize_prose_text(module.target_device_text),
-    )
-    if any(legacy_values):
-        tokens.append("legacy|" + "|".join(legacy_values))
+    headers = sorted(module.device_headers, key=lambda item: item.slot_no)
+    if not headers:
+        headers = [
+            ModuleCreateDeviceHeaderInput(
+                slot_no=1,
+                header_time_text=module.header_time_text,
+                target_text=module.target_text,
+                p_text=module.common_p_text,
+                target_device_text=module.target_device_text,
+            )
+        ]
 
-    for header in sorted(module.device_headers, key=lambda item: item.slot_no):
+    for header in headers:
         values = (
             normalize_prose_text(header.header_time_text),
             normalize_prose_text(header.target_text),

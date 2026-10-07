@@ -54,7 +54,7 @@ from app.db.modules import (
     update_module_version_status,
 )
 from app.routers.health import get_app_settings
-from app.core.security import CurrentUser, require_approval_transition
+from app.core.security import AdminUser, CurrentUser, require_approval_transition
 from app.services.module_similarity import (
     check_similar_modules,
     validate_similarity_confirmation_token,
@@ -139,6 +139,7 @@ def read_modules(
 @router.patch("/folders", response_model=ApiResponse[ModuleListData])
 def rename_module_folder_path(
     request: ModuleFolderRenameRequest,
+    _admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ModuleListData]:
     """Rename a virtual module folder path."""
@@ -165,6 +166,7 @@ def rename_module_folder_path(
 @router.delete("/folders", response_model=ApiResponse[ModuleListData])
 def delete_module_folder_path(
     request: ModuleFolderDeleteRequest,
+    _admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ModuleListData]:
     """Delete folder memberships and uncategorize modules with no other folder."""
@@ -195,6 +197,7 @@ def delete_module_folder_path(
 @router.patch("/folders/modules", response_model=ApiResponse[ModuleListData])
 def move_selected_modules_to_folder(
     request: ModuleFolderMoveRequest,
+    _admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[ModuleListData]:
     """Add selected modules to a virtual folder path."""

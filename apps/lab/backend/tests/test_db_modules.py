@@ -351,6 +351,7 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
         keyword="点検",
         status_filter="draft",
         folder_paths=["ネットワーク", "SBC"],
+        created_by="member@",
     )
 
     assert any(
@@ -360,6 +361,7 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
             "status_filter": "draft",
             "folder_path_0": "ネットワーク",
             "folder_path_1": "SBC",
+            "created_by": "%member@%",
         }
         for _, parameters in fake_cursor.executions
     )
@@ -370,6 +372,8 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
     )
     assert "folder_filter_0.folder_path = %(folder_path_0)s" in filtered_query
     assert "folder_filter_1.folder_path = %(folder_path_1)s" in filtered_query
+    assert "FROM proc.app_users author_user" in filtered_query
+    assert "author_user.username ILIKE %(created_by)s" in filtered_query
     assert "m.deleted_at IS NULL" in filtered_query
     assert result.items[0].module_id == 1
     assert result.items[0].module_key == "MOD-001"

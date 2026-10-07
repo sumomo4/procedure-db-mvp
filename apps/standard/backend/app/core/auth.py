@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 AuthRole = Literal["member", "approver", "admin"]
@@ -63,6 +63,19 @@ class AuthManagedUserListData(BaseModel):
     items: list[AuthManagedUserData]
 
 
+class AuthUserOptionData(BaseModel):
+    """Minimal active-user information exposed for creator searches."""
+
+    username: str
+    display_name: str
+
+
+class AuthUserOptionListData(BaseModel):
+    """Active-user options available to authenticated users."""
+
+    items: list[AuthUserOptionData]
+
+
 class AuthSelfRegistrationRequest(BaseModel):
     """Credentials and profile for a new application user."""
 
@@ -71,8 +84,30 @@ class AuthSelfRegistrationRequest(BaseModel):
         max_length=254,
         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
     )
-    display_name: str = Field(min_length=1, max_length=200)
+    family_name: str = Field(min_length=1, max_length=200)
+    given_name: str = Field(min_length=1, max_length=200)
     password: str = Field(min_length=8, max_length=512)
+
+    @field_validator("family_name", "given_name", mode="before")
+    @classmethod
+    def normalize_name_part(cls, value: object) -> object:
+        """Trim a name part and collapse embedded whitespace."""
+
+        if not isinstance(value, str):
+            return value
+        return " ".join(value.split())
+
+    @model_validator(mode="after")
+    def validate_display_name_length(self) -> "AuthSelfRegistrationRequest":
+        if len(self.display_name) > 200:
+            raise ValueError("姓と名を合わせて200文字以内で入力してください。")
+        return self
+
+    @property
+    def display_name(self) -> str:
+        """Return the persisted display name in family-name-first order."""
+
+        return f"{self.family_name} {self.given_name}"
 
 
 class AuthUserCreateRequest(AuthSelfRegistrationRequest):

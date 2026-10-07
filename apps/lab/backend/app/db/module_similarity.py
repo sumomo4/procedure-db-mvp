@@ -7,7 +7,10 @@ from typing import Any
 
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
-from app.services.module_similarity import ModuleSimilaritySignature
+from app.services.module_similarity import (
+    MODULE_SIMILARITY_SIGNATURE_VERSION,
+    ModuleSimilaritySignature,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +64,23 @@ def _ensure_module_similarity_schema(cursor: Any) -> None:
             exact_sha256 varchar(64) NOT NULL,
             row_count integer NOT NULL,
             image_count integer NOT NULL,
+            algorithm_version integer NOT NULL
+                DEFAULT 3,
             generated_at timestamptz NOT NULL DEFAULT now()
         );
+        """
+    )
+    cursor.execute(
+        """
+        ALTER TABLE proc.module_similarity_signatures
+            ADD COLUMN IF NOT EXISTS algorithm_version integer NOT NULL DEFAULT 1;
+        """
+    )
+    cursor.execute(
+        f"""
+        ALTER TABLE proc.module_similarity_signatures
+            ALTER COLUMN algorithm_version
+            SET DEFAULT {MODULE_SIMILARITY_SIGNATURE_VERSION};
         """
     )
     cursor.execute(
@@ -83,7 +101,7 @@ def _ensure_module_similarity_schema(cursor: Any) -> None:
 def list_missing_published_module_versions(
     settings: AppSettings,
 ) -> list[tuple[int, int, int]]:
-    """Return latest published module versions without a signature."""
+    """Return latest published module versions with missing or stale signatures."""
 
     try:
         import psycopg
@@ -119,8 +137,12 @@ def list_missing_published_module_versions(
                     LEFT JOIN proc.module_similarity_signatures signature
                         ON signature.module_version_id = latest.module_version_id
                     WHERE signature.module_version_id IS NULL
+                       OR signature.algorithm_version <> %(algorithm_version)s
                     ORDER BY latest.module_id;
-                    """
+                    """,
+                    {
+                        "algorithm_version": MODULE_SIMILARITY_SIGNATURE_VERSION,
+                    },
                 )
                 rows = cursor.fetchall()
     except Exception as exception:
@@ -162,6 +184,7 @@ def upsert_module_similarity_signatures(
             exact_sha256,
             row_count,
             image_count,
+            algorithm_version,
             generated_at
         )
         VALUES (
@@ -177,6 +200,7 @@ def upsert_module_similarity_signatures(
             %(exact_sha256)s,
             %(row_count)s,
             %(image_count)s,
+            %(algorithm_version)s,
             CURRENT_TIMESTAMP
         )
         ON CONFLICT (module_version_id)
@@ -192,6 +216,7 @@ def upsert_module_similarity_signatures(
             exact_sha256 = EXCLUDED.exact_sha256,
             row_count = EXCLUDED.row_count,
             image_count = EXCLUDED.image_count,
+            algorithm_version = EXCLUDED.algorithm_version,
             generated_at = CURRENT_TIMESTAMP;
     """
 
@@ -220,6 +245,7 @@ def upsert_module_similarity_signatures(
                             "exact_sha256": signature.exact_sha256,
                             "row_count": signature.row_count,
                             "image_count": signature.image_count,
+                            "algorithm_version": MODULE_SIMILARITY_SIGNATURE_VERSION,
                         },
                     )
     except Exception as exception:

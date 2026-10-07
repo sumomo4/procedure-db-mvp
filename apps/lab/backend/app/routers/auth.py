@@ -15,6 +15,7 @@ from app.core.auth import (
     AuthUserCreateRequest,
     AuthUserData,
     AuthUserDeleteRequest,
+    AuthUserOptionListData,
     AuthUserPasswordResetRequest,
     AuthUserRoleUpdateRequest,
     CurrentPasswordMismatchError,
@@ -34,6 +35,7 @@ from app.db.auth import (
     create_auth_session,
     create_managed_user,
     delete_managed_user,
+    list_active_user_options,
     list_managed_users,
     revoke_auth_session,
     reset_managed_user_password,
@@ -232,6 +234,24 @@ def logout(
     )
     response.headers["Cache-Control"] = "no-store"
     return success_response(None, "ログアウトしました。")
+
+
+@router.get("/user-options", response_model=ApiResponse[AuthUserOptionListData])
+def read_user_options(
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[AuthUserOptionListData]:
+    """Return active user options to an authenticated user."""
+
+    del current_user
+    try:
+        items = list_active_user_options(settings)
+    except DatabaseConnectionError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exception),
+        ) from exception
+    return success_response(AuthUserOptionListData(items=items), "作成者候補を取得しました。")
 
 
 @router.get("/users", response_model=ApiResponse[AuthManagedUserListData])

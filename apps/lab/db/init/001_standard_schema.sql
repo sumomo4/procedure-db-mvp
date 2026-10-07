@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS proc.module_similarity_signatures (
     exact_sha256 varchar(64) NOT NULL,
     row_count integer NOT NULL,
     image_count integer NOT NULL,
+    algorithm_version integer NOT NULL DEFAULT 3,
     generated_at timestamptz NOT NULL DEFAULT now()
 );
 

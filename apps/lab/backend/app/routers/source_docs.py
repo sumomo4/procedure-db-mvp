@@ -33,7 +33,7 @@ from app.db.source_docs import (
     update_source_doc,
 )
 from app.routers.health import get_app_settings
-from app.core.security import CurrentUser
+from app.core.security import AdminUser, CurrentUser
 
 
 router = APIRouter(prefix="/source-docs", tags=["source-docs"])
@@ -84,6 +84,7 @@ def read_source_docs(
 @router.patch("/tags", response_model=ApiResponse[SourceDocListData])
 def rename_source_doc_tag_path(
     request: SourceDocTagRenameRequest,
+    _admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[SourceDocListData]:
     """Rename a source document tag path."""
@@ -104,6 +105,7 @@ def rename_source_doc_tag_path(
 @router.delete("/tags", response_model=ApiResponse[SourceDocListData])
 def delete_source_doc_tag_path(
     request: SourceDocTagDeleteRequest,
+    _admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[SourceDocListData]:
     """Delete a source document tag and apply the uncategorized fallback."""
@@ -128,6 +130,7 @@ def delete_source_doc_tag_path(
 @router.patch("/tags/source-docs", response_model=ApiResponse[SourceDocListData])
 def add_selected_source_docs_to_tag(
     request: SourceDocTagMoveRequest,
+    _admin_user: AdminUser,
     settings: Annotated[AppSettings, Depends(get_app_settings)],
 ) -> ApiResponse[SourceDocListData]:
     """Add selected source documents to a tag path."""

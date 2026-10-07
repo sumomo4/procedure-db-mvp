@@ -17,7 +17,7 @@ type AuthContextValue = {
   status: AuthStatus;
   error: string;
   login: (username: string, password: string) => Promise<AuthUser>;
-  register: (username: string, displayName: string, password: string) => Promise<AuthUser>;
+  register: (username: string, familyName: string, givenName: string, password: string) => Promise<AuthUser>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
 };
@@ -129,12 +129,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return authenticatedUser;
   }
 
-  async function register(username: string, displayName: string, password: string): Promise<AuthUser> {
+  async function register(
+    username: string,
+    familyName: string,
+    givenName: string,
+    password: string,
+  ): Promise<AuthUser> {
     const response = await fetch(buildAuthApiUrl("/api/v1/auth/register"), {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, display_name: displayName, password }),
+      body: JSON.stringify({
+        username,
+        family_name: familyName,
+        given_name: givenName,
+        password,
+      }),
     });
     const body = await readAuthResponse(response);
     if (!response.ok || body.result !== "success" || body.data === null) {
