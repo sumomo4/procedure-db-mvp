@@ -1,0 +1,14 @@
+{
+  "passed": [
+    "Old release starts with an admin, a module, a source and nonempty storage; no algorithm_version column",
+    "Read-only preflight succeeds for the supported release",
+    "Wrong release is rejected before stopping applications",
+    "Deployment metadata records the dependency overlay instead of claiming a clean commit",
+    "Update preserves DB identity, every configuration file and storage probe; adds the version column",
+    "Existing password, admin role, user management and module/source data survive the update",
+    "Applying the same update twice is refused",
+    "Database backup restores successfully into a separate test database",
+    "Rollback restores old apps without losing post-update business writes, storage or login access",
+    "Reapplying the update after rollback succeeds"
+  ]
+}

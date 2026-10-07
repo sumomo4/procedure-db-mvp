@@ -1,0 +1,152 @@
+[
+  {
+    "environment": "standard",
+    "viewport": "desktop",
+    "homeDimensions": {
+      "viewport": 1440,
+      "document": 1440,
+      "mainClient": 1160,
+      "mainScroll": 1160
+    },
+    "passed": [
+      "guest redirect",
+      "register link",
+      "login",
+      "legacy query redirect",
+      "search history",
+      "deep-link reload",
+      "active navigation",
+      "admin page",
+      "unknown route",
+      "required password change",
+      "member navigation",
+      "logout"
+    ],
+    "pageErrors": []
+  },
+  {
+    "environment": "standard",
+    "viewport": "mobile",
+    "homeDimensions": {
+      "viewport": 390,
+      "document": 390,
+      "mainClient": 390,
+      "mainScroll": 390
+    },
+    "passed": [
+      "guest redirect",
+      "register link",
+      "login",
+      "legacy query redirect",
+      "search history",
+      "deep-link reload",
+      "active navigation",
+      "admin page",
+      "unknown route",
+      "required password change",
+      "member navigation",
+      "logout"
+    ],
+    "pageErrors": []
+  },
+  {
+    "environment": "lab",
+    "viewport": "desktop",
+    "homeDimensions": {
+      "viewport": 1440,
+      "document": 1440,
+      "mainClient": 1160,
+      "mainScroll": 1160
+    },
+    "passed": [
+      "guest redirect",
+      "register link",
+      "login",
+      "legacy query redirect",
+      "search history",
+      "deep-link reload",
+      "active navigation",
+      "admin page",
+      "unknown route",
+      "required password change",
+      "member navigation",
+      "logout"
+    ],
+    "pageErrors": []
+  },
+  {
+    "environment": "lab",
+    "viewport": "mobile",
+    "homeDimensions": {
+      "viewport": 390,
+      "document": 390,
+      "mainClient": 390,
+      "mainScroll": 390
+    },
+    "passed": [
+      "guest redirect",
+      "register link",
+      "login",
+      "legacy query redirect",
+      "search history",
+      "deep-link reload",
+      "active navigation",
+      "admin page",
+      "unknown route",
+      "required password change",
+      "member navigation",
+      "logout"
+    ],
+    "pageErrors": []
+  },
+  {
+    "environment": "baseline",
+    "viewport": "desktop",
+    "homeDimensions": {
+      "viewport": 1440,
+      "document": 1440,
+      "mainClient": 1160,
+      "mainScroll": 1160
+    },
+    "passed": [
+      "guest redirect",
+      "register link",
+      "login",
+      "legacy query redirect",
+      "search history",
+      "deep-link reload",
+      "active navigation",
+      "admin page",
+      "unknown route",
+      "required password change",
+      "member navigation",
+      "logout"
+    ],
+    "pageErrors": []
+  },
+  {
+    "environment": "baseline",
+    "viewport": "mobile",
+    "homeDimensions": {
+      "viewport": 390,
+      "document": 390,
+      "mainClient": 390,
+      "mainScroll": 390
+    },
+    "passed": [
+      "guest redirect",
+      "register link",
+      "login",
+      "legacy query redirect",
+      "search history",
+      "deep-link reload",
+      "active navigation",
+      "admin page",
+      "unknown route",
+      "required password change",
+      "member navigation",
+      "logout"
+    ],
+    "pageErrors": []
+  }
+]
