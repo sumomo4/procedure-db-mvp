@@ -38,7 +38,7 @@ source /etc/os-release
 [[ "$(dpkg --print-architecture)" == "amd64" ]] || fail "amd64 is required."
 [[ ! -e "$INSTALL_DIR" ]] || fail "Install directory already exists: $INSTALL_DIR"
 
-for port in 3000 8000 5432; do
+for port in 80 8000 5432; do
   if ss -ltn | awk '{print $4}' | grep -Eq "(^|:)$port$"; then
     fail "Port $port is already in use."
   fi

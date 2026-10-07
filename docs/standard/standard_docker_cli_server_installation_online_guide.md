@@ -6,6 +6,8 @@
 
 導入先は、OS、IPアドレス、ホスト名、SSH接続用ユーザーだけが設定された初期状態を想定する。Docker Desktop、ホスト版PostgreSQL、Node.js、Pythonは使用しない。
 
+サーバー用追加設定でHTTP・80番を公開する。ローカル開発用の3000番は変更しない。HTTPSは証明書の確認後に切り替えるため、HTTPの暫定利用は承認された社内ネットワーク内に限定する。
+
 ## 2. 構成
 
 ### 2.1 導入先
@@ -32,17 +34,17 @@
 - `user`が`sudo`を実行できる
 - Docker Engine、Docker Compose、Procedure DBは未導入
 - ホスト上にPostgreSQL、Node.js、Pythonのアプリ実行環境は不要
-- `3000`、`8000`、`5432`が未使用
+- `80`、`8000`、`5432`が未使用
 
 ### 2.3 導入後
 
 | サービス | ホスト側ポート | 公開範囲 | 用途 |
 | --- | --- | --- | --- |
-| WebUI / Nginx | `3000` | 社内LAN | 利用者の接続先 |
+| WebUI / Nginx | `80` | 社内LAN | 利用者の接続先 |
 | FastAPI | `8000` | `127.0.0.1`のみ | 保守・疎通確認 |
 | PostgreSQL | `5432` | `127.0.0.1`のみ | 保守用。APIはDocker内部で接続 |
 
-通常利用は`http://192.168.10.6:3000/`へアクセスする。
+通常利用は`http://192.168.10.6/`へアクセスする。
 
 ## 3. 前提条件
 
@@ -65,7 +67,7 @@ C:\Users\clove\OneDrive\ドキュメント\mvp-root
 - Docker Hubへ接続可能
 - Dockerビルド中にnpm、PyPIへ接続可能
 - 10 GB以上の空き容量を推奨
-- 社内LANからTCP `3000`への通信が許可されている
+- 社内LANからTCP `80`への通信が許可されている
 
 ### 3.3 注意事項
 
@@ -112,7 +114,7 @@ cat /etc/hosts
 利用ポートと未導入状態を確認する。
 
 ```bash
-sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]' || true
+sudo ss -ltnp | grep -E ':(80|8000|5432)[[:space:]]' || true
 command -v docker || true
 test ! -e /home/user/procedure-db-mvp && echo 'project directory: absent'
 ```
@@ -233,9 +235,13 @@ cat > docker-compose.standard.server.yml <<'EOF'
 services:
   standard-web:
     restart: unless-stopped
+    ports: !override
+      - "80:80"
 
   standard-api:
     restart: unless-stopped
+    environment:
+      AUTH_COOKIE_SECURE: "false"
     ports: !override
       - "127.0.0.1:8000:8000"
 
@@ -266,7 +272,7 @@ sudo ufw status verbose
 `Status: active`の場合だけ、実際の社内CIDRに置き換えてWebUIを許可する。
 
 ```bash
-sudo ufw allow from 192.168.10.0/24 to any port 3000 proto tcp
+sudo ufw allow from 192.168.10.0/24 to any port 80 proto tcp
 sudo ufw status numbered
 ```
 
@@ -305,12 +311,12 @@ docker compose \
 ### 12.2 ポート
 
 ```bash
-sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]'
+sudo ss -ltnp | grep -E ':(80|8000|5432)[[:space:]]'
 ```
 
 期待値:
 
-- `3000`は`0.0.0.0`またはサーバーIPで待受
+- `80`は`0.0.0.0`またはサーバーIPで待受
 - `8000`と`5432`は`127.0.0.1`だけで待受
 
 ### 12.3 サーバー内部の疎通
@@ -318,11 +324,11 @@ sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]'
 ```bash
 curl -fsS http://127.0.0.1:8000/api/v1/health
 curl -fsS http://127.0.0.1:8000/api/v1/health/db
-curl -fsS http://127.0.0.1:3000/api/v1/health
-curl -fsS http://127.0.0.1:3000/api/v1/health/db
+curl -fsS http://127.0.0.1/api/v1/health
+curl -fsS http://127.0.0.1/api/v1/health/db
 ```
 
-### 12.4 seedデータ
+### 12.4 初期データ
 
 ```bash
 docker compose \
@@ -345,12 +351,12 @@ blueprints=0
 ### 12.5 作業PCとブラウザ
 
 ```powershell
-Invoke-WebRequest http://192.168.10.6:3000/ -UseBasicParsing
-Invoke-RestMethod http://192.168.10.6:3000/api/v1/health
-Invoke-RestMethod http://192.168.10.6:3000/api/v1/health/db
+Invoke-WebRequest http://192.168.10.6/ -UseBasicParsing
+Invoke-RestMethod http://192.168.10.6/api/v1/health
+Invoke-RestMethod http://192.168.10.6/api/v1/health/db
 ```
 
-ブラウザで`http://192.168.10.6:3000/`を開く。
+ブラウザで`http://192.168.10.6/`を開く。
 
 ## 13. 再起動復旧確認
 
@@ -435,7 +441,7 @@ npmまたはPyPIで失敗する場合は、社内プロキシ、SSL検査、許�
 ### ポート競合
 
 ```bash
-sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]'
+sudo ss -ltnp | grep -E ':(80|8000|5432)[[:space:]]'
 ```
 
 既存用途を確認し、無断で停止しない。
@@ -458,6 +464,6 @@ docker compose -p procedure-db-mvp -f docker-compose.yml -f docker-compose.stand
 - [ ] `standard-web`が`Up`
 - [ ] WebUIを社内LANから表示できる
 - [ ] API health、DB healthが成功する
-- [ ] seedモジュール3件、seed原本2件を確認した
+- [ ] 初期モジュール0件、原本0件を確認した
 - [ ] サーバー再起動後に自動復旧した
 - [ ] AccessDB抽出Excelの配置要否を確認した

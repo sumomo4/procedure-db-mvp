@@ -36,8 +36,8 @@ done
 docker compose -p procedure-db-mvp "${COMPOSE_FILES[@]}" ps
 
 echo "[2/6] Checking port exposure"
-ss -ltn | grep -E ':(3000|8000|5432)[[:space:]]'
-ss -ltn | grep -Eq '0\.0\.0\.0:3000|\[::\]:3000' || fail "Web port 3000 is not exposed."
+ss -ltn | grep -E ':(80|8000|5432)[[:space:]]'
+ss -ltn | grep -Eq '(0\.0\.0\.0|\[::\]|\*):80[[:space:]]' || fail "Web port 80 is not exposed."
 ss -ltn | grep -Eq '127\.0\.0\.1:8000' || fail "API port 8000 is not localhost-only."
 ss -ltn | grep -Eq '127\.0\.0\.1:5432' || fail "DB port 5432 is not localhost-only."
 
@@ -46,9 +46,9 @@ curl -fsS http://127.0.0.1:8000/api/v1/health
 echo
 curl -fsS http://127.0.0.1:8000/api/v1/health/db
 echo
-curl -fsS http://127.0.0.1:3000/api/v1/health
+curl -fsS http://127.0.0.1/api/v1/health
 echo
-curl -fsS http://127.0.0.1:3000/api/v1/health/db
+curl -fsS http://127.0.0.1/api/v1/health/db
 echo
 
 echo "[4/6] Checking empty initial data"
@@ -70,4 +70,4 @@ for container in \
 done
 
 echo "[6/6] Verification passed"
-echo "WebUI: http://$(hostname -I | awk '{print $1}'):3000/"
+echo "WebUI: http://$(hostname -I | awk '{print $1}')/"

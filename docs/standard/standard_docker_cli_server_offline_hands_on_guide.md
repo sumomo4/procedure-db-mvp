@@ -6,6 +6,8 @@
 
 この手順では、Docker用パッケージ、Dockerイメージ、アプリケーションソースをインターネットから取得しない。
 
+2026-10-01更新の配布物を使用し、`http://10.58.143.28/`（80番）で導入する。証明書の確認が済むまではHTTPS設定を適用しない。HTTPは暗号化されないため、承認された社内ネットワーク内でのみ暫定利用する。
+
 ## 2. 対象
 
 ### 2.1 テストサーバー
@@ -31,8 +33,8 @@ SSHパスワードは手順書へ記載せず、別途安全な方法で管理�
 作業PCのDownloadsフォルダに、次の2ファイルがあること。
 
 ```text
-standard-offline-bundle-7bf0862.tar.gz
-standard-offline-bundle-7bf0862.tar.gz.sha256
+standard-offline-bundle-7ecf683-http80-20261001.tar.gz
+standard-offline-bundle-7ecf683-http80-20261001.tar.gz.sha256
 ```
 
 ## 3. 導入前確認
@@ -61,7 +63,7 @@ hostname -I
 cat /etc/os-release
 uname -m
 command -v docker || echo "Dockerは未導入です"
-ss -lnt | grep -E ':(3000|8000|5432)[[:space:]]' || echo "Standard用ポートは未使用です"
+ss -lnt | grep -E ':(80|8000|5432)[[:space:]]' || echo "Standard用ポートは未使用です"
 ```
 
 次を確認する。
@@ -69,7 +71,7 @@ ss -lnt | grep -E ':(3000|8000|5432)[[:space:]]' || echo "Standard用ポート�
 - Ubuntu 24.04である
 - `uname -m`が`x86_64`である
 - Dockerが未導入である
-- `3000`、`8000`、`5432`番ポートが未使用である
+- `80`、`8000`、`5432`番ポートが未使用である
 
 確認後、いったんSSHから退出する。
 
@@ -83,17 +85,15 @@ PowerShellで実行する。
 
 ```powershell
 cd "$env:USERPROFILE\Downloads"
-Get-Item .\standard-offline-bundle-7bf0862.tar.gz
-Get-Item .\standard-offline-bundle-7bf0862.tar.gz.sha256
-Get-FileHash .\standard-offline-bundle-7bf0862.tar.gz -Algorithm SHA256
-Get-Content .\standard-offline-bundle-7bf0862.tar.gz.sha256
+Get-Item .\standard-offline-bundle-7ecf683-http80-20261001.tar.gz
+Get-Item .\standard-offline-bundle-7ecf683-http80-20261001.tar.gz.sha256
+Get-FileHash .\standard-offline-bundle-7ecf683-http80-20261001.tar.gz -Algorithm SHA256
+Get-Content .\standard-offline-bundle-7ecf683-http80-20261001.tar.gz.sha256
 ```
 
-算出したSHA-256と`.sha256`ファイルの値が、次の値で一致することを確認する。
+算出したSHA-256と、今回の配布物に添付された`.sha256`ファイルの値が一致することを確認する。旧版のチェックサムを使用しない。
 
-```text
-21181cd8113a7c934f4c6cc511d072be3f12a06b2bdedf6480a7e477fb6dd24c
-```
+配布物の名前にある`7ecf683-http80-20261001`はベースコミットとHTTP80版の識別子である。今回の未コミット設定変更を含むため、コミット`7ecf683`単体と同一ではない。展開後の`DEPLOY_MANIFEST.json`でベースコミット、ソースのSHA-256、DockerイメージIDを確認できる。
 
 一致しない場合は転送せず、配布物を再取得する。
 
@@ -103,8 +103,8 @@ PowerShellで実行する。
 
 ```powershell
 cd "$env:USERPROFILE\Downloads"
-scp .\standard-offline-bundle-7bf0862.tar.gz user@10.58.143.28:/home/user/
-scp .\standard-offline-bundle-7bf0862.tar.gz.sha256 user@10.58.143.28:/home/user/
+scp .\standard-offline-bundle-7ecf683-http80-20261001.tar.gz user@10.58.143.28:/home/user/
+scp .\standard-offline-bundle-7ecf683-http80-20261001.tar.gz.sha256 user@10.58.143.28:/home/user/
 ```
 
 転送完了後、SSH接続する。
@@ -119,13 +119,13 @@ ssh user@10.58.143.28
 
 ```bash
 cd /home/user
-sha256sum -c standard-offline-bundle-7bf0862.tar.gz.sha256
+sha256sum -c standard-offline-bundle-7ecf683-http80-20261001.tar.gz.sha256
 ```
 
 次のように`OK`と表示されることを確認する。
 
 ```text
-standard-offline-bundle-7bf0862.tar.gz: OK
+standard-offline-bundle-7ecf683-http80-20261001.tar.gz: OK
 ```
 
 `FAILED`となった場合は展開せず、ファイルを削除して転送し直す。
@@ -134,8 +134,8 @@ standard-offline-bundle-7bf0862.tar.gz: OK
 
 ```bash
 cd /home/user
-tar -xzf standard-offline-bundle-7bf0862.tar.gz
-cd standard-offline-bundle-7bf0862
+tar -xzf standard-offline-bundle-7ecf683-http80-20261001.tar.gz
+cd standard-offline-bundle-7ecf683-http80-20261001
 ```
 
 展開後のファイルを確認する。
@@ -159,7 +159,7 @@ cd ..
 ## 8. Standardをオフライン導入する
 
 ```bash
-cd /home/user/standard-offline-bundle-7bf0862
+cd /home/user/standard-offline-bundle-7ecf683-http80-20261001
 sudo bash install_standard.sh
 ```
 
@@ -181,7 +181,7 @@ sudo bash install_standard.sh
 ## 9. 自動検証を実行する
 
 ```bash
-cd /home/user/standard-offline-bundle-7bf0862
+cd /home/user/standard-offline-bundle-7ecf683-http80-20261001
 sudo bash verify_standard.sh
 ```
 
@@ -189,7 +189,7 @@ sudo bash verify_standard.sh
 
 - DBとAPIが`healthy`である
 - Webが`running`である
-- Webだけが`0.0.0.0:3000`で公開されている
+- Webだけが`0.0.0.0:80`で公開されている
 - APIが`127.0.0.1:8000`に限定されている
 - PostgreSQLが`127.0.0.1:5432`に限定されている
 - APIとDBのhealthが正常である
@@ -203,16 +203,19 @@ sudo bash verify_standard.sh
 作業PCのブラウザで次を開く。
 
 ```text
-http://10.58.143.28:3000/
+http://10.58.143.28/
 ```
 
 最低限、次を確認する。
 
 - ログイン画面が表示される
-- ログイン後にHOME画面が表示される
+- 初回はログイン画面の新規ユーザー登録から自分のアカウントを作成する
+- 登録・ログイン後にHOME画面が表示される
 - API疎通とDB疎通が正常表示になる
-- モジュール検索でseedデータ3件を確認できる
-- 原本検索でseedデータ2件を確認できる
+- モジュール一覧が0件である（seedデータは含めない）
+- 原本一覧が0件である（seedデータは含めない）
+
+自己登録したユーザーはmemberになる。管理者アカウントは同梱していないため、管理機能を使用する前に管理者の初期設定を行う。Access抽出Excelも同梱しないため、案件化で使用する場合は`/home/user/procedure-db-mvp/storage/standard/access_exports`へ承認された方法で別途配置する。
 
 APIとDBの8000番・5432番ポートは、作業PCから直接接続できないことが正しい状態である。
 
@@ -232,8 +235,10 @@ ssh user@10.58.143.28
 
 再接続後、サーバーで自動検証を再実行する。
 
+`verify_standard.sh`は新規導入直後の初期件数0件も確認するため、この再起動確認まではモジュール・原本を登録しない。運用データを登録済みの場合は、コンテナ状態、health、ブラウザー表示を個別に確認する。
+
 ```bash
-cd /home/user/standard-offline-bundle-7bf0862
+cd /home/user/standard-offline-bundle-7ecf683-http80-20261001
 sudo bash verify_standard.sh
 ```
 
@@ -250,7 +255,7 @@ sudo bash verify_standard.sh
 | Dockerイメージ読込み |  |  |
 | 3コンテナ起動 |  |  |
 | health確認 |  |  |
-| seedデータ確認 |  |  |
+| 初期データ確認 |  |  |
 | WebUI表示 |  |  |
 | 再起動後の自動復旧 |  |  |
 
@@ -259,7 +264,7 @@ sudo bash verify_standard.sh
 ### 13.1 データを残して停止する
 
 ```bash
-cd /home/user/standard-offline-bundle-7bf0862
+cd /home/user/standard-offline-bundle-7ecf683-http80-20261001
 sudo bash uninstall_standard.sh
 ```
 
@@ -271,7 +276,7 @@ sudo bash uninstall_standard.sh
 > 次の操作はStandardのDBデータも削除する。必要なデータがないことを確認してから実行する。
 
 ```bash
-cd /home/user/standard-offline-bundle-7bf0862
+cd /home/user/standard-offline-bundle-7ecf683-http80-20261001
 sudo bash uninstall_standard.sh --purge-data --remove-docker
 ```
 
@@ -279,9 +284,9 @@ sudo bash uninstall_standard.sh --purge-data --remove-docker
 
 ```bash
 cd /home/user
-rm -rf -- standard-offline-bundle-7bf0862
-rm -f -- standard-offline-bundle-7bf0862.tar.gz
-rm -f -- standard-offline-bundle-7bf0862.tar.gz.sha256
+rm -rf -- standard-offline-bundle-7ecf683-http80-20261001
+rm -f -- standard-offline-bundle-7ecf683-http80-20261001.tar.gz
+rm -f -- standard-offline-bundle-7ecf683-http80-20261001.tar.gz.sha256
 ```
 
 ## 14. エラー時に採取する情報

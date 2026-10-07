@@ -6,6 +6,8 @@
 
 導入先は、OS、IPアドレス、ホスト名、SSH接続用ユーザーだけが設定された初期状態を想定する。サーバーではAPTの外部取得、Dockerイメージのpull、npm、PyPIを使用しない。
 
+今回の導入ではHTTP・80番を使用する。HTTPSは証明書の確認後に追加設定で切り替える。HTTPは通信を暗号化しないため、承認された社内ネットワーク内の暫定利用に限定する。
+
 ## 2. 方式
 
 インターネット接続可能な準備環境で、次を完成させてから社内へ持ち込む。
@@ -42,13 +44,13 @@
 - `user`が`sudo`を実行できる
 - Docker Engine、Docker Compose、Procedure DBは未導入
 - ホスト版PostgreSQLは未導入
-- `3000`、`8000`、`5432`が未使用
+- `80`、`8000`、`5432`が未使用
 
 ### 3.3 導入後
 
 | サービス | ホスト側ポート | 公開範囲 | 用途 |
 | --- | --- | --- | --- |
-| WebUI / Nginx | `3000` | 社内LAN | 利用者の接続先 |
+| WebUI / Nginx | `80` | 社内LAN | 利用者の接続先 |
 | FastAPI | `8000` | `127.0.0.1`のみ | 保守・疎通確認 |
 | PostgreSQL | `5432` | `127.0.0.1`のみ | 保守用。APIはDocker内部で接続 |
 
@@ -67,7 +69,7 @@ Docker用`.deb`は、導入先と同じOS・CPU・初期パッケージ構成の
 ### 4.2 オフラインサーバー
 
 - 10 GB以上の空き容量を推奨
-- 社内LANからTCP `3000`へ接続可能
+- 社内LANからTCP `80`へ接続可能
 - USB、社内共有、SCPなど承認された持込み経路がある
 - API `8000`とDB `5432`を社内LANへ直接公開しない
 
@@ -109,7 +111,7 @@ cat /etc/hosts
 - `user`が`sudo`を利用可能
 
 ```bash
-sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]' || true
+sudo ss -ltnp | grep -E ':(80|8000|5432)[[:space:]]' || true
 command -v docker || true
 test ! -e /home/user/procedure-db-mvp && echo 'project directory: absent'
 ```
@@ -137,7 +139,7 @@ standard-offline-bundle-<commit>.tar.gz.sha256
 | ファイル | 用途 |
 | --- | --- |
 | `install_standard.sh` | チェックサム確認、Docker導入、イメージ読込み、Standard起動 |
-| `verify_standard.sh` | health、ポート、seedデータ、再起動設定の確認 |
+| `verify_standard.sh` | health、ポート、初期データ、再起動設定の確認 |
 | `uninstall_standard.sh` | 停止または完全撤去 |
 
 社内サーバーへ持ち込んだ後は、次の操作で導入できる。
@@ -342,9 +344,13 @@ cat > docker-compose.standard.server.yml <<'EOF'
 services:
   standard-web:
     restart: unless-stopped
+    ports: !override
+      - "80:80"
 
   standard-api:
     restart: unless-stopped
+    environment:
+      AUTH_COOKIE_SECURE: "false"
     ports: !override
       - "127.0.0.1:8000:8000"
 
@@ -374,7 +380,7 @@ sudo ufw status verbose
 
 ```bash
 ALLOWED_NETWORK="<allowed-network-cidr>"
-sudo ufw allow from "$ALLOWED_NETWORK" to any port 3000 proto tcp
+sudo ufw allow from "$ALLOWED_NETWORK" to any port 80 proto tcp
 sudo ufw status numbered
 ```
 
@@ -423,10 +429,10 @@ docker compose \
 ### 15.2 ポート
 
 ```bash
-sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]'
+sudo ss -ltnp | grep -E ':(80|8000|5432)[[:space:]]'
 ```
 
-- `3000`は社内LANから接続可能
+- `80`は社内LANから接続可能
 - `8000`と`5432`は`127.0.0.1`限定
 
 ### 15.3 サーバー内部の疎通
@@ -434,11 +440,11 @@ sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]'
 ```bash
 curl -fsS http://127.0.0.1:8000/api/v1/health
 curl -fsS http://127.0.0.1:8000/api/v1/health/db
-curl -fsS http://127.0.0.1:3000/api/v1/health
-curl -fsS http://127.0.0.1:3000/api/v1/health/db
+curl -fsS http://127.0.0.1/api/v1/health
+curl -fsS http://127.0.0.1/api/v1/health/db
 ```
 
-### 15.4 seedデータ
+### 15.4 初期データ
 
 ```bash
 docker compose \
@@ -461,12 +467,12 @@ blueprints=0
 ### 15.5 作業PCとブラウザ
 
 ```powershell
-Invoke-WebRequest http://10.58.143.28:3000/ -UseBasicParsing
-Invoke-RestMethod http://10.58.143.28:3000/api/v1/health
-Invoke-RestMethod http://10.58.143.28:3000/api/v1/health/db
+Invoke-WebRequest http://10.58.143.28/ -UseBasicParsing
+Invoke-RestMethod http://10.58.143.28/api/v1/health
+Invoke-RestMethod http://10.58.143.28/api/v1/health/db
 ```
 
-ブラウザで`http://10.58.143.28:3000/`を開く。
+ブラウザで`http://10.58.143.28/`を開く。
 
 ## 16. 再起動復旧確認
 
@@ -546,7 +552,7 @@ docker images --format '{{.Repository}}:{{.Tag}}'
 ### ポート競合
 
 ```bash
-sudo ss -ltnp | grep -E ':(3000|8000|5432)[[:space:]]'
+sudo ss -ltnp | grep -E ':(80|8000|5432)[[:space:]]'
 ```
 
 既存用途を確認し、無断で停止しない。
@@ -572,6 +578,6 @@ docker compose -p procedure-db-mvp -f docker-compose.yml -f docker-compose.stand
 - [ ] `standard-web`が`Up`
 - [ ] WebUIを社内LANから表示できる
 - [ ] API health、DB healthが成功する
-- [ ] seedモジュール3件、seed原本2件を確認した
+- [ ] 初期モジュール0件、原本0件を確認した
 - [ ] サーバー再起動後に自動復旧した
 - [ ] AccessDB抽出Excelの配置要否を確認した
