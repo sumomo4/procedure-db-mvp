@@ -1,5 +1,15 @@
 CREATE SCHEMA IF NOT EXISTS proc;
 
+CREATE TABLE IF NOT EXISTS proc.case_doc_data_sources (
+    source_id text PRIMARY KEY,
+    name text NOT NULL,
+    enabled boolean NOT NULL DEFAULT true,
+    description text NOT NULL DEFAULT '',
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO proc.case_doc_data_sources (source_id, name)
+VALUES ('ssc', 'SSC') ON CONFLICT (source_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS app_metadata (
     key text PRIMARY KEY,
     value text NOT NULL,
@@ -400,6 +410,7 @@ CREATE TABLE IF NOT EXISTS proc.case_document_execution_items (
     minor_no text,
     tech_doc_text text,
     work_text text,
+    indent_level integer CHECK (indent_level BETWEEN 0 AND 3),
     check_text text,
     window_text text,
     p_text text,
@@ -420,6 +431,8 @@ ALTER TABLE proc.case_document_execution_items
     ADD COLUMN IF NOT EXISTS window_text text;
 ALTER TABLE proc.case_document_execution_items
     ADD COLUMN IF NOT EXISTS p_text text;
+ALTER TABLE proc.case_document_execution_items
+    ADD COLUMN IF NOT EXISTS indent_level integer CHECK (indent_level BETWEEN 0 AND 3);
 
 CREATE INDEX IF NOT EXISTS idx_case_document_execution_items_case_document
     ON proc.case_document_execution_items (case_document_id, row_order, target_no);

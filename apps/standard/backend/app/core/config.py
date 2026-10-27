@@ -39,7 +39,7 @@ class AppSettings(BaseModel):
         db_connect_timeout_seconds: PostgreSQL connection timeout in seconds.
         cors_allow_origins: Origins allowed to call the API from a browser.
         case_doc_master_source: Source used for case document master data.
-        case_doc_access_export_dir: Directory where Access export files are placed.
+        case_doc_access_export_dir: Root directory containing one export subdirectory per source DB.
         case_doc_import_strict: Whether Access export import should fail on validation warnings.
         case_doc_placeholder_mapping_path: YAML path for case document placeholder mappings.
         case_doc_instance_storage_dir: Directory where generated case document workbooks are stored.
@@ -60,6 +60,8 @@ class AppSettings(BaseModel):
     case_doc_access_export_dir: str = Field(default="/app/storage/access_exports")
     case_doc_import_strict: bool = Field(default=True)
     case_doc_placeholder_mapping_path: str = Field(default="app/config/placeholder_mapping.yml")
+    case_doc_generation_mode: str = Field(default="unit_config")
+    case_doc_workflow_path: str = Field(default="")
     case_doc_instance_storage_dir: str = Field(default="/app/storage/case_docs")
     module_image_storage_dir: str = Field(default="/app/storage/module_images")
     module_similarity_threshold: float = Field(default=DEFAULT_MODULE_SIMILARITY_THRESHOLD, ge=0, le=1)

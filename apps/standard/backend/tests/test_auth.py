@@ -194,24 +194,40 @@ def test_self_registration_requires_email_address(client, monkeypatch) -> None:
     assert create_user_called is False
 
 
-def test_member_cannot_open_admin_placeholder_settings(test_settings, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.core.security.get_auth_session_user",
-        lambda settings, token: AuthUserData(
-            user_id=9,
-            username="member",
-            display_name="メンバーユーザー",
-            role="member",
+def test_non_admin_can_view_placeholder_settings(non_admin_client) -> None:
+    mappings_response = non_admin_client.get("/api/v1/case-docs/placeholders")
+    sources_response = non_admin_client.get("/api/v1/case-docs/placeholders/sources")
+
+    assert mappings_response.status_code == status.HTTP_200_OK
+    assert sources_response.status_code == status.HTTP_200_OK
+
+
+def test_non_admin_cannot_edit_placeholder_settings(non_admin_client) -> None:
+    payload = {
+        "name": "TEST_DEVICE_IP",
+        "enabled": True,
+        "scope": "device",
+        "device_type": "SBC",
+        "source_device_type": "SBC",
+        "source_file": "SBC.xlsx",
+        "key_column": "ホスト名",
+        "value_column": "コマンド用フローティングIPアドレス",
+        "source_column": "command_floating_ip",
+        "key_value": None,
+        "description": "test placeholder",
+    }
+
+    responses = [
+        non_admin_client.post("/api/v1/case-docs/placeholders/validate", json=payload),
+        non_admin_client.post("/api/v1/case-docs/placeholders", json=payload),
+        non_admin_client.put("/api/v1/case-docs/placeholders/TEST_DEVICE_IP", json=payload),
+        non_admin_client.patch(
+            "/api/v1/case-docs/placeholders/TEST_DEVICE_IP/enabled",
+            json={"enabled": False},
         ),
-    )
-    application, client = _client_without_auth_override(test_settings)
-    try:
-        client.cookies.set(test_settings.auth_cookie_name, "active-token")
-        response = client.get("/api/v1/case-docs/placeholders")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
-    finally:
-        client.close()
-        application.dependency_overrides.clear()
+    ]
+
+    assert all(response.status_code == status.HTTP_403_FORBIDDEN for response in responses)
 
 
 def test_untrusted_origin_is_rejected_before_login(test_settings) -> None:

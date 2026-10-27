@@ -1,10 +1,12 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
-import { Fragment, useEffect, useId, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS as DndCss } from "@dnd-kit/utilities";
 import { DevicePager, PreviewFrame, PreviewOverlay } from "./previewUi";
 import { useAuth, type AuthRole } from "./auth";
+import { DataSourcesPage, DataSourceSelector, scopedSourceUrl, useDataSources } from "./dataSources";
+import { UniCaseDocsPage, type UniTargetWork } from "./uniCaseDocs";
 
 function getAuthRoleLabel(role: AuthRole): string {
   if (role === "admin") {
@@ -598,6 +600,7 @@ type CaseDocHostAssignmentData = {
   device_type: string;
   system: string | null;
   host_name: string;
+  column_name?: string | null;
 };
 
 type CaseDocTargetDeviceSlotData = {
@@ -625,10 +628,16 @@ type CaseDocResolvedPlaceholderData = {
 };
 
 type CaseDocResolveContextData = {
+  data_source_id?: string;
+  data_source_name?: string;
+  data_source_revision?: string | null;
   source_doc_id: number;
-  unit_config: CaseDocUnitConfigItemData;
+  unit_config: CaseDocUnitConfigItemData | null;
+  generation_mode?: "unit_config" | "uni";
+  target_contexts?: UniTargetWork[];
   target_assignment: CaseDocHostAssignmentData;
   target_assignments: CaseDocHostAssignmentData[];
+  target_groups?: CaseDocHostAssignmentData[][];
   target_device_slots: CaseDocTargetDeviceSlotData[];
   host_assignments: CaseDocHostAssignmentData[];
   common_values: CaseDocCommonValueData[];
@@ -639,6 +648,21 @@ type CaseDocOptionLoadState = {
   status: "loading" | "available" | "unavailable";
   items: CaseDocMasterOptionData[];
   message: string;
+};
+
+type CaseDocPreviewCellData = {
+  sheet_name: string;
+  cell: string;
+  target_no: number | null;
+  template_text: string;
+  resolved_text: string;
+  unresolved_placeholders: string[];
+};
+
+type CaseDocGenerationPreviewData = {
+  context: CaseDocResolveContextData;
+  cells: CaseDocPreviewCellData[];
+  unresolved_count: number;
 };
 
 type CaseDocUnitConfigLoadState = {
@@ -693,6 +717,7 @@ type CaseDocExecutionItemData = {
   minor_no: string | null;
   tech_doc_text: string | null;
   work_text: string | null;
+  indent_level?: number | null;
   check_text: string | null;
   window_text: string | null;
   p_text: string | null;
@@ -707,6 +732,9 @@ type CaseDocExecutionItemData = {
 };
 
 type CaseDocInstanceListItemData = {
+  data_source_id?: string;
+  data_source_name?: string;
+  data_source_revision?: string | null;
   case_document_id: number;
   case_document_key: string;
   case_name: string;
@@ -733,6 +761,11 @@ type CaseDocInstanceListData = {
 
 type CaseDocExecutionListTab = "in_progress" | "not_started" | "completed";
 
+function getCaseDocExecutionListTab(instance: Pick<CaseDocInstanceListItemData, "status" | "checked_count" | "skipped_count">): CaseDocExecutionListTab {
+  return instance.status === "completed" ? "completed"
+    : instance.checked_count + instance.skipped_count > 0 ? "in_progress" : "not_started";
+}
+
 type CaseDocPreparationData = {
   construction_name: string;
   construction_date: string | null;
@@ -752,12 +785,37 @@ type CaseDocPreparationFormState = {
 };
 
 type CaseDocInstanceDetailData = CaseDocInstanceListItemData & {
+  generation_mode?: "unit_config" | "uni";
+  target_contexts?: UniTargetWork[];
   prefecture: string;
   building: string;
   preparation: CaseDocPreparationData;
   targets: CaseDocTargetDeviceSlotData[];
   execution_items: CaseDocExecutionItemData[];
   execution_comments: CaseDocExecutionCommentData[];
+};
+
+type CaseDocCommentSearchItemData = {
+  execution_comment_id: number;
+  case_document_id: number;
+  case_document_key: string;
+  case_name: string;
+  source_doc_key: string;
+  source_doc_name: string;
+  execution_status: "not_started" | "in_progress" | "completed";
+  group_start_row_order: number;
+  item_label: string;
+  comment_text: string;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+type CaseDocCommentSearchData = {
+  items: CaseDocCommentSearchItemData[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 };
 
 type CaseDocSavePickerOptions = {
@@ -777,10 +835,12 @@ type CaseDocSaveSelection =
   | { mode: "file-picker"; handle: FileSystemFileHandle }
   | { mode: "browser-download" };
 
+type CaseDocPlaceholderScope = "device" | "common" | "unit";
+
 type CaseDocPlaceholderMappingItemData = {
   name: string;
   enabled: boolean;
-  scope: "device" | "common";
+  scope: CaseDocPlaceholderScope;
   source_file: string;
   key_column: string;
   value_column: string;
@@ -793,6 +853,37 @@ type CaseDocPlaceholderMappingItemData = {
 
 type CaseDocPlaceholderMappingListData = {
   items: CaseDocPlaceholderMappingItemData[];
+};
+
+type CaseDocPlaceholderSampleUnit = {
+  unit_config: CaseDocUnitConfigItemData;
+  devices: CaseDocHostAssignmentData[];
+};
+
+type CaseDocPlaceholderSampleData = {
+  status: "resolved" | "disabled" | "not_applicable" | "reference_missing" | "lookup_mismatch"
+    | "empty_value" | "missing_column" | "source_error" | "unresolved";
+  before: string;
+  after: string;
+  source_file: string | null;
+  sheet_name: string | null;
+  row_number: number | null;
+  lookup_value: string | null;
+  key_column: string | null;
+  value_column: string | null;
+  uses_default: boolean;
+};
+
+const placeholderSampleStatusText: Record<CaseDocPlaceholderSampleData["status"], string> = {
+  resolved: "置換できました",
+  disabled: "この定義は無効のため置換されません",
+  not_applicable: "選択した装置の装置種別は、この定義の対象外です",
+  reference_missing: "参照装置種別に対応する装置が、このユニットにありません",
+  lookup_mismatch: "照合値に一致する行がありません",
+  empty_value: "参照先の値が空欄です",
+  missing_column: "指定したキー列または値列がありません",
+  source_error: "参照ファイルを読み取れませんでした",
+  unresolved: "この設定では置換できません。名前・共通キー・参照先を確認してください",
 };
 
 type CaseDocPlaceholderMappingListState = {
@@ -870,7 +961,7 @@ type CaseDocPlaceholderEditorMode = "create" | "edit";
 type CaseDocPlaceholderFormState = {
   name: string;
   enabled: boolean;
-  scope: "device" | "common";
+  scope: CaseDocPlaceholderScope;
   device_type: string;
   source_device_type: string;
   source_file: string;
@@ -977,6 +1068,34 @@ const moduleStatusOptions: { value: "all" | ModuleApiStatus; label: string }[] =
   { value: "published", label: "承認済み" },
   { value: "archived", label: "保管済み" },
 ];
+
+function filterApprovalItems<T extends { status: ModuleApiStatus }>(
+  items: T[],
+  status: "all" | ModuleApiStatus,
+  includeArchived: boolean,
+): T[] {
+  return items.filter((item) => status === "all"
+    ? includeArchived || item.status !== "archived"
+    : item.status === status);
+}
+
+function ArchivedItemsToggle({ status, includeArchived, onChange }: {
+  status: "all" | ModuleApiStatus;
+  includeArchived: boolean;
+  onChange: (includeArchived: boolean) => void;
+}) {
+  return (
+    <label className="archive-visibility-toggle" title={status !== "all" ? "指定した承認状態で絞り込んでいます。" : undefined}>
+      <input
+        type="checkbox"
+        checked={status === "archived" || (status === "all" && includeArchived)}
+        disabled={status !== "all"}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>保管済みを含める</span>
+    </label>
+  );
+}
 
 function normalizeModuleFolderPath(folderPath: string): string {
   const normalized = folderPath
@@ -1486,8 +1605,11 @@ function App() {
         <Route path="/documents/:id" element={<DocumentDetailPage />} />
         <Route path="/case-docs" element={<CaseDocsPage />} />
         <Route path="/case-docs/executions" element={<CaseDocExecutionPage />} />
+        <Route path="/case-docs/executions/comments" element={<CaseDocCommentSearchPage />} />
+        <Route path="/case-docs/executions/comments/:caseDocumentId/:commentRowOrder" element={<CaseDocExecutionPage />} />
         <Route path="/case-docs/executions/:caseDocumentId" element={<CaseDocExecutionPage />} />
         <Route path="/case-docs/placeholders" element={<CaseDocPlaceholdersPage />} />
+        <Route path="/case-docs/data-sources" element={<DataSourcesPage buildUrl={buildApiUrl} />} />
         <Route path="/admin/users" element={<UserManagementPage />} />
         <Route path="/approval" element={<ApprovalPage />} />
       </Route>
@@ -1502,6 +1624,12 @@ function Shell() {
   const { user: currentUser, logout } = useAuth();
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
   const [operationNotice, setOperationNotice] = useState<OperationNoticeData | null>(null);
+  const [executionSidebarCollapsed, setExecutionSidebarCollapsed] = useState(
+    () => window.matchMedia("(max-width: 900px)").matches,
+  );
+  const isExecutionRoute = location.pathname === "/case-docs/executions"
+    || location.pathname.startsWith("/case-docs/executions/");
+  const sidebarCollapsed = isExecutionRoute && executionSidebarCollapsed;
 
   useEffect(() => {
     if (currentUser === null) {
@@ -1537,8 +1665,8 @@ function Shell() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell${sidebarCollapsed ? " app-shell-sidebar-collapsed" : ""}`}>
+      <aside className="sidebar" id="primary-sidebar" hidden={sidebarCollapsed}>
         <div className="brand">
           <span className="brand-mark">DB</span>
           <div>
@@ -1567,12 +1695,13 @@ function Shell() {
             <NavItem to="/case-docs" label="新規案件化" icon="CS" end />
             <NavItem to="/case-docs/executions" label="実行管理" icon="✓" />
           </NavGroup>
-          {currentUser.role === "admin" ? (
-            <NavGroup label="管理">
+          <NavGroup label={currentUser.role === "admin" ? "管理" : "参照"}>
+            {currentUser.role === "admin" ? (
               <NavItem to="/admin/users" label="ユーザー管理" icon="♙" />
-              <NavItem to="/case-docs/placeholders" label="プレースホルダ設定" icon="{}" />
-            </NavGroup>
-          ) : null}
+            ) : null}
+            <NavItem to="/case-docs/placeholders" label="プレースホルダ設定" icon="{}" />
+            {currentUser?.role === "admin" ? <NavItem to="/case-docs/data-sources" label="参照元DB管理" icon="DB" /> : null}
+          </NavGroup>
         </nav>
         <div className="flow-box">
           <span>現在の導線</span>
@@ -1588,7 +1717,26 @@ function Shell() {
         </button>
       </aside>
       <main className="content">
-        <WorkflowNavigation pathname={location.pathname} />
+        {isExecutionRoute ? (
+          <div className="execution-workspace-navigation">
+            <button
+              className="icon-button execution-sidebar-toggle"
+              type="button"
+              onClick={() => setExecutionSidebarCollapsed((current) => !current)}
+              aria-controls="primary-sidebar"
+              aria-expanded={!sidebarCollapsed}
+              aria-label={sidebarCollapsed ? "サイドメニューを表示" : "サイドメニューを折りたたむ"}
+              title={sidebarCollapsed ? "サイドメニューを表示" : "サイドメニューを折りたたむ"}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M9 4v16" />
+                <path d={sidebarCollapsed ? "m13 9 3 3-3 3" : "m16 9-3 3 3 3"} />
+              </svg>
+            </button>
+            <WorkflowNavigation pathname={location.pathname} />
+          </div>
+        ) : <WorkflowNavigation pathname={location.pathname} />}
         <Outlet context={{ showOperationNotice: setOperationNotice }} />
       </main>
       {operationNotice ? (
@@ -2040,109 +2188,150 @@ function ModuleRowImageList({
   );
 }
 
+type HomeLoadStatus = "loading" | "available" | "unavailable";
+type HomeApprovalCounts = Record<ModuleApiStatus, number>;
+type HomeOverviewResource<T> = { status: HomeLoadStatus; counts: T | null };
 type HomeOverviewState = {
-  status: "loading" | "available" | "unavailable";
-  modulesPublished: number;
-  sourceDocsPublished: number;
-  activeCaseDocs: number;
-  completedCaseDocs: number;
-  modulesNeedAction: number;
-  sourceDocsNeedAction: number;
-  message: string;
+  modules: HomeOverviewResource<HomeApprovalCounts>;
+  sourceDocs: HomeOverviewResource<HomeApprovalCounts>;
+  sourceApprovals: HomeOverviewResource<HomeApprovalCounts>;
+  cases: HomeOverviewResource<Record<CaseDocExecutionListTab, number>>;
 };
+
+function createHomeOverview(): HomeOverviewState {
+  return {
+    modules: { status: "loading", counts: null },
+    sourceDocs: { status: "loading", counts: null },
+    sourceApprovals: { status: "loading", counts: null },
+    cases: { status: "loading", counts: null },
+  };
+}
+
+function HomeLoadStateBadge({ status }: { status: HomeLoadStatus }) {
+  return <span className={`overview-state overview-state-${status}`}>
+    {status === "loading" ? "取得中" : status === "available" ? "最新" : "取得失敗"}
+  </span>;
+}
 
 function HomePage() {
   const { user: currentUser } = useAuth();
-  const [overview, setOverview] = useState<HomeOverviewState>({
-    status: "loading",
-    modulesPublished: 0,
-    sourceDocsPublished: 0,
-    activeCaseDocs: 0,
-    completedCaseDocs: 0,
-    modulesNeedAction: 0,
-    sourceDocsNeedAction: 0,
-    message: "作業状況を取得しています。",
-  });
+  const canApprove = currentUser?.role === "admin" || currentUser?.role === "approver";
+  const [overview, setOverview] = useState<HomeOverviewState>(createHomeOverview);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     const abortController = new AbortController();
+    setOverview(createHomeOverview());
 
-    async function fetchOverview(): Promise<void> {
+    async function fetchApprovalCounts(key: "modules" | "sourceDocs" | "sourceApprovals", path: string): Promise<void> {
       try {
-        const [modulesResponse, sourceDocsResponse, caseDocsResponse] = await Promise.all([
-          apiFetch(buildApiUrl("/api/v1/modules"), { signal: abortController.signal }),
-          apiFetch(buildApiUrl("/api/v1/source-docs"), { signal: abortController.signal }),
-          apiFetch(buildApiUrl("/api/v1/case-docs/instances"), { signal: abortController.signal }),
-        ]);
-        const [modulesBody, sourceDocsBody, caseDocsBody] = await Promise.all([
-          readApiResponse<ModuleListData>(modulesResponse),
-          readApiResponse<SourceDocListData>(sourceDocsResponse),
-          readApiResponse<CaseDocInstanceListData>(caseDocsResponse),
-        ]);
-
-        if (
-          !modulesResponse.ok || modulesBody.result !== "success" || modulesBody.data === null
-          || !sourceDocsResponse.ok || sourceDocsBody.result !== "success" || sourceDocsBody.data === null
-          || !caseDocsResponse.ok || caseDocsBody.result !== "success" || caseDocsBody.data === null
-        ) {
-          setOverview((current) => ({ ...current, status: "unavailable", message: "作業状況の一部を取得できませんでした。" }));
-          return;
+        const response = await apiFetch(buildApiUrl(path), { signal: abortController.signal });
+        const body = await readApiResponse<{ items: { status: ModuleApiStatus }[] }>(response);
+        if (!response.ok || body.result !== "success" || body.data === null) throw new Error("Overview unavailable");
+        const counts: HomeApprovalCounts = { draft: 0, returned: 0, review_requested: 0, published: 0, archived: 0 };
+        for (const item of body.data.items) {
+          if (Object.hasOwn(counts, item.status)) counts[item.status] += 1;
         }
-
-        const actionStatuses: ModuleApiStatus[] =
-          currentUser?.role === "member"
-            ? ["draft", "returned"]
-            : ["draft", "returned", "review_requested"];
-        setOverview({
-          status: "available",
-          modulesPublished: modulesBody.data.items.filter((item) => item.status === "published").length,
-          sourceDocsPublished: sourceDocsBody.data.items.filter((item) => item.status === "published").length,
-          activeCaseDocs: caseDocsBody.data.items.filter((item) => item.status === "active").length,
-          completedCaseDocs: caseDocsBody.data.items.filter((item) => item.status === "completed").length,
-          modulesNeedAction: modulesBody.data.items.filter((item) => actionStatuses.includes(item.status)).length,
-          sourceDocsNeedAction: sourceDocsBody.data.items.filter((item) => actionStatuses.includes(item.status)).length,
-          message: "最新の作業状況を取得しました。",
-        });
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setOverview((current) => ({ ...current, status: "unavailable", message: "作業状況を取得できませんでした。しばらくしてから再度お試しください。" }));
+        if (!abortController.signal.aborted) {
+          setOverview((current) => ({ ...current, [key]: { status: "available", counts } }));
+        }
+      } catch {
+        if (!abortController.signal.aborted) {
+          setOverview((current) => ({ ...current, [key]: { status: "unavailable", counts: null } }));
+        }
       }
     }
 
-    void fetchOverview();
-    return () => abortController.abort();
-  }, [currentUser?.role]);
+    async function fetchCaseCounts(): Promise<void> {
+      try {
+        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/instances"), { signal: abortController.signal });
+        const body = await readApiResponse<CaseDocInstanceListData>(response);
+        if (!response.ok || body.result !== "success" || body.data === null) throw new Error("Overview unavailable");
+        const counts = { not_started: 0, in_progress: 0, completed: 0 };
+        for (const item of body.data.items) counts[getCaseDocExecutionListTab(item)] += 1;
+        if (!abortController.signal.aborted) {
+          setOverview((current) => ({ ...current, cases: { status: "available", counts } }));
+        }
+      } catch {
+        if (!abortController.signal.aborted) {
+          setOverview((current) => ({ ...current, cases: { status: "unavailable", counts: null } }));
+        }
+      }
+    }
 
-  const approvalRoute = currentUser?.role === "member" ? "/modules/search" : "/modules/approval";
-  const sourceApprovalRoute = currentUser?.role === "member" ? "/documents/search" : "/approval";
+    void fetchApprovalCounts("modules", "/api/v1/modules");
+    void fetchApprovalCounts("sourceDocs", "/api/v1/source-docs");
+    if (canApprove) void fetchApprovalCounts("sourceApprovals", "/api/v1/statuses");
+    void fetchCaseCounts();
+    return () => abortController.abort();
+  }, [canApprove, reloadTick]);
+
+  const resources = [
+    { label: "モジュール", ...overview.modules },
+    { label: "原本一覧", ...overview.sourceDocs },
+    { label: "案件CS", ...overview.cases },
+    ...(canApprove ? [{ label: "原本の承認状況", ...overview.sourceApprovals }] : []),
+  ];
+  const loading = resources.some((resource) => resource.status === "loading");
+  const failed = resources.filter((resource) => resource.status === "unavailable");
+  const overviewStatus: HomeLoadStatus = loading ? "loading" : failed.length ? "unavailable" : "available";
+  const message = loading ? "作業状況を取得しています。"
+    : failed.length ? `${failed.map((resource) => resource.label).join("、")}を取得できませんでした。`
+      : "最新の作業状況を取得しました。";
+  const approvalOrder: ModuleApiStatus[] = canApprove
+    ? ["review_requested", "returned", "draft"] : ["returned", "draft", "review_requested"];
+  const approvalQueues = [
+    { title: "モジュールの承認状況", resource: overview.modules, route: canApprove ? "/modules/approval" : "/modules/search" },
+    { title: "原本の承認状況", resource: canApprove ? overview.sourceApprovals : overview.sourceDocs, route: canApprove ? "/approval" : "/documents/search" },
+  ];
 
   return (
     <Page title="HOME" description="モジュールから原本、案件CSの実行まで、現在の進捗と次の作業を確認します。">
+      <div className="home-dashboard">
+      <div className="home-overview-toolbar">
+        <div><HomeLoadStateBadge status={overviewStatus} /><p role="status">{message}</p></div>
+        <button type="button" className="icon-button" aria-label="作業状況を再取得" title="作業状況を再取得"
+          disabled={loading} onClick={() => {
+            setOverview(createHomeOverview());
+            setReloadTick((current) => current + 1);
+          }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+            <path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 6.1a8 8 0 0 1 13 3M4.9 14.9a8 8 0 0 0 13 3" />
+          </svg>
+        </button>
+      </div>
       <section className="workflow-dashboard" aria-label="業務工程の状況">
-        <WorkflowStageCard step="1" title="モジュール" count={overview.modulesPublished} unit="件承認済み" to="/modules/search" action="一覧を開く" />
-        <WorkflowStageCard step="2" title="原本" count={overview.sourceDocsPublished} unit="件承認済み" to="/documents/search" action="一覧を開く" />
-        <WorkflowStageCard step="3" title="案件化" count={overview.activeCaseDocs} unit="件実行待ち" to="/case-docs" action="案件化する" />
-        <WorkflowStageCard step="4" title="実行" count={overview.completedCaseDocs} unit="件完了" to="/case-docs/executions" action="実行画面を開く" />
+        <WorkflowStageCard step="1" title="モジュール" count={overview.modules.counts?.published ?? null} unit="件承認済み" to="/modules/search?status=published" action="承認済み一覧へ" />
+        <WorkflowStageCard step="2" title="原本" count={overview.sourceDocs.counts?.published ?? null} unit="件承認済み" to="/documents/search?status=published" action="承認済み一覧へ" />
+        <WorkflowStageCard step="3" title="案件化" unit="新規案件CS" to="/case-docs" action="案件化する" />
+        <WorkflowStageCard step="4" title="実行" count={overview.cases.counts?.in_progress ?? null} unit="件実行中" to="/case-docs/executions?tab=in_progress" action="実行中一覧へ" />
       </section>
 
-      <section className="section-band work-queue-section">
-        <div className="section-heading-row">
-          <div>
-            <h2>対応が必要な作業</h2>
-            <p>{overview.message}</p>
+      {approvalQueues.map(({ title, resource, route }) => (
+        <section className="section-band work-queue-section" aria-label={title} aria-busy={resource.status === "loading"} key={title}>
+          <div className="section-heading-row"><h2>{title}</h2><HomeLoadStateBadge status={resource.status} /></div>
+          <div className="work-queue-grid">
+            {approvalOrder.map((status) => (
+              <WorkQueueCard key={status} title={moduleStatusOptions.find((option) => option.value === status)!.label}
+                count={resource.counts?.[status] ?? null} to={`${route}?status=${status}`}
+                actionable={status !== "review_requested" || canApprove}
+                action={status === "review_requested" ? canApprove ? "承認内容を確認" : "状況を確認" : status === "returned" ? "差戻しを確認" : "作成中一覧へ"} />
+            ))}
           </div>
-          <span className={`overview-state overview-state-${overview.status}`}>
-            {overview.status === "loading" ? "取得中" : overview.status === "available" ? "最新" : "取得失敗"}
-          </span>
-        </div>
+        </section>
+      ))}
+
+      <section className="section-band work-queue-section" aria-labelledby="home-case-queue-title" aria-busy={overview.cases.status === "loading"}>
+        <div className="section-heading-row"><h2 id="home-case-queue-title">案件CS</h2><HomeLoadStateBadge status={overview.cases.status} /></div>
         <div className="work-queue-grid">
-          <WorkQueueCard title="モジュール" count={overview.modulesNeedAction} to={approvalRoute} action="確認する" />
-          <WorkQueueCard title="原本" count={overview.sourceDocsNeedAction} to={sourceApprovalRoute} action="確認する" />
-          <WorkQueueCard title="案件CS" count={overview.activeCaseDocs} to="/case-docs/executions" action="続きから実行" />
+          <WorkQueueCard title="未着手" count={overview.cases.counts?.not_started ?? null} to="/case-docs/executions?tab=not_started" action="実行前準備へ" actionable />
+          <WorkQueueCard title="実行中" count={overview.cases.counts?.in_progress ?? null} to="/case-docs/executions?tab=in_progress" action="続きから実行" actionable />
+          <WorkQueueCard title="完了済み" count={overview.cases.counts?.completed ?? null} to="/case-docs/executions?tab=completed" action="証跡を確認" />
         </div>
       </section>
 
       <ApiHealthPanel />
+      </div>
     </Page>
   );
 }
@@ -2332,6 +2521,7 @@ function ModuleSearchPage() {
   const [searchParams] = useSearchParams();
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
+  const includeArchived = searchParams.get("include_archived") === "true";
   const initialCreatedBy = searchParams.get("created_by") ?? "";
   const initialFolderPaths = Array.from(
     new Set(
@@ -2443,7 +2633,7 @@ function ModuleSearchPage() {
 
         setModuleListState({
           status: "available",
-          items: responseBody.data.items,
+          items: filterApprovalItems(responseBody.data.items, statusFilter, includeArchived),
           folders: responseBody.data.folders ?? [],
           message: responseBody.message || "モジュール一覧を取得しました。",
         });
@@ -2456,7 +2646,7 @@ function ModuleSearchPage() {
     void fetchModules();
 
     return () => abortController.abort();
-  }, [keyword, statusFilter, createdByFilter, initialFolderPathKey, updatedFromFilter, updatedToFilter, sortFilter]);
+  }, [keyword, statusFilter, includeArchived, createdByFilter, initialFolderPathKey, updatedFromFilter, updatedToFilter, sortFilter]);
 
   useEffect(() => {
     setSelectedModuleIds((current) =>
@@ -2467,6 +2657,7 @@ function ModuleSearchPage() {
   function navigateWithFilters(filters: {
     keyword: string;
     status: (typeof moduleStatusOptions)[number]["value"];
+    includeArchived?: boolean;
     createdBy: string;
     folderPaths: string[];
     updatedFrom: string;
@@ -2486,6 +2677,7 @@ function ModuleSearchPage() {
 
     if (normalizedKeyword) params.set("keyword", normalizedKeyword);
     if (filters.status !== "all") params.set("status", filters.status);
+    if (filters.includeArchived ?? includeArchived) params.set("include_archived", "true");
     if (normalizedCreatedBy) params.set("created_by", normalizedCreatedBy);
     normalizedFolderPaths.forEach((folderPath) => params.append("folder_path", folderPath));
     if (filters.updatedFrom) params.set("updated_from", filters.updatedFrom);
@@ -2513,6 +2705,19 @@ function ModuleSearchPage() {
     navigateWithFilters({
       keyword,
       status: nextStatus,
+      createdBy: createdByFilter,
+      folderPaths: folderPathFilters,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      sort: sortFilter,
+    });
+  }
+
+  function handleIncludeArchivedChange(nextIncludeArchived: boolean): void {
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      includeArchived: nextIncludeArchived,
       createdBy: createdByFilter,
       folderPaths: folderPathFilters,
       updatedFrom: updatedFromFilter,
@@ -2741,7 +2946,9 @@ function ModuleSearchPage() {
     }
   }
 
-  const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  const statusFilterLabel = statusFilter === "all" && !includeArchived
+    ? "通常表示"
+    : moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
   const moduleFolderOptions = moduleListState.folders ?? [];
   const folderOptions = moduleFolderOptions.length > 0 ? moduleFolderOptions : ["未分類"];
   const folderTreeItems = buildModuleFolderTreeItems(folderOptions);
@@ -2857,8 +3064,9 @@ function ModuleSearchPage() {
         <section className="module-results-pane">
           <section className="approval-flow" aria-label="モジュール承認状態フィルター">
             {moduleStatusOptions.map((option) => (
-              <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>
+              <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.value === "all" && !includeArchived ? "通常表示" : option.label}</button>
             ))}
+            <ArchivedItemsToggle status={statusFilter} includeArchived={includeArchived} onChange={handleIncludeArchivedChange} />
           </section>
 
           {canManageTags ? <section className="module-folder-action-panel" aria-label="モジュールタグ操作">
@@ -6457,6 +6665,7 @@ function DocumentSearchPage() {
   const [searchParams] = useSearchParams();
   const initialKeyword = searchParams.get("keyword") ?? "";
   const initialStatus = (searchParams.get("status") ?? "all") as (typeof moduleStatusOptions)[number]["value"];
+  const includeArchived = searchParams.get("include_archived") === "true";
   const initialCreatedBy = searchParams.get("created_by") ?? "";
   const initialUpdatedFrom = searchParams.get("updated_from") ?? "";
   const initialUpdatedTo = searchParams.get("updated_to") ?? "";
@@ -6547,7 +6756,7 @@ function DocumentSearchPage() {
           return;
         }
 
-        setSourceDocListState({ status: "available", items: responseBody.data.items, tags: responseBody.data.tags ?? [], message: responseBody.message || "原本一覧を取得しました。" });
+        setSourceDocListState({ status: "available", items: filterApprovalItems(responseBody.data.items, statusFilter, includeArchived), tags: responseBody.data.tags ?? [], message: responseBody.message || "原本一覧を取得しました。" });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setSourceDocListState({ status: "unavailable", items: [], tags: [], message: "サーバーに接続できませんでした。" });
@@ -6557,11 +6766,12 @@ function DocumentSearchPage() {
     void fetchSourceDocs();
 
     return () => abortController.abort();
-  }, [keyword, statusFilter, createdByFilter, updatedFromFilter, updatedToFilter, moduleNameFilter, sortFilter, searchParams]);
+  }, [keyword, statusFilter, includeArchived, createdByFilter, updatedFromFilter, updatedToFilter, moduleNameFilter, sortFilter, searchParams]);
 
   function navigateWithFilters(filters: {
     keyword: string;
     status: (typeof moduleStatusOptions)[number]["value"];
+    includeArchived?: boolean;
     createdBy: string;
     updatedFrom: string;
     updatedTo: string;
@@ -6576,6 +6786,7 @@ function DocumentSearchPage() {
 
     if (normalizedKeyword) params.set("keyword", normalizedKeyword);
     if (filters.status !== "all") params.set("status", filters.status);
+    if (filters.includeArchived ?? includeArchived) params.set("include_archived", "true");
     filters.tagPaths
       .map(normalizeModuleFolderPath)
       .filter((tagPath, index, all) => all.indexOf(tagPath) === index)
@@ -6597,6 +6808,20 @@ function DocumentSearchPage() {
   function handleStatusFilterChange(nextStatus: (typeof moduleStatusOptions)[number]["value"]): void {
     setStatusInput(nextStatus);
     navigateWithFilters({ keyword, status: nextStatus, createdBy: createdByFilter, updatedFrom: updatedFromFilter, updatedTo: updatedToFilter, moduleName: moduleNameFilter, sort: sortFilter, tagPaths: tagPathFilters });
+  }
+
+  function handleIncludeArchivedChange(nextIncludeArchived: boolean): void {
+    navigateWithFilters({
+      keyword,
+      status: statusFilter,
+      includeArchived: nextIncludeArchived,
+      createdBy: createdByFilter,
+      updatedFrom: updatedFromFilter,
+      updatedTo: updatedToFilter,
+      moduleName: moduleNameFilter,
+      sort: sortFilter,
+      tagPaths: tagPathFilters,
+    });
   }
 
   function handleTagFilterToggle(tagPath: string): void {
@@ -6641,7 +6866,7 @@ function DocumentSearchPage() {
       }
       setSourceDocListState({
         status: "available",
-        items: responseBody.data.items,
+        items: filterApprovalItems(responseBody.data.items, statusFilter, includeArchived),
         tags: responseBody.data.tags ?? [],
         message: responseBody.message,
       });
@@ -6768,7 +6993,9 @@ function DocumentSearchPage() {
     setSelectedSourceDocIds([]);
   }
 
-  const statusFilterLabel = moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
+  const statusFilterLabel = statusFilter === "all" && !includeArchived
+    ? "通常表示"
+    : moduleStatusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
   const tagOptions = (sourceDocListState.tags?.length ? sourceDocListState.tags : ["未分類"])
     .map(normalizeModuleFolderPath)
     .filter((tagPath, index, all) => all.indexOf(tagPath) === index);
@@ -6869,7 +7096,8 @@ function DocumentSearchPage() {
 
         <section className="module-results-pane">
           <section className="approval-flow" aria-label="原本承認状態フィルター">
-            {moduleStatusOptions.map((option) => <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.label}</button>)}
+            {moduleStatusOptions.map((option) => <button key={option.value} type="button" className={option.value === statusFilter ? "approval-filter-button active" : "approval-filter-button"} onClick={() => handleStatusFilterChange(option.value)}>{option.value === "all" && !includeArchived ? "通常表示" : option.label}</button>)}
+            <ArchivedItemsToggle status={statusFilter} includeArchived={includeArchived} onChange={handleIncludeArchivedChange} />
           </section>
 
           <Toolbar>
@@ -7517,6 +7745,7 @@ function SortableSourceDocModuleRow({
 
 function DocumentEditPage() {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const [searchParams] = useSearchParams();
   const editSourceDocIdParam = searchParams.get("id");
   const editSourceDocId =
@@ -7526,10 +7755,10 @@ function DocumentEditPage() {
     initialModuleIdParam && /^\d+$/.test(initialModuleIdParam) ? initialModuleIdParam : "";
   const isEditMode = editSourceDocId !== null;
   const [sourceDocKeyInput, setSourceDocKeyInput] = useState("");
-  const [sourceDocNameInput, setSourceDocNameInput] = useState("M1 procedure bundle");
-  const [descriptionInput, setDescriptionInput] = useState("原本登録画面から作成。");
+  const [sourceDocNameInput, setSourceDocNameInput] = useState("");
+  const [descriptionInput, setDescriptionInput] = useState("");
   const [changeNoteInput, setChangeNoteInput] = useState("初版作成");
-  const [createdByInput, setCreatedByInput] = useState("webui");
+  const [createdByInput, setCreatedByInput] = useState(currentUser?.displayName ?? "");
   const [formLoadState, setFormLoadState] = useState<SourceDocFormLoadState>({
     status: "idle",
     message: "新規作成モードです。入力後に保存を実行してください。",
@@ -7841,32 +8070,32 @@ function DocumentEditPage() {
           ) : null}
         </section>
 
-        <FormGrid>
+        <section className="form-grid source-doc-metadata-grid">
           <label>
             原本キー
             <input
               value={sourceDocKeyInput}
               onChange={(event) => setSourceDocKeyInput(event.target.value)}
-              placeholder="BP-STD-003 未入力時は自動採番"
+              placeholder="未入力時は自動採番"
             />
           </label>
-          <label>
+          <label className="source-doc-name-field">
             <RequiredFieldLabel>原本名</RequiredFieldLabel>
             <input value={sourceDocNameInput} onChange={(event) => setSourceDocNameInput(event.target.value)} required />
           </label>
-          <label>
+          <label className="source-doc-author-field">
             作成者
-            <input value={createdByInput} onChange={(event) => setCreatedByInput(event.target.value)} />
+            <input value={createdByInput} readOnly title="作成者は変更できません" />
           </label>
-          <label>
+          <label className="source-doc-note-field">
             変更メモ
             <input value={changeNoteInput} onChange={(event) => setChangeNoteInput(event.target.value)} />
           </label>
-          <label className="wide">
+          <label className="wide source-doc-description-field">
             説明
-            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} />
+            <textarea value={descriptionInput} onChange={(event) => setDescriptionInput(event.target.value)} rows={4} />
           </label>
-        </FormGrid>
+        </section>
 
         <section className="register-step-card source-doc-module-editor">
           <div className="register-step-header">
@@ -8691,13 +8920,13 @@ function IndentedExcelText({
 
 const caseDocText = {
   title: "案件化",
-  description: "原本、設置場所、対象装置を選び、案件CSを作成します。",
+  description: "原本、対象工事、対象装置を選び、案件CSを作成します。",
   sourceDoc: "原本",
-  prefecture: "都道府県",
+  block: "ブロック",
   building: "ビル",
   unitConfig: "ユニット構成",
   resolve: "解決値を確認",
-  location: "設置場所",
+  location: "対象工事",
   unit: "ユニット",
   targetDevice: "対象装置",
   none: "未選択",
@@ -8718,22 +8947,22 @@ const caseDocText = {
   sourceColumn: "出典カラム",
   emptyTitle: "案件CS生成用の値を確認してください",
   loadingSourceDocs: "原本一覧を取得しています。",
-  loadingPrefectures: "都道府県を取得しています。",
+  loadingBlocks: "ブロックを取得しています。",
   loadingBuildings: "ビルを取得しています。",
   loadingUnitConfigs: "ユニット構成を取得しています。",
-  selectLocation: "都道府県とビルを選択してください。",
+  selectLocation: "ブロックとビルを選択してください。",
   ready: "案件CS生成に使う値を確認できます。",
   sourceDocFailed: "原本一覧の取得に失敗しました。",
   sourceDocLoaded: "原本一覧を取得しました。",
-  prefectureFailed: "都道府県の取得に失敗しました。",
-  prefectureLoaded: "都道府県を取得しました。",
-  selectPrefecture: "都道府県を選択してください。",
+  blockFailed: "ブロックの取得に失敗しました。",
+  blockLoaded: "ブロックを取得しました。",
+  selectBlock: "ブロックを選択してください。",
   buildingFailed: "ビルの取得に失敗しました。",
   buildingLoaded: "ビルを取得しました。",
   unitConfigFailed: "ユニット構成の取得に失敗しました。",
   unitConfigLoaded: "ユニット構成を取得しました。",
   apiFailed: "サーバーに接続できませんでした。",
-  selectRequired: "原本、都道府県、ビル、ユニット構成を選択してください。",
+  selectRequired: "原本、ブロック、ビル、ユニット構成を選択してください。",
   resolving: "案件CS生成用の値を解決しています。",
   resolveFailed: "値の解決に失敗しました。",
   resolved: "案件CS生成用の値を解決しました。",
@@ -8747,7 +8976,7 @@ const caseDocText = {
   saveDestinationCancelled: "保存先の選択をキャンセルしました。",
   saveDestinationFailed: "保存先の選択に失敗しました。",
   saveFailed: "案件CSの保存に失敗しました。",
-  selectTargetRequired: "対象装置を1台以上選択してください。",
+  selectTargetRequired: "各targetに対象装置を1つ以上選択してください。",
 };
 
 const caseDocPlaceholderText = {
@@ -8763,6 +8992,7 @@ const caseDocPlaceholderText = {
   enabled: "有効",
   disabled: "無効",
   deviceScoped: "装置別",
+  unitScoped: "ユニット構成の値",
   commonScoped: "共通",
   name: "プレースホルダ",
   status: "状態",
@@ -8813,11 +9043,15 @@ const caseDocPlaceholderText = {
   resetFilters: "条件をリセット",
   rowNumber: "行",
   configuredPlaceholders: "設定済み",
+  lookupKey: "照合キー",
+  lookupKeyHelp: "対象装置のホスト名と照合する列です。",
   addDeviceMapping: "この列から装置別プレースホルダを追加",
+  addUnitMapping: "ユニット構成の値を参照するプレースホルダを追加",
   addCommonMapping: "このセルから共通プレースホルダを追加",
   selectedSource: "選択元",
   previousPage: "前へ",
   nextPage: "次へ",
+  readOnly: "閲覧専用です。追加・編集・有効状態の変更は管理者のみ実行できます。",
   mutationReady: "追加、編集、有効/無効切替を実行できます。",
   backToCaseDocs: "案件化へ戻る",
   emptyTitle: "プレースホルダ定義がありません",
@@ -8881,6 +9115,10 @@ function normalizeCaseDocPlaceholderColumnName(value: string): string {
   return value.replace(/[\s　]+/g, "").toLocaleLowerCase();
 }
 
+function isCaseDocUnitConfigSource(sourceFile: string): boolean {
+  return /^(unit_config|ユニット構成)\.xlsx$/i.test(sourceFile);
+}
+
 function findCaseDocPlaceholderColumn(columns: string[], aliases: string[]): string {
   const normalizedAliases = new Set(aliases.map(normalizeCaseDocPlaceholderColumnName));
   return columns.find((column) => normalizedAliases.has(normalizeCaseDocPlaceholderColumnName(column))) ?? "";
@@ -8916,15 +9154,135 @@ function toCaseDocPlaceholderPayload(form: CaseDocPlaceholderFormState): CaseDoc
     device_type: scope === "device" ? form.device_type.trim() || null : null,
     source_device_type: scope === "device" ? form.source_device_type.trim() || null : null,
     source_file: form.source_file.trim(),
-    key_column: form.key_column.trim(),
+    key_column: scope === "unit" ? "" : form.key_column.trim(),
     value_column: form.value_column.trim(),
     source_column: toGeneratedCaseDocPlaceholderSourceColumn(form),
-    key_value: scope === "common" ? form.key_value.trim() || null : form.key_value.trim() || null,
+    key_value: scope === "common" ? form.key_value.trim() || null : null,
     description: form.description.trim() || null,
   };
 }
 
+function CaseDocTargetPicker({ targetNo, options, selectedKeys, disabled, onChange }: {
+  targetNo: number;
+  options: CaseDocHostAssignmentData[];
+  selectedKeys: string[];
+  disabled: boolean;
+  onChange: (keys: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const selected = selectedKeys.map((key) => options.find((item) => item.slot_key === key)).filter(
+    (item): item is CaseDocHostAssignmentData => Boolean(item),
+  );
+  const visibleOptions = options.filter((item) =>
+    `${item.column_name ?? item.slot_key} ${item.host_name}`.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  useEffect(() => {
+    function closeOnOutsideClick(event: PointerEvent): void {
+      if (event.target instanceof Node && !detailsRef.current?.contains(event.target) && detailsRef.current) {
+        detailsRef.current.open = false;
+      }
+    }
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape" && detailsRef.current?.open) {
+        detailsRef.current.open = false;
+        detailsRef.current.querySelector<HTMLElement>("summary")?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+  return (
+    <div className="case-doc-target-picker">
+      <details ref={detailsRef} className="module-tag-filter-select" onToggle={(event) => {
+        if (event.currentTarget.open) {
+            setQuery("");
+          document.querySelectorAll<HTMLDetailsElement>(".case-doc-target-picker details").forEach((details) => {
+            if (details !== event.currentTarget) details.open = false;
+          });
+            event.currentTarget.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+        }
+      }}>
+        <summary aria-label={`target ${targetNo}の対象装置`} aria-disabled={disabled}
+          onClick={(event) => { if (disabled) event.preventDefault(); }}>
+          <span>{selected.length ? selected.map((item) => item.host_name).join(" / ") : "対象装置を検索・選択"}</span>
+          <small>{selected.length}件選択</small>
+        </summary>
+        <div className="module-tag-filter-menu case-doc-target-menu">
+          <label className="case-doc-target-search-label" htmlFor={`target-${targetNo}-search`}>対象装置を検索</label>
+          <div className="case-doc-target-search-control">
+            <span aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="10.5" cy="10.5" r="6.5" /><path d="M16 16l5 5" />
+            </svg></span>
+            <input id={`target-${targetNo}-search`} type="search" aria-label={`target ${targetNo}の対象装置を検索`}
+              placeholder="装置名・ホスト名で検索" value={query}
+              onChange={(event) => setQuery(event.target.value)} disabled={disabled} />
+            <button type="button" className="case-doc-target-remove" title="検索をクリア" aria-label="検索をクリア"
+              disabled={disabled || !query} onClick={() => {
+                setQuery("");
+                detailsRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+              }}>×</button>
+          </div>
+          <div className="module-tag-filter-options">
+            {visibleOptions.map((item) => (
+              <label key={item.slot_key}>
+                <input type="checkbox" checked={selectedKeys.includes(item.slot_key)} disabled={disabled}
+                  onChange={() => onChange(selectedKeys.includes(item.slot_key)
+                    ? selectedKeys.filter((key) => key !== item.slot_key) : [...selectedKeys, item.slot_key])} />
+                <span><strong>{item.column_name ?? item.slot_key}</strong><small>{item.host_name}</small></span>
+              </label>
+            ))}
+            {!visibleOptions.length ? <p>該当する対象はありません。</p> : null}
+          </div>
+        </div>
+      </details>
+      <div className="case-doc-target-selected">
+        {selected.map((item) => (
+          <span key={item.slot_key}>
+            {item.host_name}
+            <button type="button" className="case-doc-target-remove" title={`${item.host_name}を解除`}
+              aria-label={`${item.host_name}を解除`} disabled={disabled}
+              onClick={() => onChange(selectedKeys.filter((key) => key !== item.slot_key))}>×</button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CaseDocsPage() {
+  const dataSources = useDataSources(buildApiUrl);
+  if (dataSources.source?.generation_mode === "uni") {
+    return <Page title={caseDocText.title} description={caseDocText.description}><UniCaseDocsPage
+      key={dataSources.sourceId} catalog={dataSources} buildUrl={buildApiUrl} fetchApi={apiFetch}
+      renderTable={(columns, rows) => <DataTable columns={columns} rows={rows} />}
+      renderPicker={(props) => <CaseDocTargetPicker {...props} />}
+      saveWorkbook={async (payload, sourceId) => {
+        const suggested = `case-doc-${sourceId}-uni.xlsm`;
+        const destination = await selectCaseDocSaveDestination(suggested);
+        if (destination === null) return null;
+        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/generate"), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const body = await readApiResponse<unknown>(response);
+          throw new Error(body.message || "案件CS Excelを生成できませんでした。");
+        }
+        const filename = response.headers.get("Content-Disposition")?.match(/filename="?([^";]+)"?/)?.[1] ?? suggested;
+        return saveCaseDocBlob(await response.blob(), filename, destination);
+      }}
+    /></Page>;
+  }
+  return <UnitConfigCaseDocsPage dataSources={dataSources} />;
+}
+
+function UnitConfigCaseDocsPage({ dataSources }: { dataSources: ReturnType<typeof useDataSources> }) {
+  const dataSourceId = dataSources.sourceId;
+  const sourceApi = (path: string) => scopedSourceUrl(buildApiUrl(path), dataSourceId);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedSourceDocId = searchParams.get("source_doc_id") ?? "";
@@ -8934,10 +9292,10 @@ function CaseDocsPage() {
     items: [],
     message: caseDocText.loadingSourceDocs,
   });
-  const [prefectureState, setPrefectureState] = useState<CaseDocOptionLoadState>({
+  const [blockState, setBlockState] = useState<CaseDocOptionLoadState>({
     status: "loading",
     items: [],
-    message: caseDocText.loadingPrefectures,
+    message: caseDocText.loadingBlocks,
   });
   const [buildingState, setBuildingState] = useState<CaseDocOptionLoadState>({
     status: "loading",
@@ -8965,23 +9323,85 @@ function CaseDocsPage() {
     message: "解決値を確認後、WebUI実行用の案件CSを保存できます。",
   });
   const [selectedSourceDocId, setSelectedSourceDocId] = useState("");
-  const [selectedPrefecture, setSelectedPrefecture] = useState("");
+  const [selectedBlock, setSelectedBlock] = useState("");
   const [selectedBuilding, setSelectedBuilding] = useState("");
   const [selectedUnitConfigId, setSelectedUnitConfigId] = useState("");
-  const [selectedTargetSlotKeys, setSelectedTargetSlotKeys] = useState<string[]>([]);
+  const [selectedTargetSlotGroups, setSelectedTargetSlotGroups] = useState<string[][]>([]);
+  const sourceTargetCount = useRef(1);
+  const resolveSequence = useRef(0);
   const [caseName, setCaseName] = useState("");
+  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
+  const [previewState, setPreviewState] = useState<{
+    status: "idle" | "submitting" | "success" | "error";
+    item: CaseDocGenerationPreviewData | null;
+    key: string | null;
+    message: string;
+  }>({ status: "idle", item: null, key: null, message: "" });
+  const [unresolvedAcknowledged, setUnresolvedAcknowledged] = useState(false);
+  const [showOnlyUnresolved, setShowOnlyUnresolved] = useState(true);
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null);
+  const selectionKey = JSON.stringify([dataSourceId, selectedSourceDocId, selectedBlock, selectedBuilding, selectedUnitConfigId]);
+  const reviewKey = JSON.stringify([selectionKey, selectedTargetSlotGroups]);
+  const latestKeys = useRef({ selectionKey, reviewKey });
+  latestKeys.current = { selectionKey, reviewKey };
+
+  useEffect(() => {
+    stepHeadingRef.current?.focus();
+  }, [activeStep]);
+
+  useEffect(() => {
+    setPreviewState({ status: "idle", item: null, key: null, message: "" });
+    setUnresolvedAcknowledged(false);
+    setGenerateState({ status: "idle", filename: null, message: caseDocText.generateReady });
+    setInstanceCreateState({ status: "idle", filename: null, message: "" });
+    setActiveStep((current) => current === 3 ? 2 : current);
+  }, [selectedTargetSlotGroups]);
+
+  useEffect(() => {
+    resolveSequence.current += 1;
+    setResolveState({ status: "idle", item: null, message: caseDocText.ready });
+    setSelectedTargetSlotGroups([]);
+    setActiveStep(1);
+    setGenerateState({ status: "idle", filename: null, message: caseDocText.generateReady });
+    setInstanceCreateState({ status: "idle", filename: null, message: "解決値を確認後、WebUI実行用の案件CSを保存できます。" });
+  }, [dataSourceId, selectedSourceDocId, selectedBlock, selectedBuilding, selectedUnitConfigId]);
+
+  useEffect(() => {
+    sourceTargetCount.current = 1;
+    if (!selectedSourceDocId) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await apiFetch(buildApiUrl(`/api/v1/source-docs/${selectedSourceDocId}`), { signal: controller.signal });
+        const body = await readApiResponse<SourceDocDetailData>(response);
+        if (response.ok && body.data && !controller.signal.aborted) {
+          const targetCount = Math.min(20, body.data.items.filter((item) => item.enabled).reduce((count, item) =>
+            item.rows.reduce((rowCount, row) => row.device_entries.reduce((entryCount, entry) =>
+              Math.max(entryCount, entry.slot_no), rowCount), count), 1));
+          sourceTargetCount.current = targetCount;
+          // A late source response may add empty targets, but must not overwrite manual selections.
+          setSelectedTargetSlotGroups((current) => current.length && current.length < targetCount
+            ? [...current, ...Array.from({ length: targetCount - current.length }, () => [])]
+            : current);
+        }
+      } catch { /* The user can still add targets when the source detail is unavailable. */ }
+    })();
+    return () => controller.abort();
+  }, [selectedSourceDocId]);
 
   useEffect(() => {
     const abortController = new AbortController();
 
     async function fetchInitialOptions(): Promise<void> {
+      if (!dataSources.ready || !dataSources.source?.generation_ready) return;
       try {
-        const [sourceDocsResponse, prefecturesResponse] = await Promise.all([
+        const [sourceDocsResponse, blocksResponse] = await Promise.all([
           apiFetch(buildApiUrl("/api/v1/source-docs?status=published"), { signal: abortController.signal }),
-          apiFetch(buildApiUrl("/api/v1/case-docs/master/prefectures"), { signal: abortController.signal }),
+          apiFetch(sourceApi("/api/v1/case-docs/master/blocks"), { signal: abortController.signal }),
         ]);
         const sourceDocsBody = (await sourceDocsResponse.json()) as ApiResponse<SourceDocListData>;
-        const prefecturesBody = (await prefecturesResponse.json()) as ApiResponse<CaseDocMasterOptionsData>;
+        const blocksBody = (await blocksResponse.json()) as ApiResponse<CaseDocMasterOptionsData>;
+        if (abortController.signal.aborted) return;
 
         if (!sourceDocsResponse.ok || sourceDocsBody.result !== "success" || sourceDocsBody.data === null) {
           setSourceDocListState({ status: "unavailable", items: [], message: sourceDocsBody.message || caseDocText.sourceDocFailed });
@@ -8996,18 +9416,20 @@ function CaseDocsPage() {
           );
         }
 
-        if (!prefecturesResponse.ok || prefecturesBody.result !== "success" || prefecturesBody.data === null) {
-          setPrefectureState({ status: "unavailable", items: [], message: prefecturesBody.message || caseDocText.prefectureFailed });
+        if (!blocksResponse.ok || blocksBody.result !== "success" || blocksBody.data === null) {
+          setBlockState({ status: "unavailable", items: [], message: blocksBody.message || caseDocText.blockFailed });
         } else {
-          setPrefectureState({ status: "available", items: prefecturesBody.data.items, message: caseDocText.prefectureLoaded });
-          setSelectedPrefecture((currentValue) => currentValue || prefecturesBody.data?.items[0]?.value || "");
+          setBlockState({ status: "available", items: blocksBody.data.items, message: caseDocText.blockLoaded });
+          const blocks = blocksBody.data.items;
+          setSelectedBlock((currentValue) => blocks.some((item) => item.value === currentValue)
+            ? currentValue : blocks[0]?.value ?? "");
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
         }
         setSourceDocListState({ status: "unavailable", items: [], message: caseDocText.apiFailed });
-        setPrefectureState({ status: "unavailable", items: [], message: caseDocText.apiFailed });
+        setBlockState({ status: "unavailable", items: [], message: caseDocText.apiFailed });
       }
     }
 
@@ -9016,11 +9438,11 @@ function CaseDocsPage() {
     return () => {
       abortController.abort();
     };
-  }, [requestedSourceDocId]);
+  }, [requestedSourceDocId, dataSourceId, dataSources.ready]);
 
   useEffect(() => {
-    if (!selectedPrefecture) {
-      setBuildingState({ status: "available", items: [], message: caseDocText.selectPrefecture });
+    if (!dataSources.ready || !selectedBlock) {
+      setBuildingState({ status: "available", items: [], message: caseDocText.selectBlock });
       setSelectedBuilding("");
       return;
     }
@@ -9030,10 +9452,11 @@ function CaseDocsPage() {
     async function fetchBuildings(): Promise<void> {
       setBuildingState({ status: "loading", items: [], message: caseDocText.loadingBuildings });
       try {
-        const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/buildings"), window.location.origin);
-        endpoint.searchParams.set("prefecture", selectedPrefecture);
+        const endpoint = new URL(sourceApi("/api/v1/case-docs/master/buildings"), window.location.origin);
+        endpoint.searchParams.set("block", selectedBlock);
         const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<CaseDocMasterOptionsData>;
+        if (abortController.signal.aborted) return;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setBuildingState({ status: "unavailable", items: [], message: responseBody.message || caseDocText.buildingFailed });
@@ -9055,10 +9478,10 @@ function CaseDocsPage() {
     return () => {
       abortController.abort();
     };
-  }, [selectedPrefecture]);
+  }, [selectedBlock, dataSourceId, dataSources.ready]);
 
   useEffect(() => {
-    if (!selectedPrefecture || !selectedBuilding) {
+    if (!dataSources.ready || !selectedBlock || !selectedBuilding) {
       setUnitConfigState({ status: "idle", items: [], message: caseDocText.selectLocation });
       setSelectedUnitConfigId("");
       return;
@@ -9069,11 +9492,12 @@ function CaseDocsPage() {
     async function fetchUnitConfigs(): Promise<void> {
       setUnitConfigState({ status: "loading", items: [], message: caseDocText.loadingUnitConfigs });
       try {
-        const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/unit-config"), window.location.origin);
-        endpoint.searchParams.set("prefecture", selectedPrefecture);
+        const endpoint = new URL(sourceApi("/api/v1/case-docs/master/unit-config"), window.location.origin);
+        endpoint.searchParams.set("block", selectedBlock);
         endpoint.searchParams.set("building", selectedBuilding);
         const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
         const responseBody = (await response.json()) as ApiResponse<CaseDocUnitConfigListData>;
+        if (abortController.signal.aborted) return;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setUnitConfigState({ status: "unavailable", items: [], message: responseBody.message || caseDocText.unitConfigFailed });
@@ -9095,103 +9519,152 @@ function CaseDocsPage() {
     return () => {
       abortController.abort();
     };
-  }, [selectedPrefecture, selectedBuilding]);
+  }, [selectedBlock, selectedBuilding, dataSourceId, dataSources.ready]);
 
   const selectedSourceDoc = sourceDocListState.items.find((item) => String(item.source_doc_id) === selectedSourceDocId) ?? null;
-  const selectedUnitConfig = unitConfigState.items.find((item) => item.unit_config_id === selectedUnitConfigId) ?? null;
-  const targetAssignmentOptions = resolveState.item?.host_assignments.filter((item) => item.device_type === "SBC") ?? [];
-  const selectedTargetAssignments =
-    selectedTargetSlotKeys.length > 0
-      ? targetAssignmentOptions.filter((item) => selectedTargetSlotKeys.includes(item.slot_key))
-      : resolveState.item?.target_assignments ?? [];
-  const selectedTargetSummary =
-    selectedTargetAssignments.length > 0
-      ? selectedTargetAssignments.map((item) => item.host_name).join(" / ")
-      : caseDocText.none;
-  const selectedTargetDeviceSlots: CaseDocTargetDeviceSlotData[] = selectedTargetAssignments.map((item, index) => ({
+  const selectedUnitConfig = unitConfigState.items.find((item) => item.unit_config_id === selectedUnitConfigId
+    && item.block === selectedBlock && item.building === selectedBuilding) ?? null;
+  const targetAssignmentOptions = resolveState.item?.host_assignments ?? [];
+  const selectedTargetGroups = selectedTargetSlotGroups.map((group) => group.map(
+    (key) => targetAssignmentOptions.find((item) => item.slot_key === key),
+  ).filter((item): item is CaseDocHostAssignmentData => Boolean(item)));
+  const selectedTargetDeviceSlots: CaseDocTargetDeviceSlotData[] = selectedTargetGroups.map((group, index) => ({
     excel_no: index + 1,
-    slot_key: item.slot_key,
-    device_type: item.device_type,
-    system: item.system,
-    host_name: item.host_name,
+    slot_key: group.map((item) => item.column_name ?? item.slot_key).join(" / "),
+    device_type: [...new Set(group.map((item) => item.device_type))].join(" / "),
+    system: [...new Set(group.map((item) => item.system).filter(Boolean))].join(" / ") || null,
+    host_name: group.map((item) => item.host_name).join("\n"),
   }));
+  const targetsValid = selectedTargetSlotGroups.length > 0 && selectedTargetSlotGroups.every((group) => group.length > 0);
+  const targetSelectionBusy = generateState.status === "submitting" || instanceCreateState.status === "submitting"
+    || resolveState.status === "submitting" || previewState.status === "submitting";
   const resolveInputComplete = Boolean(
-    selectedSourceDocId && selectedPrefecture && selectedBuilding && selectedUnitConfig,
+    selectedSourceDocId && selectedBlock && selectedBuilding && selectedUnitConfig,
   );
-  const caseInstanceBlockedReason = !resolveState.item
-    ? "先に「解決値を確認」を実行してください。"
-    : selectedTargetSlotKeys.length === 0
-      ? "対象装置を1台以上選択してください。"
+  const candidateInputReady = dataSources.ready && Boolean(dataSources.source?.generation_ready) && resolveInputComplete && sourceDocListState.status === "available"
+    && blockState.status === "available" && buildingState.status === "available" && unitConfigState.status === "available";
+  const previewIsCurrent = previewState.status === "success" && previewState.key === reviewKey && previewState.item !== null;
+  const previewReady = previewIsCurrent && (previewState.item!.unresolved_count === 0 || unresolvedAcknowledged);
+  const caseInstanceBlockedReason = !targetsValid
+      ? "各targetに対象装置を1つ以上選択してください。"
+      : !previewIsCurrent
+        ? "対象装置を選択し、置換結果を確認してください。"
+      : !previewReady
+        ? "未置換の項目を確認してください。"
       : !caseName.trim()
         ? "案件名を入力してください。"
         : null;
   const canCreateCaseInstance = caseInstanceBlockedReason === null
-    && instanceCreateState.status !== "submitting";
+    && !targetSelectionBusy;
 
-  function toggleTargetSlotKey(slotKey: string): void {
-    setSelectedTargetSlotKeys((current) =>
-      current.includes(slotKey)
-        ? current.filter((currentSlotKey) => currentSlotKey !== slotKey)
-        : [...current, slotKey],
-    );
+  function changeSelectedBlock(value: string): void {
+    setSelectedBlock(value);
+    setBuildingState({ status: "loading", items: [], message: caseDocText.loadingBuildings });
+    changeSelectedBuilding("");
+  }
+
+  function changeSelectedBuilding(value: string): void {
+    setSelectedBuilding(value);
+    setSelectedUnitConfigId("");
+    setUnitConfigState({ status: "idle", items: [], message: caseDocText.selectLocation });
+  }
+
+  function updateTargetGroup(index: number, keys: string[]): void {
+    setSelectedTargetSlotGroups((current) => current.map((group, groupIndex) => groupIndex === index ? keys : group));
   }
 
   async function handleResolveContext(): Promise<void> {
-    if (!selectedSourceDocId || !selectedPrefecture || !selectedBuilding || !selectedUnitConfig) {
+    if (!dataSources.ready || !dataSources.source?.generation_ready) return;
+    if (targetSelectionBusy) return;
+    if (!candidateInputReady || !selectedUnitConfig) {
       setResolveState({ status: "error", item: null, message: caseDocText.selectRequired });
       return;
     }
 
-    setResolveState({ status: "submitting", item: null, message: caseDocText.resolving });
+    const requestSequence = ++resolveSequence.current;
+    setResolveState((current) => ({ ...current, status: "submitting", message: caseDocText.resolving }));
 
     try {
       const response = await apiFetch(buildApiUrl("/api/v1/case-docs/resolve-context"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          source_doc_id: Number(selectedSourceDocId),
-          prefecture: selectedPrefecture,
+          data_source_id: dataSourceId, source_doc_id: Number(selectedSourceDocId),
+          prefecture: selectedUnitConfig.prefecture,
           building: selectedBuilding,
           fs_cluster_name: selectedUnitConfig.fs_cluster_name,
           block: selectedUnitConfig.block,
           unit_config_id: selectedUnitConfig.unit_config_id,
-          target_slot_keys: selectedTargetSlotKeys.length > 0 ? selectedTargetSlotKeys : undefined,
         }),
       });
       const responseBody = (await response.json()) as ApiResponse<CaseDocResolveContextData>;
+      if (requestSequence !== resolveSequence.current || latestKeys.current.selectionKey !== selectionKey) return;
 
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
         setResolveState({ status: "error", item: null, message: responseBody.message || `${caseDocText.resolveFailed} HTTP ${response.status}` });
         return;
       }
 
-      setResolveState({ status: "success", item: responseBody.data, message: caseDocText.resolved });
-      setSelectedTargetSlotKeys(responseBody.data.target_assignments.map((item) => item.slot_key));
+      setResolveState({ status: "success", item: responseBody.data, message: "対象装置の候補を取得しました。" });
+      if (!selectedTargetSlotGroups.length) {
+        setSelectedTargetSlotGroups(Array.from({ length: sourceTargetCount.current }, () => []));
+      }
       setGenerateState({ status: "idle", filename: null, message: caseDocText.generateReady });
+      setActiveStep(2);
     } catch {
+      if (requestSequence !== resolveSequence.current || latestKeys.current.selectionKey !== selectionKey) return;
       setResolveState({ status: "error", item: null, message: caseDocText.apiFailed });
     }
   }
 
+  async function handlePreview(): Promise<void> {
+    if (targetSelectionBusy || !candidateInputReady || !selectedUnitConfig || !targetsValid) return;
+    setPreviewState({ status: "submitting", item: null, key: reviewKey, message: "置換結果を確認しています。" });
+    setUnresolvedAcknowledged(false);
+    try {
+      const response = await apiFetch(buildApiUrl("/api/v1/case-docs/preview"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data_source_id: dataSourceId, source_doc_id: Number(selectedSourceDocId), prefecture: selectedUnitConfig.prefecture, building: selectedBuilding,
+          fs_cluster_name: selectedUnitConfig.fs_cluster_name, block: selectedUnitConfig.block,
+          unit_config_id: selectedUnitConfig.unit_config_id, target_slot_groups: selectedTargetSlotGroups,
+        }),
+      });
+      const body = await readApiResponse<CaseDocGenerationPreviewData>(response);
+      if (latestKeys.current.reviewKey !== reviewKey) return;
+      if (!response.ok || body.result !== "success" || !body.data) {
+        setPreviewState({ status: "error", item: null, key: reviewKey, message: body.message || "置換結果を確認できませんでした。" });
+        return;
+      }
+      setPreviewState({ status: "success", item: body.data, key: reviewKey, message: "置換結果を確認しました。" });
+      setShowOnlyUnresolved(true);
+      setActiveStep(3);
+    } catch {
+      if (latestKeys.current.reviewKey !== reviewKey) return;
+      setPreviewState({ status: "error", item: null, key: reviewKey, message: caseDocText.apiFailed });
+    }
+  }
 
   async function handleGenerateCaseDoc(): Promise<void> {
-    if (!selectedSourceDocId || !selectedPrefecture || !selectedBuilding || !selectedUnitConfig) {
+    if (targetSelectionBusy) return;
+    if (!selectedSourceDocId || !selectedBlock || !selectedBuilding || !selectedUnitConfig) {
       setGenerateState({ status: "error", filename: null, message: caseDocText.selectRequired });
       return;
     }
 
-    if (!resolveState.item) {
-      setGenerateState({ status: "error", filename: null, message: caseDocText.generateFirst });
+    if (!previewReady) {
+      setGenerateState({ status: "error", filename: null, message: "置換結果と未置換の項目を確認してください。" });
       return;
     }
 
-    if (selectedTargetSlotKeys.length === 0) {
+    if (!targetsValid) {
       setGenerateState({ status: "error", filename: null, message: caseDocText.selectTargetRequired });
       return;
     }
 
     const suggestedFilename = `case-doc-${selectedSourceDocId}-${selectedUnitConfig.unit_config_id}.xlsm`;
     let saveSelection: CaseDocSaveSelection | null;
+    setGenerateState({ status: "submitting", filename: null, message: "保存先を選択しています。" });
     try {
       saveSelection = await selectCaseDocSaveDestination(suggestedFilename);
     } catch {
@@ -9211,13 +9684,13 @@ function CaseDocsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          source_doc_id: Number(selectedSourceDocId),
-          prefecture: selectedPrefecture,
+          data_source_id: dataSourceId, source_doc_id: Number(selectedSourceDocId),
+          prefecture: selectedUnitConfig.prefecture,
           building: selectedBuilding,
           fs_cluster_name: selectedUnitConfig.fs_cluster_name,
           block: selectedUnitConfig.block,
           unit_config_id: selectedUnitConfig.unit_config_id,
-          target_slot_keys: selectedTargetSlotKeys,
+          target_slot_groups: selectedTargetSlotGroups,
         }),
       });
 
@@ -9249,11 +9722,12 @@ function CaseDocsPage() {
   }
 
   async function handleCreateCaseDocInstance(): Promise<void> {
-    if (!selectedSourceDocId || !selectedPrefecture || !selectedBuilding || !selectedUnitConfig || !resolveState.item) {
-      setInstanceCreateState({ status: "error", filename: null, message: caseDocText.generateFirst });
+    if (targetSelectionBusy) return;
+    if (!selectedUnitConfig || !previewReady) {
+      setInstanceCreateState({ status: "error", filename: null, message: "置換結果と未置換の項目を確認してください。" });
       return;
     }
-    if (selectedTargetSlotKeys.length === 0) {
+    if (!targetsValid) {
       setInstanceCreateState({ status: "error", filename: null, message: caseDocText.selectTargetRequired });
       return;
     }
@@ -9270,13 +9744,13 @@ function CaseDocsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           case_name: normalizedCaseName,
-          source_doc_id: Number(selectedSourceDocId),
-          prefecture: selectedPrefecture,
+          data_source_id: dataSourceId, source_doc_id: Number(selectedSourceDocId),
+          prefecture: selectedUnitConfig.prefecture,
           building: selectedBuilding,
           fs_cluster_name: selectedUnitConfig.fs_cluster_name,
           block: selectedUnitConfig.block,
           unit_config_id: selectedUnitConfig.unit_config_id,
-          target_slot_keys: selectedTargetSlotKeys,
+          target_slot_groups: selectedTargetSlotGroups,
           created_by: currentUser?.displayName ?? "WebUIユーザー",
         }),
       });
@@ -9302,7 +9776,34 @@ function CaseDocsPage() {
 
   return (
     <Page title={caseDocText.title} description={caseDocText.description}>
+      <DataSourceSelector catalog={{ ...dataSources, setSourceId: (value: string) => {
+        dataSources.setSourceId(value);
+        setBlockState({ status: "loading", items: [], message: caseDocText.loadingBlocks });
+        changeSelectedBlock("");
+      } }} disabled={targetSelectionBusy} />
+      {dataSources.source && !dataSources.source.generation_ready ? <FormFeedback message={dataSources.source.generation_message || "選択した参照元DBにユニット構成.xlsxが配置されていません。"} tone="error" /> : null}
+      <nav className="case-doc-steps" aria-label="案件化の手順">
+        <ol>
+          {(["原本・対象工事", "対象装置", "確認・保存"] as const).map((label, index) => {
+            const step = (index + 1) as 1 | 2 | 3;
+            const available = step === 1 || (step === 2 ? Boolean(resolveState.item) : previewIsCurrent);
+            const complete = step === 1 ? Boolean(resolveState.item) : previewIsCurrent;
+            return (
+              <li key={label}>
+                <button type="button" aria-current={activeStep === step ? "step" : undefined}
+                  disabled={targetSelectionBusy || !available} onClick={() => setActiveStep(step)}>
+                  <span className="case-doc-step-number">{step}</span>
+                  <strong>{label}</strong>
+                  <small>{activeStep === step ? step === 3 ? "確認中" : "入力中" : complete ? "確認済み" : "未確認"}</small>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
+      {activeStep === 1 ? (
       <section className="case-doc-panel">
+        <h2 ref={stepHeadingRef} tabIndex={-1}>原本・対象工事</h2>
         <form
           className="case-doc-form"
           onSubmit={(event) => {
@@ -9312,7 +9813,7 @@ function CaseDocsPage() {
         >
           <label>
             <RequiredFieldLabel>{caseDocText.sourceDoc}</RequiredFieldLabel>
-            <select required value={selectedSourceDocId} onChange={(event) => setSelectedSourceDocId(event.target.value)}>
+            <select required disabled={targetSelectionBusy || sourceDocListState.status !== "available"} value={selectedSourceDocId} onChange={(event) => setSelectedSourceDocId(event.target.value)}>
               {sourceDocListState.items.map((item) => (
                 <option key={item.source_doc_id} value={item.source_doc_id}>
                   {item.source_doc_key} / {item.source_doc_name}
@@ -9321,16 +9822,16 @@ function CaseDocsPage() {
             </select>
           </label>
           <label>
-            <RequiredFieldLabel>{caseDocText.prefecture}</RequiredFieldLabel>
-            <select required value={selectedPrefecture} onChange={(event) => setSelectedPrefecture(event.target.value)}>
-              {prefectureState.items.map((item) => (
+            <RequiredFieldLabel>{caseDocText.block}</RequiredFieldLabel>
+            <select required disabled={targetSelectionBusy || blockState.status !== "available" || blockState.items.length === 0} value={selectedBlock} onChange={(event) => changeSelectedBlock(event.target.value)}>
+              {blockState.items.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
             </select>
           </label>
           <label>
             <RequiredFieldLabel>{caseDocText.building}</RequiredFieldLabel>
-            <select required value={selectedBuilding} onChange={(event) => setSelectedBuilding(event.target.value)}>
+            <select required disabled={targetSelectionBusy || buildingState.status !== "available" || buildingState.items.length === 0} value={selectedBuilding} onChange={(event) => changeSelectedBuilding(event.target.value)}>
               {buildingState.items.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
@@ -9338,136 +9839,146 @@ function CaseDocsPage() {
           </label>
           <label>
             <RequiredFieldLabel>{caseDocText.unitConfig}</RequiredFieldLabel>
-            <select required value={selectedUnitConfigId} onChange={(event) => setSelectedUnitConfigId(event.target.value)}>
+            <select required disabled={targetSelectionBusy || unitConfigState.status !== "available" || unitConfigState.items.length === 0} value={selectedUnitConfigId} onChange={(event) => setSelectedUnitConfigId(event.target.value)}>
               {unitConfigState.items.map((item) => (
                 <option key={item.unit_config_id} value={item.unit_config_id}>
-                  {item.fs_cluster_name} / {item.block}
+                  {item.fs_cluster_name} / {item.block} / {item.prefecture}
                 </option>
               ))}
             </select>
           </label>
+          <div className="case-doc-stage-actions">
+          <FormFeedback compact message={resolveState.status === "error" || resolveState.status === "submitting" ? resolveState.message
+            : [sourceDocListState, blockState, buildingState, unitConfigState].find((state) => state.status === "unavailable")?.message
+              ?? (candidateInputReady ? "" : "原本、対象工事、ユニット構成を選択してください。")}
+            tone={resolveState.status === "error" || [sourceDocListState, blockState, buildingState, unitConfigState].some((state) => state.status === "unavailable") ? "error" : "neutral"} />
           <button
             className="primary"
             type="submit"
-            disabled={resolveState.status === "submitting" || !resolveInputComplete}
-            title={resolveInputComplete ? "選択した条件で案件CS生成用の値を確認します。" : "原本、設置場所、ユニット構成を選択してください。"}
+            disabled={targetSelectionBusy || !candidateInputReady}
           >
-            {caseDocText.resolve}
+            {resolveState.status === "submitting" ? "候補を取得中" : "対象装置を選ぶ"}<span aria-hidden="true">→</span>
           </button>
+          </div>
         </form>
       </section>
+      ) : null}
 
-      <section className={`list-status list-status-${resolveState.status === "error" ? "unavailable" : resolveState.status === "success" ? "available" : "loading"}`} aria-live="polite">
-        <div>
-          <span>{caseDocText.sourceDoc}</span>
-          <strong>{selectedSourceDoc ? selectedSourceDoc.source_doc_key : caseDocText.none}</strong>
-        </div>
-        <div>
-          <span>{caseDocText.location}</span>
-          <strong>{selectedPrefecture && selectedBuilding ? `${selectedPrefecture} / ${selectedBuilding}` : caseDocText.none}</strong>
-        </div>
-        <div>
-          <span>{caseDocText.unit}</span>
-          <strong>{selectedUnitConfig ? `${selectedUnitConfig.fs_cluster_name} / ${selectedUnitConfig.block}` : caseDocText.none}</strong>
-        </div>
-        <div>
-          <span>{caseDocText.targetDevice}</span>
-          <strong>{selectedTargetSummary}</strong>
-        </div>
-        <p>{resolveState.message}</p>
-      </section>
+      {activeStep > 1 ? (
+        <dl className="case-doc-selection-summary">
+          <div><dt>原本</dt><dd>{selectedSourceDoc?.source_doc_name}<small>{selectedSourceDoc?.source_doc_key}</small></dd></div>
+          <div><dt>参照元DB</dt><dd>{dataSources.source?.name}</dd></div>
+          <div><dt>対象工事</dt><dd>{selectedBlock} / {selectedUnitConfig?.prefecture} / {selectedBuilding}</dd></div>
+          <div><dt>ユニット構成</dt><dd>{selectedUnitConfig?.fs_cluster_name} / {selectedUnitConfig?.block}</dd></div>
+        </dl>
+      ) : null}
 
-      {resolveState.item ? (
-        <section className={`list-status list-status-${generateState.status === "error" ? "unavailable" : generateState.status === "success" ? "available" : "loading"} case-doc-generate-panel`} aria-live="polite">
+      {activeStep === 2 && resolveState.item ? (
+        <section className="section-band case-doc-target-stage">
+          <div className="case-doc-stage-heading">
+            <h2 ref={stepHeadingRef} tabIndex={-1}>対象装置</h2>
+            <span>{selectedTargetSlotGroups.filter((group) => group.length > 0).length} / {selectedTargetSlotGroups.length} target 選択済み</span>
+          </div>
           <div className="case-doc-target-select">
-            <span>{caseDocText.targetDevice}</span>
-            <div className="case-doc-target-options">
-              {targetAssignmentOptions.map((item) => (
-                <label key={item.slot_key} className="checkbox-field">
-                  <input
-                    type="checkbox"
-                    checked={selectedTargetSlotKeys.includes(item.slot_key)}
-                    onChange={() => toggleTargetSlotKey(item.slot_key)}
-                  />
-                  <span>{item.slot_key} / {item.host_name}</span>
-                </label>
+            <div className="case-doc-target-groups">
+              {selectedTargetSlotGroups.map((group, index) => (
+                <div key={index} className="case-doc-target-group">
+                  <strong>target {index + 1}</strong>
+                  <CaseDocTargetPicker targetNo={index + 1} options={targetAssignmentOptions} selectedKeys={group}
+                    disabled={targetSelectionBusy} onChange={(keys) => updateTargetGroup(index, keys)} />
+                  <button type="button" className="case-doc-target-remove" title={`target ${index + 1}を削除`}
+                    aria-label={`target ${index + 1}を削除`} disabled={targetSelectionBusy || selectedTargetSlotGroups.length === 1}
+                    onClick={() => setSelectedTargetSlotGroups((current) => current.filter((_, groupIndex) => groupIndex !== index))}>×</button>
+                  {!group.length ? <FormFeedback message="対象装置を1つ以上選択してください。" tone="error" compact /> : null}
+                </div>
               ))}
             </div>
-          </div>
-          <div>
-            <span>{caseDocText.generateStatus}</span>
-            <strong>{generateState.filename ?? (generateState.status === "submitting" ? caseDocText.generating : caseDocText.generateReady)}</strong>
-          </div>
-          <p>{generateState.message}</p>
-          <button className="secondary" type="button" onClick={() => void handleGenerateCaseDoc()} disabled={generateState.status === "submitting"}>
-            <span aria-hidden="true">⇩</span>
-            {caseDocText.generate}
-          </button>
-          <div className="case-doc-instance-create">
-            <label>
-              <RequiredFieldLabel>案件名</RequiredFieldLabel>
-              <input
-                value={caseName}
-                onChange={(event) => setCaseName(event.target.value)}
-                maxLength={200}
-                placeholder="例: 東京第1ビル SBC更改"
-                required
-                aria-invalid={instanceCreateState.status === "error" && !caseName.trim()}
-              />
-            </label>
-            <button
-              className="primary"
-              type="button"
-              onClick={() => void handleCreateCaseDocInstance()}
-              disabled={!canCreateCaseInstance}
-              title={caseInstanceBlockedReason ?? "案件CSを保存し、そのまま実行前準備へ進みます。"}
-            >
-              <span aria-hidden="true">→</span>
-              {instanceCreateState.status === "submitting" ? "保存中" : "案件CSを保存して実行へ"}
+            <button type="button" className="secondary case-doc-add-target"
+              disabled={targetSelectionBusy || selectedTargetSlotGroups.length >= 20}
+              onClick={() => setSelectedTargetSlotGroups((current) => [...current, []])}>
+              <span aria-hidden="true">+</span> targetを追加
             </button>
-            <FormFeedback
-              message={
-                instanceCreateState.status === "error"
-                  ? instanceCreateState.message
-                  : caseInstanceBlockedReason ?? "保存後、案件CS実行管理の実行前準備へ移動します。"
-              }
-              tone={
-                instanceCreateState.status === "error"
-                  ? "error"
-                  : instanceCreateState.status === "submitting"
-                    ? "pending"
-                    : instanceCreateState.status === "success"
-                      ? "success"
-                      : caseInstanceBlockedReason
-                        ? "warning"
-                        : "neutral"
-              }
-              compact
-            />
+          </div>
+          <FormFeedback compact message={previewState.message || (!targetsValid ? "各targetに対象装置を1つ以上選択してください。" : "")}
+            tone={previewState.status === "error" ? "error" : previewState.status === "submitting" ? "pending" : "neutral"} />
+          <div className="case-doc-stage-actions">
+            <button className="secondary" type="button" disabled={targetSelectionBusy} onClick={() => setActiveStep(1)}><span aria-hidden="true">←</span>原本・対象工事へ</button>
+            <button className="primary" type="button" disabled={targetSelectionBusy || !targetsValid} onClick={() => void handlePreview()}>
+              {previewState.status === "submitting" ? "置換結果を確認中" : "置換結果を確認"}<span aria-hidden="true">→</span>
+            </button>
           </div>
         </section>
       ) : null}
 
-      {resolveState.item ? (
-        <div className="case-doc-result-grid">
-          <section className="section-band">
-            <h2>{caseDocText.targetDeviceSlots}</h2>
+      {activeStep === 3 && previewIsCurrent && previewState.item ? (
+        <>
+          <section className="section-band case-doc-review-stage">
+            <h2 ref={stepHeadingRef} tabIndex={-1}>確認・保存</h2>
+            <label className="case-doc-case-name">
+              <RequiredFieldLabel>案件名</RequiredFieldLabel>
+              <input value={caseName} onChange={(event) => setCaseName(event.target.value)} maxLength={200}
+                placeholder="例: 東京第1ビル SBC更改" disabled={targetSelectionBusy} required />
+            </label>
+            <h3>targetと対象装置</h3>
             <DataTable
-              columns={[caseDocText.excelNo, caseDocText.slot, caseDocText.deviceType, caseDocText.system, caseDocText.hostName]}
+              columns={["target", "装置名", "装置種別", "ホスト名"]}
               rows={selectedTargetDeviceSlots.map((item) => [
-                String(item.excel_no),
-                item.slot_key,
-                item.device_type,
-                item.system ?? "-",
-                item.host_name,
+                `target ${item.excel_no}`, item.slot_key, item.device_type,
+                <span className="case-doc-host-names">{item.host_name}</span>,
               ])}
             />
+            <div className={`case-doc-preview-status${previewState.item.unresolved_count > 0 ? " has-unresolved" : ""}`} role="status">
+              <strong>{previewState.item.unresolved_count > 0 ? `未置換 ${previewState.item.unresolved_count}件` : "未置換の項目はありません"}</strong>
+              {previewState.item.unresolved_count > 0 ? (
+                <label><input type="checkbox" checked={unresolvedAcknowledged} disabled={targetSelectionBusy}
+                  onChange={(event) => setUnresolvedAcknowledged(event.target.checked)} />未置換の項目を残したまま出力・保存することを確認しました</label>
+              ) : <span>置換確認対象 {previewState.item.cells.length}セル</span>}
+            </div>
+            <div className="case-doc-stage-heading">
+              <h3>置換結果</h3>
+              {previewState.item.unresolved_count > 0 ? <label className="case-doc-preview-filter"><input type="checkbox" checked={showOnlyUnresolved}
+                onChange={(event) => setShowOnlyUnresolved(event.target.checked)} />未置換のみ</label> : null}
+            </div>
+            {previewState.item.cells.length > 0 ? (
+              <div className="case-doc-preview-table">
+                <DataTable columns={["対象", "セル", "原本の記載", "出力結果", "状態"]}
+                  rows={previewState.item.cells.filter((cell) => !showOnlyUnresolved || previewState.item!.unresolved_count === 0 || cell.unresolved_placeholders.length > 0).map((cell) => [
+                    cell.target_no ? `target ${cell.target_no}` : "共通欄",
+                    <span title={cell.sheet_name}>{cell.cell}</span>,
+                    <code>{cell.template_text}</code>,
+                    <span className={cell.unresolved_placeholders.length ? "case-doc-unresolved-text" : undefined}>{cell.resolved_text}</span>,
+                    cell.unresolved_placeholders.length ? "未置換" : "置換済み",
+                  ])} />
+              </div>
+            ) : <p>原本の本文にプレースホルダはありません。</p>}
           </section>
+          <section className="section-band case-doc-save-stage">
+            <div className="case-doc-output-actions">
+              <button className="secondary" type="button" onClick={() => void handleGenerateCaseDoc()} disabled={targetSelectionBusy || !previewReady || !targetsValid}>
+                <span aria-hidden="true">⇩</span>{generateState.status === "submitting" ? "生成中" : "案件CS Excelを出力"}
+              </button>
+              <button className="primary" type="button" onClick={() => void handleCreateCaseDocInstance()}
+                disabled={!canCreateCaseInstance} title={caseInstanceBlockedReason ?? "案件CSを保存し、実行前準備へ進みます。"}>
+                <span aria-hidden="true">→</span>{instanceCreateState.status === "submitting" ? "保存中" : "案件CSを保存して実行前準備へ"}
+              </button>
+            </div>
+            <FormFeedback compact message={instanceCreateState.status === "error" || instanceCreateState.status === "submitting" ? instanceCreateState.message : caseInstanceBlockedReason ?? ""}
+              tone={instanceCreateState.status === "error" ? "error" : instanceCreateState.status === "submitting" ? "pending" : "warning"} />
+            {generateState.status !== "idle" || generateState.message === caseDocText.saveDestinationCancelled ? (
+              <FormFeedback compact message={generateState.message} tone={generateState.status === "error" ? "error" : generateState.status === "success" ? "success" : "pending"} />
+            ) : null}
+            <div className="case-doc-stage-actions">
+              <button className="secondary" type="button" disabled={targetSelectionBusy} onClick={() => setActiveStep(2)}><span aria-hidden="true">←</span>対象装置を修正</button>
+            </div>
+          </section>
+          <details className="case-doc-reference-details">
+            <summary>参照データの詳細</summary>
+            <div className="case-doc-reference-content">
           <section className="section-band">
             <h2>{caseDocText.hostAssignments}</h2>
             <DataTable
               columns={[caseDocText.slot, caseDocText.deviceType, caseDocText.system, caseDocText.hostName]}
-              rows={resolveState.item.host_assignments.map((item) => [
+              rows={previewState.item.context.host_assignments.map((item) => [
                 item.slot_key,
                 item.device_type,
                 item.system ?? "-",
@@ -9479,14 +9990,14 @@ function CaseDocsPage() {
             <h2>{caseDocText.commonValues}</h2>
             <DataTable
               columns={[caseDocText.key, caseDocText.value, caseDocText.source]}
-              rows={resolveState.item.common_values.map((item) => [item.key, item.value, item.source])}
+              rows={previewState.item.context.common_values.map((item) => [item.key, item.value, item.source])}
             />
           </section>
           <section className="section-band case-doc-wide-section">
             <h2>{caseDocText.resolvedValues}</h2>
             <DataTable
               columns={[caseDocText.valueName, caseDocText.value, caseDocText.sourceTable, caseDocText.sourceColumn, caseDocText.hostName]}
-              rows={resolveState.item.resolved_placeholders.map((item) => [
+              rows={previewState.item.context.resolved_placeholders.map((item) => [
                 item.placeholder,
                 item.value,
                 item.source_table,
@@ -9495,13 +10006,10 @@ function CaseDocsPage() {
               ])}
             />
           </section>
-        </div>
-      ) : (
-        <section className="empty-state">
-          <h2>{caseDocText.emptyTitle}</h2>
-          <p>{sourceDocListState.message} / {prefectureState.message} / {buildingState.message} / {unitConfigState.message}</p>
-        </section>
-      )}
+            </div>
+          </details>
+        </>
+      ) : null}
     </Page>
   );
 }
@@ -9646,15 +10154,29 @@ function CaseDocExecutionTimeCell({
   item,
   disabled,
   busy,
+  readOnly = false,
   onUpdate,
 }: {
   item: CaseDocExecutionItemData | undefined;
   disabled: boolean;
   busy: boolean;
+  readOnly?: boolean;
   onUpdate: (item: CaseDocExecutionItemData, status: CaseDocExecutionStatus) => void;
 }) {
   if (!item) {
     return <td className="excel-center case-execution-time-cell">-</td>;
+  }
+
+  if (readOnly) {
+    return (
+      <td className={`excel-center case-execution-time-cell case-execution-${item.status}`}>
+        <span className="case-execution-time-value" title={item.performed_at ? formatCaseDocExecutionUpdatedAt(item.performed_at) : undefined}>
+          {item.status === "checked" ? formatCaseDocExecutionTime(item.performed_at) : item.status === "skipped" ? "SKIP" : "未実施"}
+        </span>
+        {item.performed_by ? <small className="case-execution-readonly-note">{item.performed_by}</small> : null}
+        {item.status === "skipped" && item.skip_reason ? <small className="case-execution-readonly-note">{item.skip_reason}</small> : null}
+      </td>
+    );
   }
 
   if (item.status === "pending") {
@@ -9749,8 +10271,347 @@ function CaseDocExecutionBulkButtons({
   );
 }
 
+function CaseDocProcedureDialog({ detail, currentGroup, onClose }: {
+  detail: CaseDocInstanceDetailData;
+  currentGroup: CaseDocExecutionRowGroup | null;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const currentRowRef = useRef<HTMLTableRowElement>(null);
+  const groups = buildCaseDocExecutionRowGroups(detail.execution_items);
+  const currentRowOrders = new Set(currentGroup?.rowOrders ?? []);
+  const itemsByRow = new Map<number, Map<number, CaseDocExecutionItemData>>();
+  for (const item of detail.execution_items) {
+    const targets = itemsByRow.get(item.row_order) ?? new Map<number, CaseDocExecutionItemData>();
+    targets.set(item.target_no, item);
+    itemsByRow.set(item.row_order, targets);
+  }
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialog.showModal();
+    closeButtonRef.current?.focus({ preventScroll: true });
+    return () => {
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="modal-dialog case-procedure-dialog"
+      aria-labelledby="case-procedure-title"
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return;
+        const controls = event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]');
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first?.focus();
+        }
+      }}
+    >
+      <header className="case-procedure-heading">
+        <div>
+          <h2 id="case-procedure-title">全体手順</h2>
+          <p>{detail.case_name} / {detail.case_document_key}</p>
+          <p>{detail.source_doc_name}</p>
+        </div>
+        <button ref={closeButtonRef} className="icon-button" type="button" aria-label="全体手順を閉じる" title="全体手順を閉じる" onClick={onClose}>×</button>
+      </header>
+      <div className="case-procedure-summary">
+        <span>閲覧専用</span>
+        <span>全 {groups.length} 小項番</span>
+        <strong>現在の小項番 {currentGroup?.label ?? "-"}</strong>
+        <button className="secondary" type="button" disabled={!currentGroup} onClick={() => currentRowRef.current?.scrollIntoView({ block: "center", inline: "start" })}>
+          <span aria-hidden="true">↓</span>現在の手順へ
+        </button>
+      </div>
+      <div className="case-procedure-scroll" role="region" aria-label="全体手順の表" tabIndex={0}>
+        {groups.length === 0 ? <p className="case-procedure-empty">手順がありません。</p> : (
+          <table className="case-procedure-table case-execution-sheet" style={{ width: 804 + detail.targets.length * 624 }}>
+            <colgroup>
+              {[104, 140, 300, 260, ...detail.targets.flatMap(() => [140, 100, 44, 340])].map((width, index) => <col key={index} style={{ width }} />)}
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">小項番</th><th scope="col">技術資料名</th><th scope="col">作業内容</th><th scope="col">確認事項 or 項目</th>
+                {detail.targets.map((target) => (
+                  <Fragment key={target.excel_no}>
+                    <th scope="col"><span>target {target.excel_no}</span><span className="case-doc-host-names">{target.host_name}</span><span>時刻</span></th>
+                    <th scope="col">window</th><th scope="col">P</th><th scope="col">コマンド</th>
+                  </Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {groups.flatMap((group) => group.rowOrders.map((rowOrder, index) => {
+                const rowItems = itemsByRow.get(rowOrder);
+                const base = rowItems?.values().next().value;
+                if (!base) return null;
+                const isCurrent = currentRowOrders.has(rowOrder);
+                return (
+                  <tr key={rowOrder} className={isCurrent ? "case-procedure-current-row" : undefined} ref={rowOrder === currentGroup?.rowOrders[0] ? currentRowRef : undefined} aria-current={isCurrent ? "step" : undefined}>
+                    <th scope="row"><span>{group.label}</span>{isCurrent && index === 0 ? <small>現在の手順</small> : null}</th>
+                    <td>{base.tech_doc_text}</td>
+                    <td><IndentedExcelText text={base.work_text} indentLevel={normalizeExcelIndentLevel(base.indent_level ?? 0)} /><ModuleRowImageList images={base.images ?? []} placement="work" /></td>
+                    <td>{base.check_text}<ModuleRowImageList images={base.images ?? []} placement="expected" /></td>
+                    {detail.targets.map((target) => {
+                      const item = rowItems?.get(target.excel_no);
+                      return <Fragment key={target.excel_no}>
+                        <CaseDocExecutionTimeCell item={item} readOnly disabled busy={false} onUpdate={() => undefined} />
+                        <td>{item?.window_text}</td><td>{item?.p_text}</td><td className="excel-command-cell">{item?.command_text}</td>
+                      </Fragment>;
+                    })}
+                  </tr>
+                );
+              }))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </dialog>
+  );
+}
+
+function CaseDocCompletionDialog({ detail, busy, error, onCancel, onConfirm }: {
+  detail: CaseDocInstanceDetailData;
+  busy: boolean;
+  error: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const comments = detail.execution_comments
+    .filter((comment) => comment.comment_text.trim())
+    .sort((left, right) => left.group_start_row_order - right.group_start_row_order);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialog.showModal();
+    cancelButtonRef.current?.focus({ preventScroll: true });
+    return () => {
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="modal-dialog confirmation-dialog case-execution-completion-dialog"
+      aria-labelledby="case-execution-completion-title"
+      aria-describedby="case-execution-completion-description"
+      aria-busy={busy}
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return;
+        const controls = event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]');
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!busy) onCancel();
+      }}
+    >
+      <div className="confirmation-dialog-heading">
+        <span className="modal-icon" aria-hidden="true">✓</span>
+        <div>
+          <span className="confirmation-dialog-kicker">最終確認</span>
+          <h2 id="case-execution-completion-title">案件CSの完了前確認</h2>
+        </div>
+        <button className="icon-button" type="button" aria-label="完了前確認を閉じる" title="完了前確認を閉じる" disabled={busy} onClick={onCancel}>×</button>
+      </div>
+      <div className="case-execution-completion-body" tabIndex={0} role="region" aria-label="完了前確認の内容">
+        <div className="confirmation-dialog-target">
+          <span>案件名</span>
+          <strong>{detail.case_name}</strong>
+          <span>{detail.case_document_key}</span>
+        </div>
+        <dl className="case-execution-completion-counts">
+          <div><dt>実施対象</dt><dd>{detail.total_count}<small>件</small></dd></div>
+          <div><dt>チェック済み</dt><dd>{detail.checked_count}<small>件</small></dd></div>
+          <div><dt>スキップ</dt><dd>{detail.skipped_count}<small>件</small></dd></div>
+        </dl>
+        <section aria-labelledby="case-execution-completion-comments-title">
+          <h3 id="case-execution-completion-comments-title">小項番コメント <small>{comments.length}件</small></h3>
+          {comments.length ? (
+            <ol className="case-execution-completion-comments">
+              {comments.map((comment) => (
+                <li key={comment.group_start_row_order}>
+                  <h4>小項番 {comment.item_label}</h4>
+                  <span>{comment.updated_by || "-"} / {formatCaseDocExecutionUpdatedAt(comment.updated_at)}</span>
+                  <p>{comment.comment_text}</p>
+                </li>
+              ))}
+            </ol>
+          ) : <p>コメントの記録はありません。</p>}
+        </section>
+        <p id="case-execution-completion-description" className="confirmation-dialog-description">完了後は実施内容とコメントを変更できません。</p>
+      </div>
+      <div className="case-execution-completion-footer">
+        <FormFeedback message={error} tone="error" compact />
+        <div className="modal-actions">
+          <button ref={cancelButtonRef} className="secondary" type="button" disabled={busy} onClick={onCancel} autoFocus>戻る</button>
+          <button className="primary" type="button" disabled={busy} onClick={onConfirm}>
+            <span aria-hidden="true">✓</span>{busy ? "完了処理中" : "完了を確定"}
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+function CaseDocCommentSearchPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const keyword = searchParams.get("keyword") ?? "";
+  const caseKeyword = searchParams.get("case_keyword") ?? "";
+  const requestedStatus = searchParams.get("execution_status") ?? "all";
+  const status = ["not_started", "in_progress", "completed"].includes(requestedStatus) ? requestedStatus : "all";
+  const requestedPage = Number(searchParams.get("page") ?? 1);
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const [keywordInput, setKeywordInput] = useState(keyword);
+  const [caseKeywordInput, setCaseKeywordInput] = useState(caseKeyword);
+  const [statusInput, setStatusInput] = useState(status);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [result, setResult] = useState<{
+    status: "loading" | "available" | "error"; data: CaseDocCommentSearchData | null;
+  }>({ status: "loading", data: null });
+  const statusLabels = { not_started: "未着手", in_progress: "実行中", completed: "完了済み" };
+
+  useEffect(() => {
+    setKeywordInput(keyword); setCaseKeywordInput(caseKeyword); setStatusInput(status);
+  }, [keyword, caseKeyword, status]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setResult({ status: "loading", data: null });
+    void (async () => {
+      try {
+        const params = new URLSearchParams({ execution_status: status, page: String(page), page_size: "20" });
+        if (keyword.trim()) params.set("keyword", keyword.trim());
+        if (caseKeyword.trim()) params.set("case_keyword", caseKeyword.trim());
+        const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/comments?${params}`), { signal: controller.signal });
+        const body = await readApiResponse<CaseDocCommentSearchData>(response);
+        if (controller.signal.aborted) return;
+        setResult(response.ok && body.result === "success" && body.data
+          ? { status: "available", data: body.data } : { status: "error", data: null });
+      } catch {
+        if (!controller.signal.aborted) setResult({ status: "error", data: null });
+      }
+    })();
+    return () => controller.abort();
+  }, [keyword, caseKeyword, status, page, reloadTick]);
+
+  function applySearch(): void {
+    const params = new URLSearchParams();
+    if (keywordInput.trim()) params.set("keyword", keywordInput.trim());
+    if (caseKeywordInput.trim()) params.set("case_keyword", caseKeywordInput.trim());
+    if (statusInput !== "all") params.set("execution_status", statusInput);
+    setSearchParams(params);
+    setReloadTick((current) => current + 1);
+  }
+
+  function excerpt(text: string): ReactNode {
+    const match = keyword.trim();
+    const index = match ? text.toLocaleLowerCase().indexOf(match.toLocaleLowerCase()) : -1;
+    const start = Math.max(0, index - 80);
+    const end = Math.min(text.length, Math.max(start + 260, index + match.length));
+    return <>{start > 0 ? "…" : ""}{index >= 0 ? <>
+      {text.slice(start, index)}<mark>{text.slice(index, index + match.length)}</mark>{text.slice(index + match.length, end)}
+    </> : text.slice(start, end)}{end < text.length ? "…" : ""}</>;
+  }
+
+  return <Page title="案件CSコメント検索" description="ヒヤリハット・想定との差異">
+    <section className="section-band case-comment-search" aria-labelledby="case-comment-search-title">
+      <div className="case-execution-search-heading">
+        <h2 id="case-comment-search-title">コメントを探す</h2>
+        <button className="secondary" type="button" onClick={() => navigate("/case-docs/executions")}><span aria-hidden="true">←</span>案件一覧へ戻る</button>
+      </div>
+      <form className="case-comment-search-form" onSubmit={(event) => { event.preventDefault(); applySearch(); }}>
+        <label>コメント本文<input value={keywordInput} maxLength={200} onChange={(event) => setKeywordInput(event.target.value)} /></label>
+        <label>案件・原本<input value={caseKeywordInput} maxLength={200} onChange={(event) => setCaseKeywordInput(event.target.value)} /></label>
+        <label>状態<select value={statusInput} onChange={(event) => setStatusInput(event.target.value)}>
+          <option value="all">すべて</option>
+          <option value="not_started">未着手</option><option value="in_progress">実行中</option><option value="completed">完了済み</option>
+        </select></label>
+        <div className="case-comment-search-actions">
+          <button className="secondary" type="button" onClick={() => {
+            setKeywordInput(""); setCaseKeywordInput(""); setStatusInput("all"); setSearchParams({}); setReloadTick((current) => current + 1);
+          }}>条件をクリア</button>
+          <button className="primary" type="submit"><span aria-hidden="true">⌕</span>検索</button>
+        </div>
+      </form>
+    </section>
+    <section className="section-band case-comment-results" aria-labelledby="case-comment-results-title" aria-busy={result.status === "loading"}>
+      <h2 id="case-comment-results-title">検索結果</h2>
+      {result.status === "loading" ? <p role="status">コメントを検索しています。</p> : null}
+      {result.status === "error" ? <>
+        <FormFeedback tone="error" message="コメントの検索に失敗しました。接続を確認して再度お試しください。" />
+        <button className="secondary" type="button" onClick={() => setReloadTick((current) => current + 1)}><span aria-hidden="true">↻</span>再読み込み</button>
+      </> : null}
+      {result.data ? <>
+        <p role="status">{result.data.total_count}件{result.data.total_count > 0
+          ? ` / ${(result.data.page - 1) * result.data.page_size + 1}～${Math.min(result.data.page * result.data.page_size, result.data.total_count)}件を表示` : ""}</p>
+        {result.data.items.length ? <DataTable stickyLastColumn
+          columns={["案件", "状態", "小項番", "コメント", "記録者", "更新日時", "確認"]}
+          rows={result.data.items.map((item) => [
+            <div className="case-comment-case"><strong>{item.case_name || item.case_document_key}</strong><span>{item.case_document_key}</span><span>{item.source_doc_key} / {item.source_doc_name}</span></div>,
+            statusLabels[item.execution_status], item.item_label,
+            <p className="case-comment-excerpt">{excerpt(item.comment_text)}</p>, item.updated_by || "-", formatCaseDocExecutionUpdatedAt(item.updated_at),
+            <button className="secondary" type="button" onClick={() => {
+              const query = searchParams.toString();
+              navigate(`/case-docs/executions/comments/${item.case_document_id}/${item.group_start_row_order}${query ? `?${query}` : ""}`);
+            }}><span aria-hidden="true">→</span>小項番を確認</button>,
+          ])} /> : <p className="case-execution-queue-empty">条件に一致するコメントはありません。</p>}
+        {result.data.total_pages > 1 ? <nav className="case-comment-pagination" aria-label="コメント検索結果のページ切替">
+          <button className="secondary" type="button" disabled={result.data.page <= 1} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("page", String(result.data!.page - 1)); return next; })}><span aria-hidden="true">←</span>前のページ</button>
+          <span>{result.data.page} / {result.data.total_pages}</span>
+          <button className="secondary" type="button" disabled={result.data.page >= result.data.total_pages} onClick={() => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("page", String(result.data!.page + 1)); return next; })}>次のページ<span aria-hidden="true">→</span></button>
+        </nav> : null}
+      </> : null}
+    </section>
+  </Page>;
+}
+
 function CaseDocExecutionPage() {
-  const { caseDocumentId } = useParams<{ caseDocumentId: string }>();
+  const { caseDocumentId, commentRowOrder } = useParams<{ caseDocumentId: string; commentRowOrder: string }>();
+  const isCommentReviewRoute = commentRowOrder !== undefined;
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTabValue = searchParams.get("tab");
+  const requestedListTab: CaseDocExecutionListTab | null = requestedTabValue === "in_progress"
+    || requestedTabValue === "not_started" || requestedTabValue === "completed" ? requestedTabValue : null;
+  const listSearch = requestedListTab ? `?tab=${requestedListTab}` : "";
+  const pendingSelectionTab = useRef<CaseDocExecutionListTab | null | undefined>(undefined);
   const navigate = useNavigate();
   const showOperationNotice = useOperationNotice();
   const { user: currentUser } = useAuth();
@@ -9758,23 +10619,32 @@ function CaseDocExecutionPage() {
   const [availableCaseDocTags, setAvailableCaseDocTags] = useState<string[]>([]);
   const [searchKeywordInput, setSearchKeywordInput] = useState("");
   const [searchTagInputs, setSearchTagInputs] = useState<string[]>([]);
-  const [caseDocListTab, setCaseDocListTab] = useState<CaseDocExecutionListTab>("in_progress");
+  const [defaultCaseDocListTab, setDefaultCaseDocListTab] = useState<CaseDocExecutionListTab>(requestedListTab ?? "in_progress");
+  const caseDocListTab = requestedListTab ?? defaultCaseDocListTab;
   const [appliedSearch, setAppliedSearch] = useState<{
     keyword: string;
     tagPaths: string[];
   }>({ keyword: "", tagPaths: [] });
   const [selectedId, setSelectedId] = useState(caseDocumentId ?? "");
   const [detail, setDetail] = useState<CaseDocInstanceDetailData | null>(null);
+  const [detailStatus, setDetailStatus] = useState<"idle" | "loading" | "available" | "error">("idle");
+  const [detailReloadTick, setDetailReloadTick] = useState(0);
   const [listMessage, setListMessage] = useState("案件CS一覧を取得しています。");
   const [detailMessage, setDetailMessage] = useState("案件CSを選択してください。");
   const [mutatingItemId, setMutatingItemId] = useState<number | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
+  const completionRequestInFlight = useRef(false);
+  const [completionTargetId, setCompletionTargetId] = useState<number | null>(null);
+  const [completionError, setCompletionError] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [exportingOriginalId, setExportingOriginalId] = useState<number | null>(null);
   const [originalExportMessage, setOriginalExportMessage] = useState("");
   const [exportingCompletedId, setExportingCompletedId] = useState<number | null>(null);
   const [completedExportMessage, setCompletedExportMessage] = useState("");
   const [isSavingPreparation, setIsSavingPreparation] = useState(false);
+  const [preparationEditorOpen, setPreparationEditorOpen] = useState(false);
+  const preparationToggleRef = useRef<HTMLButtonElement>(null);
+  const preparationNameRef = useRef<HTMLInputElement>(null);
   const [preparationForm, setPreparationForm] = useState<CaseDocPreparationFormState>({
     construction_name: "",
     construction_date: currentLocalDateValue(),
@@ -9785,6 +10655,8 @@ function CaseDocExecutionPage() {
   const [preparationMessage, setPreparationMessage] = useState("工事情報を入力してください。");
   const [preparationUnitConfigs, setPreparationUnitConfigs] = useState<CaseDocUnitConfigItemData[]>([]);
   const [currentRowGroupIndex, setCurrentRowGroupIndex] = useState(0);
+  const rowGroupPickerRef = useRef<HTMLSelectElement>(null);
+  const [procedureDialogOpen, setProcedureDialogOpen] = useState(false);
   const [expandedExecutionImage, setExpandedExecutionImage] = useState<ModuleRowImageData | null>(null);
   const [bulkAction, setBulkAction] = useState<CaseDocExecutionBulkAction | null>(null);
   const [bulkSkipReason, setBulkSkipReason] = useState("");
@@ -9794,6 +10666,20 @@ function CaseDocExecutionPage() {
   const [commentMessage, setCommentMessage] = useState("小項番を選択してください。");
   const [isSavingComment, setIsSavingComment] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<CaseDocExecutionPendingNavigation | null>(null);
+
+  useEffect(() => {
+    if (isCommentReviewRoute && selectedId !== (caseDocumentId ?? "")) {
+      setDetail(null);
+      setSelectedId(caseDocumentId ?? "");
+      setExpandedExecutionImage(null);
+    }
+  }, [caseDocumentId, isCommentReviewRoute, selectedId]);
+
+  useEffect(() => {
+    setCompletionTargetId(null);
+    setCompletionError("");
+    setProcedureDialogOpen(false);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!bulkAction || isBulkUpdating) {
@@ -9827,15 +10713,15 @@ function CaseDocExecutionPage() {
         const loadedInstances = responseBody.data.items;
         const activeInstances = loadedInstances.filter((instance) => instance.status === "active");
         const loadedInProgressInstances = activeInstances.filter((instance) => (
-          instance.checked_count + instance.skipped_count > 0
+          getCaseDocExecutionListTab(instance) === "in_progress"
         ));
         const loadedNotStartedInstances = activeInstances.filter((instance) => (
-          instance.checked_count + instance.skipped_count === 0
+          getCaseDocExecutionListTab(instance) === "not_started"
         ));
         const completedCount = loadedInstances.length - activeInstances.length;
         setInstances(loadedInstances);
         setAvailableCaseDocTags(responseBody.data.tags ?? []);
-        setCaseDocListTab((current) => {
+        setDefaultCaseDocListTab((current) => {
           const currentHasItems = current === "in_progress"
             ? loadedInProgressInstances.length > 0
             : current === "not_started"
@@ -9853,11 +10739,6 @@ function CaseDocExecutionPage() {
             ? `検索結果 ${loadedInstances.length}件（実行中 ${loadedInProgressInstances.length}件、未着手 ${loadedNotStartedInstances.length}件、完了済み ${completedCount}件）`
             : "検索条件に一致する案件CSはありません。",
         );
-        setSelectedId((current) => (
-          activeInstances.some((instance) => String(instance.case_document_id) === current)
-            ? current
-            : ""
-        ));
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -9865,9 +10746,19 @@ function CaseDocExecutionPage() {
         setListMessage("サーバーに接続できませんでした。");
       }
     }
+    if (isCommentReviewRoute) return;
     void loadInstances();
     return () => abortController.abort();
-  }, [appliedSearch]);
+  }, [appliedSearch, isCommentReviewRoute]);
+
+  function setCaseDocListTab(tab: CaseDocExecutionListTab): void {
+    setDefaultCaseDocListTab(tab);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("tab", tab);
+      return next;
+    });
+  }
 
   function toggleCaseDocSearchTag(tagPath: string): void {
     const normalizedTag = normalizeModuleFolderPath(tagPath);
@@ -9894,28 +10785,37 @@ function CaseDocExecutionPage() {
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
+      setDetailStatus("idle");
       setPreparationUnitConfigs([]);
       setDetailMessage("案件CSを選択してください。");
       return;
     }
     const abortController = new AbortController();
     async function loadDetail(): Promise<void> {
+      setDetailStatus("loading");
       setDetailMessage("案件CS詳細を取得しています。");
       try {
         const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/instances/${selectedId}`), { signal: abortController.signal });
         const responseBody = await readApiResponse<CaseDocInstanceDetailData>(response);
+        if (abortController.signal.aborted) return;
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setDetail(null);
+          setDetailStatus("error");
           setDetailMessage(responseBody.message || "案件CS詳細の取得に失敗しました。");
           return;
         }
         const loadedDetail = responseBody.data;
         const loadedGroups = buildCaseDocExecutionRowGroups(loadedDetail.execution_items);
-        const resumeGroupIndex = findCaseDocResumeRowGroupIndex(loadedDetail.execution_items, loadedGroups);
+        const requestedGroupIndex = isCommentReviewRoute
+          ? loadedGroups.findIndex((group) => group.rowOrders[0] === Number(commentRowOrder)) : -1;
+        const resumeGroupIndex = isCommentReviewRoute ? Math.max(0, requestedGroupIndex)
+          : loadedDetail.status === "completed" ? 0 : findCaseDocResumeRowGroupIndex(loadedDetail.execution_items, loadedGroups);
         const resumeGroup = loadedGroups[resumeGroupIndex];
         const hasExecutionProgress = loadedDetail.checked_count + loadedDetail.skipped_count > 0;
         setDetail(loadedDetail);
+        setDetailStatus("available");
         setPreparationForm(toCaseDocPreparationForm(loadedDetail.preparation));
+        setPreparationEditorOpen(false);
         setPreparationMessage(
           loadedDetail.preparation.updated_at
             ? `工事情報を保存済みです。${formatCaseDocExecutionUpdatedAt(loadedDetail.preparation.updated_at)}`
@@ -9923,7 +10823,12 @@ function CaseDocExecutionPage() {
         );
         setCurrentRowGroupIndex(resumeGroupIndex);
         setDetailMessage(
-          hasExecutionProgress && loadedDetail.pending_count > 0 && resumeGroup
+          isCommentReviewRoute && requestedGroupIndex < 0
+            ? "指定された小項番が見つかりません。"
+            : isCommentReviewRoute && loadedDetail.status !== "completed" ? "閲覧専用"
+            : loadedDetail.status === "completed"
+            ? "完了済み・閲覧専用"
+            : hasExecutionProgress && loadedDetail.pending_count > 0 && resumeGroup
             ? `未完了の小項番 ${resumeGroup.label} から再開します。`
             : "案件CS詳細を取得しました。",
         );
@@ -9932,17 +10837,18 @@ function CaseDocExecutionPage() {
           return;
         }
         setDetail(null);
+        setDetailStatus("error");
         setDetailMessage("サーバーに接続できませんでした。");
       }
     }
     void loadDetail();
     return () => abortController.abort();
-  }, [selectedId]);
+  }, [selectedId, detailReloadTick, isCommentReviewRoute, commentRowOrder]);
 
   useEffect(() => {
     const prefecture = detail?.prefecture ?? "";
     const building = detail?.building ?? "";
-    if (!prefecture || !building) {
+    if (!prefecture || !building || detail?.generation_mode === "uni" || detail?.status === "completed" || isCommentReviewRoute) {
       setPreparationUnitConfigs([]);
       return;
     }
@@ -9951,6 +10857,7 @@ function CaseDocExecutionPage() {
     async function loadUnitConfigs(): Promise<void> {
       try {
         const endpoint = new URL(buildApiUrl("/api/v1/case-docs/master/unit-config"), window.location.origin);
+        endpoint.searchParams.set("data_source_id", detail?.data_source_id ?? "ssc");
         endpoint.searchParams.set("prefecture", prefecture);
         endpoint.searchParams.set("building", building);
         const response = await apiFetch(endpoint.toString(), { signal: abortController.signal });
@@ -9971,18 +10878,23 @@ function CaseDocExecutionPage() {
     }
     void loadUnitConfigs();
     return () => abortController.abort();
-  }, [detail?.building, detail?.prefecture]);
+  }, [detail?.building, detail?.prefecture, detail?.status, detail?.data_source_id, detail?.generation_mode, isCommentReviewRoute]);
 
   useEffect(() => {
+    if (isCommentReviewRoute) return;
     const routeId = caseDocumentId ?? "";
-    if (routeId === selectedId) {
+    // Selection state can commit before router params during completion redirects.
+    const pendingTab = pendingSelectionTab.current;
+    const nextSearch = pendingTab === undefined ? listSearch : pendingTab ? `?tab=${pendingTab}` : "";
+    if (routeId === selectedId && nextSearch === listSearch) {
+      pendingSelectionTab.current = undefined;
       return;
     }
-    navigate(selectedId ? `/case-docs/executions/${selectedId}` : "/case-docs/executions", { replace: true });
-  }, [caseDocumentId, navigate, selectedId]);
+    navigate(`${selectedId ? `/case-docs/executions/${selectedId}` : "/case-docs/executions"}${nextSearch}`, { replace: true });
+  }, [caseDocumentId, listSearch, navigate, selectedId, isCommentReviewRoute]);
 
   function hasUnsavedExecutionComment(): boolean {
-    if (!detail) {
+    if (!detail || detail.status === "completed" || isCommentReviewRoute) {
       return false;
     }
     const groups = buildCaseDocExecutionRowGroups(detail.execution_items);
@@ -9994,9 +10906,12 @@ function CaseDocExecutionPage() {
     return commentDraft !== (savedComment?.comment_text ?? "");
   }
 
-  function applyInstanceSelection(nextId: string): void {
+  function applyInstanceSelection(nextId: string, listTab: CaseDocExecutionListTab | null = requestedListTab): void {
+    pendingSelectionTab.current = listTab;
     setPendingNavigation(null);
     setDetail(null);
+    setCompletionTargetId(null);
+    setCompletionError("");
     setSelectedId(nextId);
     setCurrentRowGroupIndex(0);
     setExpandedExecutionImage(null);
@@ -10005,15 +10920,16 @@ function CaseDocExecutionPage() {
     setCommentDraft("");
     setCommentMessage(nextId ? "コメントを取得しています。" : "小項番を選択してください。");
     setPreparationMessage(nextId ? "案件CSの工事情報を取得しています。" : "案件CSを選択してください。");
-    navigate(nextId ? `/case-docs/executions/${nextId}` : "/case-docs/executions", { replace: true });
+    const query = listTab ? `?tab=${listTab}` : "";
+    navigate(`${nextId ? `/case-docs/executions/${nextId}` : "/case-docs/executions"}${query}`, { replace: true });
   }
 
-  function selectInstance(nextId: string): void {
+  function selectInstance(nextId: string, listTab: CaseDocExecutionListTab | null = requestedListTab): void {
     if (nextId !== selectedId && hasUnsavedExecutionComment()) {
       setPendingNavigation({ kind: "instance", nextId });
       return;
     }
-    applyInstanceSelection(nextId);
+    applyInstanceSelection(nextId, listTab);
   }
 
   function updatePreparationField<TKey extends keyof CaseDocPreparationFormState>(
@@ -10038,7 +10954,7 @@ function CaseDocExecutionPage() {
 
   async function savePreparation(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!detail || detail.status === "completed") {
+    if (!detail || detail.status === "completed" || isCommentReviewRoute) {
       return;
     }
 
@@ -10075,6 +10991,8 @@ function CaseDocExecutionPage() {
         instance.case_document_id === updatedDetail.case_document_id ? updatedDetail : instance
       )));
       setPreparationMessage("工事情報を保存しました。");
+      setPreparationEditorOpen(false);
+      window.requestAnimationFrame(() => preparationToggleRef.current?.focus());
     } catch {
       setPreparationMessage("サーバーに接続できませんでした。");
     } finally {
@@ -10132,6 +11050,7 @@ function CaseDocExecutionPage() {
     items: CaseDocExecutionItemData[],
     status: CaseDocExecutionBulkStatus,
   ): void {
+    if (!detail || detail.status === "completed" || !executionIsUnlocked) return;
     const pendingItems = items.filter((item) => item.status === "pending");
     if (pendingItems.length === 0) {
       setDetailMessage(`${label}に未実施の項目はありません。`);
@@ -10244,18 +11163,32 @@ function CaseDocExecutionPage() {
     }
   }
 
+  function openCompletionConfirmation(): void {
+    if (!detail || detail.status === "completed" || completionBlockedReason || isCompleting) return;
+    setCompletionError("");
+    setCompletionTargetId(detail.case_document_id);
+  }
+
+  function closeCompletionConfirmation(): void {
+    if (isCompleting) return;
+    setCompletionTargetId(null);
+    setCompletionError("");
+  }
+
   async function completeInstance(): Promise<void> {
-    if (!detail || detail.pending_count > 0 || detail.status === "completed" || !executionIsUnlocked) {
-      if (!executionIsUnlocked) {
-        setDetailMessage("工事情報を入力して保存してから案件CSを実行してください。");
-      }
+    if (!detail || completionTargetId !== detail.case_document_id || String(detail.case_document_id) !== selectedId
+      || detail.status === "completed" || isCompleting || completionRequestInFlight.current) return;
+    if (completionBlockedReason) {
+      setCompletionError(completionBlockedReason);
       return;
     }
     if (hasUnsavedExecutionComment()) {
-      setDetailMessage("保存されていないコメントがあります。コメントを保存してから完了してください。");
+      setCompletionError("保存されていないコメントがあります。コメントを保存してから完了してください。");
       return;
     }
+    completionRequestInFlight.current = true;
     setIsCompleting(true);
+    setCompletionError("");
     try {
       const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/instances/${detail.case_document_id}/complete`), {
         method: "POST",
@@ -10264,7 +11197,7 @@ function CaseDocExecutionPage() {
       });
       const responseBody = await readApiResponse<CaseDocInstanceDetailData>(response);
       if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
-        setDetailMessage(responseBody.message || "案件CSの完了に失敗しました。");
+        setCompletionError(responseBody.message || "案件CSの完了に失敗しました。");
         return;
       }
       const completedInstance = responseBody.data;
@@ -10273,16 +11206,17 @@ function CaseDocExecutionPage() {
       )));
       setDetail(null);
       setListMessage("案件CSを完了し、完了済み一覧へ移動しました。");
-      setCaseDocListTab("completed");
+      setDefaultCaseDocListTab("completed");
       showOperationNotice({
         tone: "success",
         title: "案件CSを完了しました",
         message: `${completedInstance.case_document_key} / ${completedInstance.case_name} を完了済み一覧へ移動しました。`,
       });
-      selectInstance("");
+      selectInstance("", "completed");
     } catch {
-      setDetailMessage("サーバーに接続できませんでした。");
+      setCompletionError("サーバーに接続できませんでした。完了状態を確認してから再度お試しください。");
     } finally {
+      completionRequestInFlight.current = false;
       setIsCompleting(false);
     }
   }
@@ -10389,6 +11323,7 @@ function CaseDocExecutionPage() {
     }
   }
 
+  const isReadOnly = detail?.status === "completed" || isCommentReviewRoute;
   const rowGroups = detail ? buildCaseDocExecutionRowGroups(detail.execution_items) : [];
   const effectiveRowGroupIndex = Math.min(currentRowGroupIndex, Math.max(rowGroups.length - 1, 0));
   const currentRowGroup = rowGroups[effectiveRowGroupIndex] ?? null;
@@ -10400,24 +11335,52 @@ function CaseDocExecutionPage() {
     comment.group_start_row_order === currentGroupStartRowOrder
   ));
   const currentSavedCommentText = currentGroupComment?.comment_text ?? "";
-  const commentHasUnsavedChanges = commentDraft !== currentSavedCommentText;
+  const commentHasUnsavedChanges = !isReadOnly && commentDraft !== currentSavedCommentText;
   const currentGroupCompletedCount = currentGroupItems.filter((item) => item.status !== "pending").length;
   const currentGroupPendingCount = currentGroupItems.length - currentGroupCompletedCount;
   const currentGroupHasPending = currentGroupPendingCount > 0;
+  const progressByRow = new Map<number, { total: number; pending: number }>();
+  for (const item of detail?.execution_items ?? []) {
+    const progress = progressByRow.get(item.row_order) ?? { total: 0, pending: 0 };
+    progress.total += 1;
+    if (item.status === "pending") progress.pending += 1;
+    progressByRow.set(item.row_order, progress);
+  }
+  const commentedRowOrders = new Set(detail?.execution_comments
+    .filter((comment) => comment.comment_text.trim())
+    .map((comment) => comment.group_start_row_order) ?? []);
+  const rowGroupSummaries = rowGroups.map((group) => {
+    let total = 0;
+    let pending = 0;
+    for (const rowOrder of group.rowOrders) {
+      const progress = progressByRow.get(rowOrder);
+      total += progress?.total ?? 0;
+      pending += progress?.pending ?? 0;
+    }
+    return {
+      status: total === 0 ? "対象なし" : pending === 0 ? "実施済み" : pending === total ? "未実施" : "実施中",
+      pending,
+      hasComment: commentedRowOrders.has(group.rowOrders[0]),
+    };
+  });
+  const firstPendingRowGroupIndex = rowGroupSummaries.findIndex((group) => group.pending > 0);
+  const rowGroupNavigationIsBusy = mutatingItemId !== null || isBulkUpdating || isSavingComment || isSavingPreparation || isCompleting;
   const activeInstances = instances.filter((instance) => instance.status === "active");
   const inProgressInstances = activeInstances
-    .filter((instance) => instance.checked_count + instance.skipped_count > 0)
+    .filter((instance) => getCaseDocExecutionListTab(instance) === "in_progress")
     .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
-  const notStartedInstances = activeInstances.filter((instance) => instance.checked_count + instance.skipped_count === 0);
+  const notStartedInstances = activeInstances.filter((instance) => getCaseDocExecutionListTab(instance) === "not_started");
   const completedInstances = instances.filter((instance) => instance.status === "completed");
   const preparationFormIsComplete = Boolean(detail) && isCaseDocPreparationFormComplete(preparationForm);
   const preparationIsSaved = detail ? isCaseDocPreparationSaved(detail.preparation) : false;
   const preparationHasUnsavedChanges = detail
     ? !doesCaseDocPreparationMatchSaved(preparationForm, detail.preparation)
     : false;
+  const preparationIsCollapsed = isReadOnly || (preparationIsSaved && !preparationHasUnsavedChanges && !preparationEditorOpen);
   const executionIsUnlocked = Boolean(
     detail
     && detail.status === "active"
+    && !isCommentReviewRoute
     && preparationIsSaved
     && !preparationHasUnsavedChanges,
   );
@@ -10429,15 +11392,17 @@ function CaseDocExecutionPage() {
   );
   const completionBlockedReason = !detail
     ? null
-    : detail.status === "completed"
+    : isReadOnly
       ? null
       : !executionIsUnlocked
         ? "工事情報を入力して保存してください。"
-        : detail.pending_count > 0
-          ? `未実施の時刻欄が${detail.pending_count}件あります。`
-          : commentHasUnsavedChanges
-            ? "小項番コメントを保存してください。"
-            : null;
+        : mutatingItemId !== null || isBulkUpdating || isSavingComment || isSavingPreparation
+          ? "実施内容の保存が完了するまでお待ちください。"
+          : detail.pending_count > 0
+            ? `未実施の時刻欄が${detail.pending_count}件あります。`
+            : commentHasUnsavedChanges
+              ? "小項番コメントを保存してください。"
+              : null;
   const preparationBlockOptions = [...new Set([
     preparationForm.block,
     ...preparationUnitConfigs.map((item) => item.block),
@@ -10470,7 +11435,16 @@ function CaseDocExecutionPage() {
     );
   }, [currentGroupComment?.updated_at, currentRowGroup?.key, currentSavedCommentText, detail?.case_document_id]);
 
+  function canMoveToRowGroup(nextIndex: number): boolean {
+    if (!detail || !Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= rowGroups.length) return false;
+    if (nextIndex === effectiveRowGroupIndex) return true;
+    if (rowGroupNavigationIsBusy) return false;
+    if (nextIndex < effectiveRowGroupIndex || isReadOnly) return true;
+    return executionIsUnlocked && (firstPendingRowGroupIndex === -1 || nextIndex <= firstPendingRowGroupIndex);
+  }
+
   function moveToRowGroup(nextIndex: number): void {
+    if (nextIndex === effectiveRowGroupIndex || rowGroupNavigationIsBusy || !canMoveToRowGroup(nextIndex)) return;
     if (commentHasUnsavedChanges) {
       setPendingNavigation({ kind: "row-group", nextIndex });
       return;
@@ -10480,15 +11454,16 @@ function CaseDocExecutionPage() {
   }
 
   return (
-    <Page title="案件CS実行管理" description="案件CSを検索し、実行状況の確認、作業の実施、証跡Excelの出力を行います。">
+    <Page title={isCommentReviewRoute ? "案件CSのコメント確認" : isReadOnly ? "完了済み案件CSの内容確認" : "案件CS実行管理"} description={isReadOnly ? "閲覧専用" : "案件CSを検索し、実行状況の確認、作業の実施、証跡Excelの出力を行います。"}>
       {detail ? (
         <>
           <section className="case-execution-work-header" aria-labelledby="case-execution-work-title">
-            <button className="secondary" type="button" onClick={() => selectInstance("")}>
-              <span aria-hidden="true">←</span>案件一覧へ戻る
+            <button className="secondary" type="button" onClick={() => isCommentReviewRoute
+              ? navigate(`/case-docs/executions/comments${location.search}`) : selectInstance("", isReadOnly ? "completed" : requestedListTab)}>
+              <span aria-hidden="true">←</span>{isCommentReviewRoute ? "コメント検索へ戻る" : "案件一覧へ戻る"}
             </button>
             <div>
-              <span>{detail.checked_count + detail.skipped_count > 0 ? "実行中" : "未着手"}</span>
+              <span>{detail.status === "completed" ? "完了済み" : detail.checked_count + detail.skipped_count > 0 ? "実行中" : "未着手"}{isReadOnly ? "・閲覧専用" : ""}</span>
               <h2 id="case-execution-work-title">{detail.case_name}</h2>
               <p>{detail.case_document_key} / {detail.source_doc_key} / {detail.source_doc_name}</p>
             </div>
@@ -10501,6 +11476,7 @@ function CaseDocExecutionPage() {
               />
             </div>
           </section>
+          {!isReadOnly && (!preparationIsSaved || preparationHasUnsavedChanges) ? (
           <section className="case-execution-flow section-band" aria-labelledby="case-execution-flow-title">
         <div className="case-execution-flow-heading">
           <div>
@@ -10526,6 +11502,7 @@ function CaseDocExecutionPage() {
           </li>
         </ol>
           </section>
+          ) : null}
         </>
       ) : null}
       {!selectedId ? (
@@ -10533,7 +11510,9 @@ function CaseDocExecutionPage() {
           <section className="case-execution-search section-band" aria-labelledby="case-execution-search-title">
         <div className="case-execution-search-heading">
           <h2 id="case-execution-search-title">案件CSを探す</h2>
-          <span>{instances.length}件</span>
+          <div className="case-comment-entry"><span>{instances.length}件</span>
+            <button className="secondary" type="button" onClick={() => navigate("/case-docs/executions/comments")}><span aria-hidden="true">⌕</span>コメントを検索</button>
+          </div>
         </div>
         <form
           className="case-execution-search-form"
@@ -10649,7 +11628,7 @@ function CaseDocExecutionPage() {
                     return (
                       <tr key={instance.case_document_id} className={isSelected ? "case-execution-queue-selected" : undefined}>
                         <td><strong>{instance.case_document_key}</strong></td>
-                        <td>{instance.case_name}</td>
+                        <td>{instance.case_name}<small className="case-data-source-name">参照元DB: {instance.data_source_name ?? "SSC"}</small></td>
                         <td>{instance.source_doc_key} / {instance.source_doc_name}</td>
                         <td><CaseDocTagMembershipList tagPaths={instance.tag_paths} /></td>
                         <td>
@@ -10702,7 +11681,7 @@ function CaseDocExecutionPage() {
                     return (
                       <tr key={instance.case_document_id} className={isSelected ? "case-execution-queue-selected" : undefined}>
                         <td><strong>{instance.case_document_key}</strong></td>
-                        <td>{instance.case_name}</td>
+                        <td>{instance.case_name}<small className="case-data-source-name">参照元DB: {instance.data_source_name ?? "SSC"}</small></td>
                         <td>{instance.source_doc_key} / {instance.source_doc_name}</td>
                         <td><CaseDocTagMembershipList tagPaths={instance.tag_paths} /></td>
                         <td>0 / {instance.total_count}</td>
@@ -10742,7 +11721,7 @@ function CaseDocExecutionPage() {
                 <h3>完了済み</h3>
                 <p aria-live="polite">{completedExportMessage}</p>
               </div>
-              <span>証跡Excelを再出力できます</span>
+              <span>内容確認・証跡Excel</span>
             </div>
             {completedInstances.length > 0 ? (
               <DataTable
@@ -10756,6 +11735,7 @@ function CaseDocExecutionPage() {
                   `${instance.checked_count + instance.skipped_count} / ${instance.total_count}`,
                   instance.created_by ?? "-",
                   formatCaseDocExecutionUpdatedAt(instance.updated_at),
+                  <div className="case-execution-queue-actions case-execution-completed-actions">
                   <button
                     className="secondary case-execution-completed-export"
                     type="button"
@@ -10764,7 +11744,12 @@ function CaseDocExecutionPage() {
                   >
                     <span aria-hidden="true">⇩</span>
                     {exportingCompletedId === instance.case_document_id ? "生成中" : "証跡Excel"}
-                  </button>,
+                  </button>
+                  <button className="primary case-execution-queue-action" type="button"
+                    onClick={() => selectInstance(String(instance.case_document_id), "completed")}>
+                    <span aria-hidden="true">↗</span>内容を確認
+                  </button>
+                  </div>,
                 ])}
               />
             ) : <p className="case-execution-queue-empty">完了済みの案件CSはありません。</p>}
@@ -10779,23 +11764,63 @@ function CaseDocExecutionPage() {
           <section className="case-execution-summary">
             <Fact label="案件CS" value={detail.case_document_key} />
             <Fact label="案件名" value={detail.case_name} />
+            <Fact label="参照元DB" value={detail.data_source_name ?? "SSC"} />
+            <Fact label="抽出データ版" value={detail.data_source_revision?.slice(0, 12) ?? "未記録（既存案件）"} />
             <Fact label="原本" value={`${detail.source_doc_key} / ${detail.source_doc_name}`} />
             <Fact label="タグ" value={(detail.tag_paths.length > 0 ? detail.tag_paths : ["未分類"]).join("、")} />
             <Fact label="進捗" value={`${detail.checked_count + detail.skipped_count} / ${detail.total_count}`} />
             <Fact label="状態" value={detail.status === "completed" ? "完了" : "実施中"} />
           </section>
-          <section className="case-execution-preparation section-band">
+          {detail.target_contexts?.length ? <details className="section-band uni-saved-work"><summary>targetごとの対象工事</summary><DataTable
+            columns={["target", "ブロック", "ビル", "府県", "クラスタ番号", "収容エリア"]}
+            rows={detail.target_contexts.map((item) => [`target ${item.target_no}`, item.block, item.building, item.prefecture, String(item.cluster_no), item.area])}
+          /></details> : null}
+          <section className={`case-execution-preparation section-band${preparationIsCollapsed ? " case-execution-preparation-collapsed" : ""}`}>
             <div className="case-execution-preparation-heading">
               <h2>工事情報</h2>
-              <span>{detail.status === "completed" ? "完了済み" : "実行前準備"}</span>
+              <div className="case-execution-preparation-controls">
+                <span role="status" className={preparationHasUnsavedChanges ? "case-execution-preparation-unsaved" : undefined}>
+                  {detail.status === "completed" ? "完了済み" : preparationHasUnsavedChanges ? "未保存" : preparationIsSaved ? "保存済み" : "実行前準備"}
+                </span>
+                {preparationIsSaved && !isReadOnly ? (
+                  <button
+                    ref={preparationToggleRef}
+                    className="icon-button"
+                    type="button"
+                    aria-controls="case-execution-preparation-content"
+                    aria-expanded={!preparationIsCollapsed}
+                    aria-label={preparationIsCollapsed ? "工事情報を編集" : "工事情報を折りたたむ"}
+                    title={preparationHasUnsavedChanges ? "工事情報に未保存の変更があります" : preparationIsCollapsed ? "工事情報を編集" : "工事情報を折りたたむ"}
+                    disabled={isSavingPreparation || preparationHasUnsavedChanges}
+                    onClick={() => {
+                      setPreparationEditorOpen(preparationIsCollapsed);
+                      if (preparationIsCollapsed) window.requestAnimationFrame(() => preparationNameRef.current?.focus());
+                    }}
+                  >
+                    {preparationIsCollapsed ? <span aria-hidden="true">✎</span> : (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 15 6-6 6 6" /></svg>
+                    )}
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <form className="case-execution-preparation-form" onSubmit={(event) => void savePreparation(event)}>
+            {preparationIsCollapsed ? (
+              <dl className="case-execution-preparation-summary" id="case-execution-preparation-content">
+                <div className="case-execution-preparation-summary-name"><dt>工事名</dt><dd>{detail.preparation.construction_name || "-"}</dd></div>
+                <div><dt>工事日</dt><dd><time dateTime={detail.preparation.construction_date ?? undefined}>{detail.preparation.construction_date?.replace(/-/g, "/") || "-"}</time></dd></div>
+                <div><dt>工事実施者</dt><dd>{detail.preparation.construction_executor || "-"}</dd></div>
+                <div><dt>ブロック</dt><dd>{detail.preparation.block || "-"}</dd></div>
+                <div><dt>{detail.generation_mode === "uni" ? "工事対象クラスタ" : "工事対象FS"}</dt><dd>{detail.preparation.target_fs || "-"}</dd></div>
+              </dl>
+            ) : (
+            <form className="case-execution-preparation-form" id="case-execution-preparation-content" onSubmit={(event) => void savePreparation(event)}>
               <label className="case-execution-preparation-wide">
                 <RequiredFieldLabel>工事名</RequiredFieldLabel>
                 <input
+                  ref={preparationNameRef}
                   value={preparationForm.construction_name}
                   onChange={(event) => updatePreparationField("construction_name", event.target.value)}
-                  disabled={detail.status === "completed"}
+                  disabled={isSavingPreparation || detail.status === "completed"}
                   required
                 />
               </label>
@@ -10805,7 +11830,7 @@ function CaseDocExecutionPage() {
                   type="date"
                   value={preparationForm.construction_date}
                   onChange={(event) => updatePreparationField("construction_date", event.target.value)}
-                  disabled={detail.status === "completed"}
+                  disabled={isSavingPreparation || detail.status === "completed"}
                   required
                 />
               </label>
@@ -10814,7 +11839,7 @@ function CaseDocExecutionPage() {
                 <input
                   value={preparationForm.construction_executor}
                   onChange={(event) => updatePreparationField("construction_executor", event.target.value)}
-                  disabled={detail.status === "completed"}
+                  disabled={isSavingPreparation || detail.status === "completed"}
                   required
                 />
               </label>
@@ -10822,8 +11847,8 @@ function CaseDocExecutionPage() {
                 <RequiredFieldLabel>ブロック</RequiredFieldLabel>
                 <select
                   value={preparationForm.block}
-                  onChange={(event) => updatePreparationBlock(event.target.value)}
-                  disabled={detail.status === "completed"}
+                  onChange={(event) => detail.generation_mode === "uni" ? updatePreparationField("block", event.target.value) : updatePreparationBlock(event.target.value)}
+                  disabled={isSavingPreparation || detail.status === "completed"}
                   required
                 >
                   <option value="">選択してください</option>
@@ -10831,12 +11856,12 @@ function CaseDocExecutionPage() {
                 </select>
               </label>
               <label>
-                <RequiredFieldLabel>工事対象FS</RequiredFieldLabel>
+                <RequiredFieldLabel>{detail.generation_mode === "uni" ? "工事対象クラスタ" : "工事対象FS"}</RequiredFieldLabel>
                 <input
                   list="case-execution-target-fs-options"
                   value={preparationForm.target_fs}
                   onChange={(event) => updatePreparationField("target_fs", event.target.value)}
-                  disabled={detail.status === "completed"}
+                  disabled={isSavingPreparation || detail.status === "completed"}
                   required
                 />
                 <datalist id="case-execution-target-fs-options">
@@ -10864,8 +11889,9 @@ function CaseDocExecutionPage() {
                 </button>
               </div>
             </form>
+            )}
           </section>
-          {!executionIsUnlocked ? (
+          {!executionIsUnlocked && !isReadOnly ? (
             <section className="case-execution-lock-notice" role="status">
               <strong>案件CSはまだ実行できません</strong>
               <span>工事情報の必須5項目を入力し、「工事情報を保存」を押してください。</span>
@@ -10887,29 +11913,27 @@ function CaseDocExecutionPage() {
               >
                 <span aria-hidden="true">⇩</span>{isExporting ? "生成中" : "証跡Excel"}
               </button>
-              <button
+              {!isReadOnly ? <button
                 className="primary"
                 type="button"
-                onClick={() => void completeInstance()}
+                onClick={openCompletionConfirmation}
                 disabled={
                   isCompleting
-                  || detail.pending_count > 0
                   || detail.status === "completed"
-                  || !executionIsUnlocked
-                  || commentHasUnsavedChanges
+                  || Boolean(completionBlockedReason)
                 }
                 title={completionBlockedReason ?? (detail.status === "completed" ? "この案件CSは完了済みです。" : "案件CSを完了します。")}
               >
                 <span aria-hidden="true">✓</span>{detail.status === "completed" ? "完了済み" : "案件CSを完了"}
-              </button>
+              </button> : null}
             </Toolbar>
           </section>
 
           <section className="section-band case-execution-grid-section">
             <div className="case-execution-sheet-heading">
               <div>
-                <h2>案件CS</h2>
-                <p>Excelプレビューと同じ列構成です。各targetの時刻欄からチェックまたはスキップを実行できます。</p>
+                <h2>{isReadOnly ? "案件CSの実施結果" : "案件CS"}</h2>
+                {!isReadOnly ? <p>Excelプレビューと同じ列構成です。各targetの時刻欄からチェックまたはスキップを実行できます。</p> : null}
               </div>
               <div className="case-execution-legend" aria-label="実施状態の凡例">
                 <span><i className="case-execution-legend-pending" />未実施</span>
@@ -10921,17 +11945,34 @@ function CaseDocExecutionPage() {
               <button
                 className="secondary"
                 type="button"
-                onClick={() => moveToRowGroup(Math.max(0, effectiveRowGroupIndex - 1))}
-                disabled={effectiveRowGroupIndex === 0}
+                onClick={() => moveToRowGroup(effectiveRowGroupIndex - 1)}
+                disabled={!canMoveToRowGroup(effectiveRowGroupIndex - 1)}
               >
                 <span aria-hidden="true">←</span>前へ
               </button>
-              <div className="case-execution-step-current" aria-live="polite">
-                <span>小項番</span>
-                <strong>{currentRowGroup?.label ?? "-"}</strong>
+              <div className="case-execution-step-current">
+                <label className="case-execution-group-picker">
+                  <span>小項番</span>
+                  <select
+                    ref={rowGroupPickerRef}
+                    value={rowGroups.length > 0 ? effectiveRowGroupIndex : -1}
+                    onChange={(event) => moveToRowGroup(Number(event.target.value))}
+                    disabled={rowGroups.length === 0 || rowGroupNavigationIsBusy}
+                    title={isReadOnly ? "確認する小項番を選択" : "未実施の小項番を飛び越して先へ進むことはできません。"}
+                  >
+                    {rowGroups.length === 0 ? <option value={-1}>小項番なし</option> : rowGroups.map((group, index) => (
+                      <option key={group.key} value={index} disabled={!canMoveToRowGroup(index)}>
+                        {group.label} / {rowGroupSummaries[index].status}{rowGroupSummaries[index].hasComment ? " / コメントあり" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <span>{rowGroups.length > 0 ? `${effectiveRowGroupIndex + 1} / ${rowGroups.length}` : "0 / 0"}</span>
-                <span>実施済み {currentGroupCompletedCount} / {currentGroupItems.length}</span>
-                <CaseDocExecutionBulkButtons
+                <span aria-live="polite">実施済み {currentGroupCompletedCount} / {currentGroupItems.length}</span>
+                <button className="secondary case-procedure-open" type="button" aria-haspopup="dialog" onClick={() => setProcedureDialogOpen(true)}>
+                  <span aria-hidden="true">☷</span>全体手順
+                </button>
+                {!isReadOnly ? <CaseDocExecutionBulkButtons
                   label={`表示中の小項番 ${currentRowGroup?.label ?? "-"}`}
                   pendingCount={currentGroupPendingCount}
                   disabled={bulkActionsDisabled}
@@ -10940,8 +11981,8 @@ function CaseDocExecutionPage() {
                     currentGroupItems,
                     status,
                   )}
-                />
-                {currentGroupHasPending ? (
+                /> : null}
+                {!isReadOnly && currentGroupHasPending ? (
                   <span className="case-execution-step-validation" role="alert">
                     未入力 {currentGroupPendingCount}件: 次へ進むにはチェックまたはスキップを選択してください。
                   </span>
@@ -10950,13 +11991,23 @@ function CaseDocExecutionPage() {
               <button
                 className="secondary"
                 type="button"
-                onClick={() => moveToRowGroup(Math.min(rowGroups.length - 1, effectiveRowGroupIndex + 1))}
-                disabled={rowGroups.length === 0 || effectiveRowGroupIndex >= rowGroups.length - 1 || currentGroupHasPending || !executionIsUnlocked}
+                onClick={() => moveToRowGroup(effectiveRowGroupIndex + 1)}
+                disabled={!canMoveToRowGroup(effectiveRowGroupIndex + 1)}
               >
                 次へ<span aria-hidden="true">→</span>
               </button>
             </nav>
-            <div className="case-execution-comment-panel">
+            {isReadOnly ? (
+              <section className="case-execution-comment-panel case-execution-comment-readonly" aria-labelledby="case-execution-comment-title">
+                <h3 id="case-execution-comment-title">小項番 {currentRowGroup?.label ?? "-"} のコメント</h3>
+                <p className="case-execution-saved-comment" role="region" aria-label="保存済みコメント" tabIndex={0}>
+                  {currentSavedCommentText.trim() ? currentSavedCommentText : "コメントの記録はありません。"}
+                </p>
+                {currentSavedCommentText.trim() ? <p className="case-execution-comment-metadata">
+                  {currentGroupComment?.updated_by || "-"} / {currentGroupComment?.updated_at ? formatCaseDocExecutionUpdatedAt(currentGroupComment.updated_at) : "-"}
+                </p> : null}
+              </section>
+            ) : <div className="case-execution-comment-panel">
               <div className="case-execution-comment-heading">
                 <label htmlFor="case-execution-comment">
                   <strong>小項番 {currentRowGroup?.label ?? "-"} のコメント</strong>
@@ -10995,9 +12046,9 @@ function CaseDocExecutionPage() {
                   <span aria-hidden="true">✓</span>{isSavingComment ? "保存中" : "コメントを保存"}
                 </button>
               </div>
-            </div>
-            <div className="excel-sheet-wrap excel-sheet-wrap-case excel-sheet-scroll-with-sticky-left excel-sheet-scroll-case case-execution-table-wrap">
-              <table className="excel-sheet excel-sheet-case excel-sheet-multi-device excel-sheet-sticky-left excel-sheet-case-sticky case-execution-sheet case-execution-sticky">
+            </div>}
+            <div className={`excel-sheet-wrap excel-sheet-wrap-case excel-sheet-scroll-with-sticky-left excel-sheet-scroll-case case-execution-table-wrap${isReadOnly ? " case-execution-readonly-table-wrap" : ""}`}>
+              <table className={`excel-sheet excel-sheet-case excel-sheet-multi-device excel-sheet-sticky-left case-execution-sheet ${isReadOnly ? "case-execution-readonly-sheet" : "excel-sheet-case-sticky case-execution-sticky"}`}>
                 <colgroup>
                   <col className="excel-col-small" />
                   <col className="excel-col-small" />
@@ -11041,7 +12092,7 @@ function CaseDocExecutionPage() {
                           <td className={`excel-center ${toneClass}`} />
                           <td className={toneClass}>{target.excel_no}</td>
                           <td className={`excel-center ${toneClass}`} />
-                          <td className={toneClass}>{target.host_name}</td>
+                          <td className={`${toneClass} case-doc-host-names`}>{target.host_name}</td>
                         </Fragment>
                       );
                     })}
@@ -11061,7 +12112,7 @@ function CaseDocExecutionPage() {
                           <td className={`excel-case-group-cell ${toneClass}`} />
                           <td className={`excel-case-group-cell ${toneClass}`} />
                           <td className={`excel-case-group-cell ${toneClass}`} />
-                          <td className={`excel-case-device-name ${toneClass}`}>{target.host_name}</td>
+                          <td className={`excel-case-device-name ${toneClass} case-doc-host-names`}>{target.host_name}</td>
                         </Fragment>
                       );
                     })}
@@ -11079,7 +12130,7 @@ function CaseDocExecutionPage() {
                         <Fragment key={`execution-header-${target.excel_no}`}>
                           <th className={`${toneClass} case-execution-bulk-header`}>
                             <span>時刻</span>
-                            <CaseDocExecutionBulkButtons
+                            {!isReadOnly ? <CaseDocExecutionBulkButtons
                               label={`${target.host_name}の縦方向`}
                               pendingCount={currentGroupItems.filter((item) => (
                                 item.target_no === target.excel_no && item.status === "pending"
@@ -11091,7 +12142,7 @@ function CaseDocExecutionPage() {
                                 currentGroupItems.filter((item) => item.target_no === target.excel_no),
                                 status,
                               )}
-                            />
+                            /> : null}
                           </th>
                           <th className={toneClass}>window</th>
                           <th className={toneClass}>P</th>
@@ -11113,14 +12164,14 @@ function CaseDocExecutionPage() {
                         <td className="excel-number">{baseItem.minor_no ?? ""}</td>
                         <td>{baseItem.tech_doc_text ?? ""}</td>
                         <td colSpan={4} className="excel-work-cell excel-work-cell-wide case-execution-content-cell">
-                          <span>{baseItem.work_text ?? ""}</span>
+                          <IndentedExcelText text={baseItem.work_text} indentLevel={normalizeExcelIndentLevel(baseItem.indent_level ?? 0)} />
                           <ModuleRowImageList
                             images={baseItem.images ?? []}
                             placement="work"
                             onImageClick={setExpandedExecutionImage}
                           />
                         </td>
-                        <td className="case-execution-content-cell case-execution-content-with-bulk">
+                        <td className={`case-execution-content-cell${isReadOnly ? "" : " case-execution-content-with-bulk"}`}>
                           <div>
                             <span>{baseItem.check_text ?? ""}</span>
                             <ModuleRowImageList
@@ -11129,13 +12180,13 @@ function CaseDocExecutionPage() {
                               onImageClick={setExpandedExecutionImage}
                             />
                           </div>
-                          <CaseDocExecutionBulkButtons
+                          {!isReadOnly ? <CaseDocExecutionBulkButtons
                             label={`行 ${rowOrder} の横方向`}
                             pendingCount={rowItems.filter((item) => item.status === "pending").length}
                             disabled={bulkActionsDisabled}
                             compact
                             onSelect={(status) => openBulkAction(`行 ${rowOrder} の横方向`, rowItems, status)}
-                          />
+                          /> : null}
                         </td>
                         {detail.targets.map((target) => {
                           const item = rowItems.find((candidate) => candidate.target_no === target.excel_no);
@@ -11145,6 +12196,7 @@ function CaseDocExecutionPage() {
                               <CaseDocExecutionTimeCell
                                 item={item}
                                 busy={isBusy}
+                                readOnly={isReadOnly}
                                 disabled={detail.status === "completed" || !executionIsUnlocked || isBulkUpdating}
                                 onUpdate={(targetItem, status) => void updateExecutionItem(targetItem, status)}
                               />
@@ -11161,6 +12213,13 @@ function CaseDocExecutionPage() {
               </table>
             </div>
           </section>
+
+          {procedureDialogOpen ? <CaseDocProcedureDialog
+            key={detail.case_document_id}
+            detail={detail}
+            currentGroup={currentRowGroup}
+            onClose={() => setProcedureDialogOpen(false)}
+          /> : null}
 
           {expandedExecutionImage && typeof expandedExecutionImage.module_row_image_id === "number" ? (
             <PreviewOverlay
@@ -11241,6 +12300,17 @@ function CaseDocExecutionPage() {
             </div>
           ) : null}
 
+          {completionTargetId === detail.case_document_id && String(detail.case_document_id) === selectedId ? (
+            <CaseDocCompletionDialog
+              key={detail.case_document_id}
+              detail={detail}
+              busy={isCompleting}
+              error={completionError}
+              onCancel={closeCompletionConfirmation}
+              onConfirm={() => void completeInstance()}
+            />
+          ) : null}
+
           {pendingNavigation ? (
             <ConfirmationDialog
               id="case-execution-unsaved-comment-dialog"
@@ -11250,14 +12320,20 @@ function CaseDocExecutionPage() {
               description="現在の小項番に入力したコメントは保存されていません。移動すると入力内容を復元できません。"
               confirmLabel="破棄して移動"
               tone="danger"
-              onCancel={() => setPendingNavigation(null)}
+              onCancel={() => {
+                if (pendingNavigation.kind === "row-group") {
+                  window.requestAnimationFrame(() => rowGroupPickerRef.current?.focus({ preventScroll: true }));
+                }
+                setPendingNavigation(null);
+              }}
               onConfirm={() => {
                 const navigation = pendingNavigation;
                 setPendingNavigation(null);
                 if (navigation.kind === "instance") {
                   applyInstanceSelection(navigation.nextId);
-                } else {
+                } else if (!rowGroupNavigationIsBusy && canMoveToRowGroup(navigation.nextIndex)) {
                   setCurrentRowGroupIndex(navigation.nextIndex);
+                  window.requestAnimationFrame(() => rowGroupPickerRef.current?.focus({ preventScroll: true }));
                 }
               }}
             />
@@ -11265,11 +12341,15 @@ function CaseDocExecutionPage() {
 
         </>
       ) : selectedId ? (
-        <section className="empty-state case-execution-loading-state">
-          <h2>案件CSを読み込んでいます</h2>
-          <p>{detailMessage}</p>
-          <button className="secondary" type="button" onClick={() => selectInstance("")}>
-            <span aria-hidden="true">←</span>案件一覧へ戻る
+        <section className="empty-state case-execution-loading-state" aria-busy={detailStatus === "loading"}>
+          <h2>{detailStatus === "error" ? "案件CSを表示できません" : "案件CSを読み込んでいます"}</h2>
+          <p role={detailStatus === "error" ? "alert" : "status"}>{detailMessage}</p>
+          {detailStatus === "error" ? <button className="primary" type="button" onClick={() => setDetailReloadTick((current) => current + 1)}>
+            <span aria-hidden="true">↻</span>再読み込み
+          </button> : null}
+          <button className="secondary" type="button" onClick={() => isCommentReviewRoute
+            ? navigate(`/case-docs/executions/comments${location.search}`) : selectInstance("")}>
+            <span aria-hidden="true">←</span>{isCommentReviewRoute ? "コメント検索へ戻る" : "案件一覧へ戻る"}
           </button>
         </section>
       ) : null}
@@ -12047,7 +13127,11 @@ function UserManagementPage() {
 }
 
 function CaseDocPlaceholdersPage() {
+  const dataSources = useDataSources(buildApiUrl);
+  const dataSourceId = dataSources.sourceId;
+  const sourceApi = (path: string) => scopedSourceUrl(buildApiUrl(path), dataSourceId);
   const { user: currentUser } = useAuth();
+  const canManagePlaceholders = currentUser?.role === "admin";
   const [placeholderState, setPlaceholderState] = useState<CaseDocPlaceholderMappingListState>({
     status: "loading",
     items: [],
@@ -12078,17 +13162,57 @@ function CaseDocPlaceholdersPage() {
   const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
   const [editorSourceSelection, setEditorSourceSelection] = useState<string | null>(null);
   const [formState, setFormState] = useState<CaseDocPlaceholderFormState>(() => emptyCaseDocPlaceholderForm());
+  const editorDialogRef = useRef<HTMLDialogElement>(null);
+  const sampleRequestRef = useRef<AbortController | null>(null);
+  const saveInFlightRef = useRef(false);
+  const [sampleOptions, setSampleOptions] = useState<{
+    status: "loading" | "available" | "error"; items: CaseDocPlaceholderSampleUnit[];
+  }>({ status: "loading", items: [] });
+  const [sampleUnitId, setSampleUnitId] = useState("");
+  const [sampleSlotKey, setSampleSlotKey] = useState("");
+  const [sampleState, setSampleState] = useState<{
+    status: "idle" | "loading" | "available" | "error";
+    data: CaseDocPlaceholderSampleData | null; message: string;
+  }>({ status: "idle", data: null, message: "" });
   const [mutationState, setMutationState] = useState<CaseDocPlaceholderMutationState>({
     status: "idle",
     message: caseDocPlaceholderText.mutationReady,
   });
 
   useEffect(() => {
+    if (editorMode === null || !canManagePlaceholders) return;
+    const dialog = editorDialogRef.current;
+    dialog?.showModal();
+    const controller = new AbortController();
+    if (dataSources.source?.generation_mode === "uni") {
+      setSampleOptions({ status: "available", items: [] });
+      return () => controller.abort();
+    }
+    setSampleOptions({ status: "loading", items: [] });
+    void (async () => {
+      try {
+        const response = await apiFetch(sourceApi("/api/v1/case-docs/placeholders/sample-options"), { signal: controller.signal });
+        const body = (await response.json()) as ApiResponse<{ items: CaseDocPlaceholderSampleUnit[] }>;
+        if (controller.signal.aborted) return;
+        setSampleOptions(response.ok && body.result === "success" && body.data
+          ? { status: "available", items: body.data.items } : { status: "error", items: [] });
+      } catch {
+        if (!controller.signal.aborted) setSampleOptions({ status: "error", items: [] });
+      }
+    })();
+    return () => {
+      controller.abort();
+      sampleRequestRef.current?.abort();
+      dialog?.close();
+    };
+  }, [editorMode, canManagePlaceholders, dataSourceId]);
+
+  useEffect(() => {
     setListPage(1);
   }, [statusFilter, deviceTypeFilter, keywordFilter]);
 
   useEffect(() => {
-    if (currentUser?.role !== "admin") {
+    if (currentUser === null || !dataSources.ready) {
       return;
     }
 
@@ -12098,10 +13222,11 @@ function CaseDocPlaceholdersPage() {
       setPlaceholderState({ status: "loading", items: [], message: caseDocPlaceholderText.loading });
 
       try {
-        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/placeholders"), {
+        const response = await apiFetch(sourceApi("/api/v1/case-docs/placeholders"), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderMappingListData>;
+        if (abortController.signal.aborted) return;
 
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setPlaceholderState({
@@ -12130,10 +13255,10 @@ function CaseDocPlaceholdersPage() {
     return () => {
       abortController.abort();
     };
-  }, [currentUser?.role, reloadTick]);
+  }, [currentUser?.role, reloadTick, dataSourceId, dataSources.ready]);
 
   useEffect(() => {
-    if (currentUser?.role !== "admin") {
+    if (currentUser === null || !dataSources.ready) {
       return;
     }
 
@@ -12142,10 +13267,11 @@ function CaseDocPlaceholdersPage() {
     async function fetchSourceFiles(): Promise<void> {
       setSourceFileState({ status: "loading", items: [], message: caseDocPlaceholderText.sourceOptionsLoading });
       try {
-        const response = await apiFetch(buildApiUrl("/api/v1/case-docs/placeholders/sources"), {
+        const response = await apiFetch(sourceApi("/api/v1/case-docs/placeholders/sources"), {
           signal: abortController.signal,
         });
         const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderSourceFileListData>;
+        if (abortController.signal.aborted) return;
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setSourceFileState({ status: "unavailable", items: [], message: caseDocPlaceholderText.sourceOptionsUnavailable });
           return;
@@ -12173,10 +13299,10 @@ function CaseDocPlaceholdersPage() {
 
     void fetchSourceFiles();
     return () => abortController.abort();
-  }, [currentUser?.role, reloadTick]);
+  }, [currentUser?.role, reloadTick, dataSourceId, dataSources.ready]);
 
   useEffect(() => {
-    if (currentUser?.role !== "admin" || !previewSourceFile) {
+    if (currentUser === null || !dataSources.ready || !previewSourceFile) {
       setPreviewState({
         status: "idle",
         data: null,
@@ -12215,7 +13341,7 @@ function CaseDocPlaceholdersPage() {
           const searchParams = new URLSearchParams(baseSearchParams.toString());
           searchParams.set("page", String(page));
           const response = await apiFetch(
-            buildApiUrl(`/api/v1/case-docs/placeholders/source-preview?${searchParams.toString()}`),
+            sourceApi(`/api/v1/case-docs/placeholders/source-preview?${searchParams.toString()}`),
             { signal: abortController.signal },
           );
           const responseBody = (await response.json()) as ApiResponse<CaseDocPlaceholderSourcePreviewData>;
@@ -12223,6 +13349,7 @@ function CaseDocPlaceholdersPage() {
         }
 
         const { response, responseBody } = await fetchPreviewPage(1);
+        if (abortController.signal.aborted) return;
         if (!response.ok || responseBody.result !== "success" || responseBody.data === null) {
           setPreviewState({
             status: "unavailable",
@@ -12236,6 +13363,7 @@ function CaseDocPlaceholdersPage() {
         const allRows = [...previewData.rows];
         for (let page = 2; page <= previewData.total_pages; page += 1) {
           const nextPage = await fetchPreviewPage(page);
+          if (abortController.signal.aborted) return;
           if (!nextPage.response.ok || nextPage.responseBody.result !== "success" || nextPage.responseBody.data === null) {
             setPreviewState({
               status: "unavailable",
@@ -12280,18 +13408,9 @@ function CaseDocPlaceholdersPage() {
     previewFilters.prefecture,
     previewSourceFile,
     reloadTick,
+    dataSourceId,
+    dataSources.ready,
   ]);
-
-  if (currentUser?.role !== "admin") {
-    return (
-      <Page title={caseDocPlaceholderText.title} description="この画面は管理者ユーザーのみ利用できます。">
-        <section className="empty-state">
-          <h2>表示権限がありません</h2>
-          <p>プレースホルダ一覧は管理者ユーザーでログインした場合のみ表示できます。</p>
-        </section>
-      </Page>
-    );
-  }
 
   const enabledCount = placeholderState.items.filter((item) => item.enabled).length;
   const disabledCount = placeholderState.items.length - enabledCount;
@@ -12300,7 +13419,11 @@ function CaseDocPlaceholdersPage() {
   ).sort((left, right) => left.localeCompare(right));
   const normalizedKeyword = keywordFilter.trim().toLocaleLowerCase();
   const generatedSourceColumn = toGeneratedCaseDocPlaceholderSourceColumn(formState);
+  const selectedSampleUnit = sampleOptions.items.find((item) => item.unit_config.unit_config_id === sampleUnitId);
   const selectedSourceFile = sourceFileState.items.find((item) => item.source_file === formState.source_file) ?? null;
+  const editorSourceFiles = sourceFileState.items.filter(
+    (item) => formState.scope !== "unit" || isCaseDocUnitConfigSource(item.source_file),
+  );
   const previewData = previewState.data;
   const previewFilterOptions = previewData?.filter_options ?? {
     fs_cluster_names: [],
@@ -12333,6 +13456,7 @@ function CaseDocPlaceholdersPage() {
     /^case_common_values\.(xlsx|xlsm|csv)$/i.test(previewData.source_file)
     || (previewData.mappings.length > 0 && previewData.mappings.every((mapping) => mapping.scope === "common"))
   );
+  const isPreviewUnitSource = previewData !== null && isCaseDocUnitConfigSource(previewData.source_file);
 
   const filteredItems = placeholderState.items.filter((item) => {
     if (statusFilter === "enabled" && !item.enabled) {
@@ -12373,6 +13497,35 @@ function CaseDocPlaceholdersPage() {
   const visibleItems = filteredItems.slice(listStartIndex, listStartIndex + listPageSize);
   const visibleRangeStart = filteredItems.length === 0 ? 0 : listStartIndex + 1;
   const visibleRangeEnd = Math.min(listStartIndex + listPageSize, filteredItems.length);
+  const selectedDataSourceName = dataSources.source?.name ?? dataSourceId;
+  const enabledDataSources = dataSources.items.filter((source) => source.enabled);
+  const sourceSelectionDisabled = editorMode !== null || mutationState.status === "submitting" || !dataSources.ready;
+
+  function changePlaceholderDataSource(sourceId: string): void {
+    if (sourceSelectionDisabled || saveInFlightRef.current || sourceId === dataSourceId
+      || !enabledDataSources.some((source) => source.source_id === sourceId)) return;
+    dataSources.setSourceId(sourceId);
+    setPreviewSourceFile("");
+    setPreviewFilters({ fs_cluster_name: "", block: "", prefecture: "" });
+    setPreviewState({ status: "idle", data: null, message: "" });
+    setPlaceholderState({ status: "loading", items: [], message: caseDocPlaceholderText.loading });
+    setSourceFileState({ status: "loading", items: [], message: caseDocPlaceholderText.sourceOptionsLoading });
+    setKeywordFilter(""); setDeviceTypeFilter("all"); setStatusFilter("all"); setListPage(1);
+    setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
+    closeEditor();
+  }
+
+  function handlePlaceholderSourceTabKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (sourceSelectionDisabled || enabledDataSources.length === 0) return;
+    const index = enabledDataSources.findIndex((source) => source.source_id === dataSourceId);
+    const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? enabledDataSources.length - 1
+      : event.key === "ArrowRight" ? (index + 1) % enabledDataSources.length
+      : event.key === "ArrowLeft" ? (index + enabledDataSources.length - 1) % enabledDataSources.length : -1;
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    changePlaceholderDataSource(enabledDataSources[nextIndex].source_id);
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+  }
 
   function updatePreviewSourceFile(sourceFile: string): void {
     setPreviewSourceFile(sourceFile);
@@ -12391,6 +13544,7 @@ function CaseDocPlaceholdersPage() {
   }
 
   function openCreateEditor(): void {
+    resetSampleSelection();
     setEditorMode("create");
     setEditingOriginalName(null);
     setEditorSourceSelection(null);
@@ -12403,15 +13557,16 @@ function CaseDocPlaceholdersPage() {
       return;
     }
     const deviceType = inferCaseDocPlaceholderDeviceType(previewData.source_file, previewData.mappings);
+    resetSampleSelection();
     setEditorMode("create");
     setEditingOriginalName(null);
     setEditorSourceSelection(`${previewData.source_file} / ${column}`);
     setFormState({
       ...emptyCaseDocPlaceholderForm(),
-      scope: "device",
-      device_type: deviceType,
+      scope: isPreviewUnitSource ? "unit" : "device",
+      device_type: isPreviewUnitSource ? "" : deviceType,
       source_file: previewData.source_file,
-      key_column: previewDeviceKeyColumn,
+      key_column: isPreviewUnitSource ? "" : previewDeviceKeyColumn,
       value_column: column,
     });
     setMutationState({ status: "idle", message: caseDocPlaceholderText.mutationReady });
@@ -12436,6 +13591,7 @@ function CaseDocPlaceholdersPage() {
       return;
     }
 
+    resetSampleSelection();
     setEditorMode("create");
     setEditingOriginalName(null);
     setEditorSourceSelection(`${previewData.source_file} / ${row.row_number}行 / ${column}`);
@@ -12452,6 +13608,7 @@ function CaseDocPlaceholdersPage() {
   }
 
   function openEditEditor(item: CaseDocPlaceholderMappingItemData): void {
+    resetSampleSelection();
     setEditorMode("edit");
     setEditingOriginalName(item.name);
     setEditorSourceSelection(`${item.source_file} / ${item.value_column}`);
@@ -12460,6 +13617,7 @@ function CaseDocPlaceholdersPage() {
   }
 
   function closeEditor(): void {
+    resetSampleSelection();
     setEditorMode(null);
     setEditingOriginalName(null);
     setEditorSourceSelection(null);
@@ -12467,10 +13625,27 @@ function CaseDocPlaceholdersPage() {
   }
 
   function updateFormField<TKey extends keyof CaseDocPlaceholderFormState>(key: TKey, value: CaseDocPlaceholderFormState[TKey]): void {
+    invalidateSample();
     setFormState((current) => ({ ...current, [key]: value }));
   }
 
+  function updatePlaceholderScope(scope: CaseDocPlaceholderScope): void {
+    invalidateSample();
+    setFormState((current) => scope === "unit" ? {
+      ...current,
+      scope,
+      device_type: "",
+      source_device_type: "",
+      key_column: "",
+      key_value: "",
+      source_file: isCaseDocUnitConfigSource(current.source_file) ? current.source_file
+        : sourceFileState.items.find((item) => isCaseDocUnitConfigSource(item.source_file))?.source_file ?? "",
+      value_column: isCaseDocUnitConfigSource(current.source_file) ? current.value_column : "",
+    } : { ...current, scope, key_value: scope === "common" ? current.key_value : "" });
+  }
+
   function updateSourceFile(sourceFile: string): void {
+    invalidateSample();
     setFormState((current) =>
       current.source_file === sourceFile
         ? current
@@ -12480,16 +13655,18 @@ function CaseDocPlaceholdersPage() {
 
   async function handleSubmitPlaceholder(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (editorMode === null) {
+    if (editorMode === null || saveInFlightRef.current) {
       return;
     }
 
+    saveInFlightRef.current = true;
+    invalidateSample();
     setMutationState({ status: "submitting", message: caseDocPlaceholderText.saving });
     const payload = toCaseDocPlaceholderPayload(formState);
     const endpoint =
       editorMode === "create"
-        ? buildApiUrl("/api/v1/case-docs/placeholders")
-        : buildApiUrl(`/api/v1/case-docs/placeholders/${encodeURIComponent(editingOriginalName ?? payload.name)}`);
+        ? sourceApi("/api/v1/case-docs/placeholders")
+        : sourceApi(`/api/v1/case-docs/placeholders/${encodeURIComponent(editingOriginalName ?? payload.name)}`);
     const method = editorMode === "create" ? "POST" : "PUT";
 
     try {
@@ -12513,6 +13690,66 @@ function CaseDocPlaceholdersPage() {
       setReloadTick((current) => current + 1);
     } catch {
       setMutationState({ status: "error", message: caseDocPlaceholderText.apiFailed });
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  }
+
+  function invalidateSample(): void {
+    sampleRequestRef.current?.abort();
+    sampleRequestRef.current = null;
+    setSampleState({ status: "idle", data: null, message: "" });
+  }
+
+  function resetSampleSelection(): void {
+    invalidateSample();
+    setSampleUnitId("");
+    setSampleSlotKey("");
+  }
+
+  function handlePlaceholderEditorKeyDown(event: React.KeyboardEvent<HTMLDialogElement>): void {
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      "button, input, select, textarea, summary, [tabindex]",
+    )).filter((node) => !node.matches(":disabled") && node.tabIndex >= 0 && node.getClientRects().length > 0);
+    const first = controls[0], last = controls.at(-1);
+    if (first && last && ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last))) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    }
+  }
+
+  async function handlePlaceholderSample(event: React.MouseEvent<HTMLButtonElement>): Promise<void> {
+    if (!event.currentTarget.form?.reportValidity() || saveInFlightRef.current) return;
+    invalidateSample();
+    if (!selectedSampleUnit || (formState.scope === "device" && !sampleSlotKey)) {
+      setSampleState({ status: "error", data: null, message: "確認するユニットと対象装置を選択してください。" });
+      return;
+    }
+    const controller = new AbortController();
+    sampleRequestRef.current = controller;
+    setSampleState({ status: "loading", data: null, message: "置換を確認しています…" });
+    try {
+      const unit = selectedSampleUnit.unit_config;
+      const response = await apiFetch(sourceApi("/api/v1/case-docs/placeholders/sample"), {
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        body: JSON.stringify({
+          mapping: toCaseDocPlaceholderPayload(formState), prefecture: unit.prefecture,
+          building: unit.building, unit_config_id: unit.unit_config_id,
+          target_slot_key: formState.scope === "device" ? sampleSlotKey : null,
+        }),
+      });
+      const body = (await response.json()) as ApiResponse<CaseDocPlaceholderSampleData>;
+      if (controller.signal.aborted || sampleRequestRef.current !== controller) return;
+      setSampleState(response.ok && body.result === "success" && body.data
+        ? { status: "available", data: body.data, message: placeholderSampleStatusText[body.data.status] }
+        : { status: "error", data: null, message: "置換を確認できませんでした。設定内容と参照データを確認してください。" });
+    } catch {
+      if (!controller.signal.aborted && sampleRequestRef.current === controller) {
+        setSampleState({ status: "error", data: null, message: "置換の確認に失敗しました。接続を確認して再度お試しください。" });
+      }
+    } finally {
+      if (sampleRequestRef.current === controller) sampleRequestRef.current = null;
     }
   }
 
@@ -12520,7 +13757,7 @@ function CaseDocPlaceholdersPage() {
     setMutationState({ status: "submitting", message: caseDocPlaceholderText.updatingStatus });
 
     try {
-      const response = await apiFetch(buildApiUrl(`/api/v1/case-docs/placeholders/${encodeURIComponent(item.name)}/enabled`), {
+      const response = await apiFetch(sourceApi(`/api/v1/case-docs/placeholders/${encodeURIComponent(item.name)}/enabled`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: !item.enabled }),
@@ -12542,7 +13779,7 @@ function CaseDocPlaceholdersPage() {
   function getPreviewColumnMappings(column: string): CaseDocPlaceholderMappingItemData[] {
     const normalizedColumn = normalizeCaseDocPlaceholderColumnName(column);
     return (previewData?.mappings ?? []).filter(
-      (mapping) => mapping.scope === "device"
+      (mapping) => (mapping.scope === "device" || mapping.scope === "unit")
         && normalizeCaseDocPlaceholderColumnName(mapping.value_column) === normalizedColumn,
     );
   }
@@ -12571,17 +13808,45 @@ function CaseDocPlaceholdersPage() {
     });
   }
 
+  function renderPreviewMappingChip(mapping: CaseDocPlaceholderMappingItemData): ReactNode {
+    const label = formatCaseDocPlaceholderName(mapping.name);
+    const title = mapping.description ?? label;
+    if (!canManagePlaceholders) {
+      return (
+        <span key={mapping.name} className="placeholder-source-mapping-chip placeholder-source-mapping-chip-readonly" title={title}>
+          {label}
+        </span>
+      );
+    }
+    return (
+      <button
+        key={mapping.name}
+        type="button"
+        className="placeholder-source-mapping-chip"
+        onClick={() => openEditEditor(mapping)}
+        title={title}
+      >
+        {label}
+      </button>
+    );
+  }
+
   return (
     <Page title={caseDocPlaceholderText.title} description={caseDocPlaceholderText.description}>
+      <DataSourceSelector catalog={{ ...dataSources, setSourceId: changePlaceholderDataSource }} disabled={sourceSelectionDisabled} />
       <Toolbar>
         <NavLink to="/case-docs" className="button-link">
           <span aria-hidden="true">{"←"}</span>
           {caseDocPlaceholderText.backToCaseDocs}
         </NavLink>
-        <button className="primary" type="button" onClick={openCreateEditor}>
-          <span aria-hidden="true">+</span>
-          {caseDocPlaceholderText.add}
-        </button>
+        {canManagePlaceholders ? (
+          <button className="primary" type="button" onClick={openCreateEditor}>
+            <span aria-hidden="true">+</span>
+            {caseDocPlaceholderText.add}
+          </button>
+        ) : (
+          <span className="placeholder-readonly-label">閲覧専用</span>
+        )}
       </Toolbar>
 
       <section className="section-band placeholder-source-preview-section">
@@ -12672,31 +13937,31 @@ function CaseDocPlaceholdersPage() {
                       <th>{caseDocPlaceholderText.configuredPlaceholders}</th>
                       {previewData.columns.map((column, columnIndex) => {
                         const columnMappings = getPreviewColumnMappings(column);
-                        const canCreateMapping = !isPreviewCommonSource
+                        const isDeviceLookupKey = !isPreviewCommonSource
+                          && !isPreviewUnitSource
                           && normalizeCaseDocPlaceholderColumnName(column)
-                            !== normalizeCaseDocPlaceholderColumnName(previewDeviceKeyColumn);
+                            === normalizeCaseDocPlaceholderColumnName(previewDeviceKeyColumn);
+                        const canCreateMapping = canManagePlaceholders
+                          && !isPreviewCommonSource
+                          && !isDeviceLookupKey;
+                        const addMappingLabel = isPreviewUnitSource ? caseDocPlaceholderText.addUnitMapping : caseDocPlaceholderText.addDeviceMapping;
                         return (
                           <th key={`mapping-${columnIndex}`}>
-                            {columnMappings.length > 0 || canCreateMapping ? (
+                            {columnMappings.length > 0 || canCreateMapping || isDeviceLookupKey ? (
                               <div className="placeholder-source-mapping-list">
-                                {columnMappings.map((mapping) => (
-                                  <button
-                                    key={mapping.name}
-                                    type="button"
-                                    className="placeholder-source-mapping-chip"
-                                    onClick={() => openEditEditor(mapping)}
-                                    title={mapping.description ?? formatCaseDocPlaceholderName(mapping.name)}
-                                  >
-                                    {formatCaseDocPlaceholderName(mapping.name)}
-                                  </button>
-                                ))}
+                                {isDeviceLookupKey ? (
+                                  <span className="placeholder-source-lookup-key" title={caseDocPlaceholderText.lookupKeyHelp}>
+                                    {caseDocPlaceholderText.lookupKey}
+                                  </span>
+                                ) : null}
+                                {columnMappings.map(renderPreviewMappingChip)}
                                 {canCreateMapping ? (
                                   <button
                                     type="button"
                                     className="placeholder-source-add-mapping"
                                     onClick={() => openCreateEditorFromPreviewColumn(column)}
-                                    title={caseDocPlaceholderText.addDeviceMapping}
-                                    aria-label={`${column}: ${caseDocPlaceholderText.addDeviceMapping}`}
+                                    title={addMappingLabel}
+                                    aria-label={`${column}: ${addMappingLabel}`}
                                   >
                                     <span aria-hidden="true">+</span>
                                   </button>
@@ -12726,7 +13991,8 @@ function CaseDocPlaceholdersPage() {
                             (candidate) => normalizeCaseDocPlaceholderColumnName(candidate)
                               === normalizeCaseDocPlaceholderColumnName(previewCommonKeyColumn),
                           );
-                          const canCreateMapping = isPreviewCommonSource
+                          const canCreateMapping = canManagePlaceholders
+                            && isPreviewCommonSource
                             && Boolean(previewCommonKeyColumn)
                             && normalizeCaseDocPlaceholderColumnName(column)
                               !== normalizeCaseDocPlaceholderColumnName(previewCommonKeyColumn)
@@ -12739,17 +14005,7 @@ function CaseDocPlaceholdersPage() {
                             >
                               {cellMappings.length > 0 || canCreateMapping ? (
                                 <div className="placeholder-source-mapping-list">
-                                  {cellMappings.map((mapping) => (
-                                    <button
-                                      key={mapping.name}
-                                      type="button"
-                                      className="placeholder-source-mapping-chip"
-                                      onClick={() => openEditEditor(mapping)}
-                                      title={mapping.description ?? formatCaseDocPlaceholderName(mapping.name)}
-                                    >
-                                      {formatCaseDocPlaceholderName(mapping.name)}
-                                    </button>
-                                  ))}
+                                  {cellMappings.map(renderPreviewMappingChip)}
                                   {canCreateMapping ? (
                                     <button
                                       type="button"
@@ -12798,10 +14054,37 @@ function CaseDocPlaceholdersPage() {
           <span>{caseDocPlaceholderText.disabled}</span>
           <strong>{disabledCount}</strong>
         </div>
-        <p>{mutationState.status === "idle" ? placeholderState.message : mutationState.message}</p>
+        <p>
+          {canManagePlaceholders
+            ? mutationState.status === "idle" ? placeholderState.message : mutationState.message
+            : caseDocPlaceholderText.readOnly}
+        </p>
       </section>
 
-      {placeholderState.items.length > 0 ? (
+      <div className="placeholder-data-source-tabs" role="tablist" aria-label="プレースホルダ一覧の参照元DB" onKeyDown={handlePlaceholderSourceTabKeyDown}>
+        {enabledDataSources.map((source) => <button
+          key={source.source_id}
+          id={`placeholder-db-tab-${source.source_id}`}
+          type="button"
+          role="tab"
+          aria-selected={source.source_id === dataSourceId}
+          aria-controls="placeholder-db-panel"
+          tabIndex={source.source_id === dataSourceId ? 0 : -1}
+          disabled={sourceSelectionDisabled}
+          title={`${source.name} (${source.source_id})`}
+          onClick={() => changePlaceholderDataSource(source.source_id)}
+        ><strong>{source.name}</strong><code>{source.source_id}</code></button>)}
+      </div>
+      <div id="placeholder-db-panel" className="placeholder-db-panel" role="tabpanel" aria-labelledby={enabledDataSources.length > 0 ? `placeholder-db-tab-${dataSourceId}` : undefined} aria-label={enabledDataSources.length === 0 ? "プレースホルダ一覧" : undefined} aria-busy={placeholderState.status === "loading"} tabIndex={0} data-source-id={dataSourceId}>
+      {placeholderState.status === "loading" ? (
+        <section className="empty-state"><p role="status">{selectedDataSourceName}のプレースホルダを取得しています。</p></section>
+      ) : placeholderState.status === "unavailable" ? (
+        <section className="empty-state">
+          <h2>{selectedDataSourceName}のプレースホルダを取得できませんでした</h2>
+          <p role="alert">{placeholderState.message}</p>
+          <button className="secondary" type="button" onClick={() => setReloadTick((value) => value + 1)}>再読み込み</button>
+        </section>
+      ) : placeholderState.items.length > 0 ? (
         <>
           <section className="placeholder-filter-panel" aria-label={caseDocPlaceholderText.title}>
             <label>
@@ -12834,7 +14117,7 @@ function CaseDocPlaceholdersPage() {
           {filteredItems.length > 0 ? (
             <section className="section-band placeholder-list-section">
               <div className="placeholder-list-heading">
-                <h2>{caseDocPlaceholderText.title}</h2>
+                <div className="placeholder-list-title"><h2>{caseDocPlaceholderText.title}</h2><span className="placeholder-list-source"><strong>{selectedDataSourceName}</strong><code>{dataSourceId}</code></span></div>
                 <span>{visibleRangeStart}–{visibleRangeEnd} / {filteredItems.length}件</span>
               </div>
               <DataTable
@@ -12850,7 +14133,7 @@ function CaseDocPlaceholdersPage() {
                   caseDocPlaceholderText.keyColumn,
                   caseDocPlaceholderText.keyValue,
                   caseDocPlaceholderText.sourceColumn,
-                  caseDocPlaceholderText.actions,
+                  ...(canManagePlaceholders ? [caseDocPlaceholderText.actions] : []),
                 ]}
                 rows={visibleItems.map((item) => [
                   <span className={item.enabled ? "placeholder-state placeholder-state-enabled" : "placeholder-state placeholder-state-disabled"}>
@@ -12860,20 +14143,23 @@ function CaseDocPlaceholdersPage() {
                   item.description ?? "-",
                   item.device_type ?? "-",
                   item.source_device_type ?? item.device_type ?? "-",
-                  item.scope === "device" ? caseDocPlaceholderText.deviceScoped : caseDocPlaceholderText.commonScoped,
+                  item.scope === "unit" ? caseDocPlaceholderText.unitScoped
+                    : item.scope === "device" ? caseDocPlaceholderText.deviceScoped : caseDocPlaceholderText.commonScoped,
                   item.source_file,
                   item.value_column,
-                  item.key_column,
+                  item.key_column || "-",
                   item.key_value ?? "-",
                   item.source_column,
-                  <div className="placeholder-row-actions">
-                    <button className="secondary" type="button" onClick={() => openEditEditor(item)}>
-                      {caseDocPlaceholderText.edit}
-                    </button>
-                    <button className="text-button" type="button" onClick={() => void handleToggleEnabled(item)} disabled={mutationState.status === "submitting"}>
-                      {item.enabled ? caseDocPlaceholderText.disable : caseDocPlaceholderText.enable}
-                    </button>
-                  </div>,
+                  ...(canManagePlaceholders ? [
+                    <div className="placeholder-row-actions">
+                      <button className="secondary" type="button" onClick={() => openEditEditor(item)}>
+                        {caseDocPlaceholderText.edit}
+                      </button>
+                      <button className="text-button" type="button" onClick={() => void handleToggleEnabled(item)} disabled={mutationState.status === "submitting"}>
+                        {item.enabled ? caseDocPlaceholderText.disable : caseDocPlaceholderText.enable}
+                      </button>
+                    </div>,
+                  ] : []),
                 ])}
               />
               <nav className="placeholder-pagination placeholder-list-pagination" aria-label="プレースホルダ一覧のページ切り替え">
@@ -12911,23 +14197,34 @@ function CaseDocPlaceholdersPage() {
       ) : (
         <section className="empty-state">
           <h2>{caseDocPlaceholderText.emptyTitle}</h2>
+          <p>{selectedDataSourceName} ({dataSourceId})</p>
           <p>{placeholderState.message}</p>
         </section>
       )}
+      </div>
 
-      {editorMode !== null ? (
-        <div className="modal-backdrop" role="presentation">
-          <section aria-labelledby="placeholder-editor-title" aria-modal="true" className="modal-dialog placeholder-editor-dialog" role="dialog">
-            <h2 id="placeholder-editor-title">
-              {editorMode === "create" ? caseDocPlaceholderText.editorCreateTitle : caseDocPlaceholderText.editorEditTitle}
-            </h2>
-            {editorSourceSelection ? (
-              <p className="placeholder-editor-source">
-                <span>{caseDocPlaceholderText.selectedSource}</span>
-                <strong>{editorSourceSelection}</strong>
-              </p>
-            ) : null}
+      {canManagePlaceholders && editorMode !== null ? (
+          <dialog ref={editorDialogRef} aria-labelledby="placeholder-editor-title" className="modal-dialog placeholder-editor-dialog"
+            onKeyDown={handlePlaceholderEditorKeyDown}
+            onCancel={(event) => { event.preventDefault(); if (!saveInFlightRef.current) closeEditor(); }}>
+            <header className="placeholder-editor-header">
+              <h2 id="placeholder-editor-title">
+                {editorMode === "create" ? caseDocPlaceholderText.editorCreateTitle : caseDocPlaceholderText.editorEditTitle}
+              </h2>
+              <button className="icon-button secondary" type="button" aria-label="閉じる" title="閉じる"
+                disabled={mutationState.status === "submitting"} onClick={closeEditor}>×</button>
+            </header>
             <form className="placeholder-editor-form" onSubmit={(event) => void handleSubmitPlaceholder(event)}>
+              <fieldset className="placeholder-editor-content" disabled={mutationState.status === "submitting"}>
+              {editorSourceSelection ? (
+                <p className="placeholder-editor-source">
+                  <span>{caseDocPlaceholderText.selectedSource}</span>
+                  <strong>{editorSourceSelection}</strong>
+                </p>
+              ) : null}
+              <section className="placeholder-editor-section" aria-labelledby="placeholder-basic-title">
+              <h3 id="placeholder-basic-title">基本設定</h3>
+              <div className="placeholder-editor-grid">
               <label>
                 <RequiredFieldLabel>{caseDocPlaceholderText.name}</RequiredFieldLabel>
                 <input value={formState.name} onChange={(event) => updateFormField("name", event.target.value)} required pattern="[A-Z0-9_]+" />
@@ -12938,29 +14235,25 @@ function CaseDocPlaceholdersPage() {
               </label>
               <label>
                 {caseDocPlaceholderText.valueUnit}
-                <select value={formState.scope} onChange={(event) => updateFormField("scope", event.target.value as "device" | "common")}>
+                <select value={formState.scope} onChange={(event) => updatePlaceholderScope(event.target.value as CaseDocPlaceholderScope)}>
                   <option value="device">{caseDocPlaceholderText.deviceScoped}</option>
+                  {dataSources.source?.generation_mode !== "uni" ? <option value="unit">{caseDocPlaceholderText.unitScoped}</option> : null}
                   <option value="common">{caseDocPlaceholderText.commonScoped}</option>
                 </select>
               </label>
-              <label>
-                {caseDocPlaceholderText.deviceType}
-                <input value={formState.device_type} onChange={(event) => updateFormField("device_type", event.target.value)} disabled={formState.scope === "common"} />
-              </label>
-              <label>
-                {caseDocPlaceholderText.sourceDeviceType}
-                <input value={formState.source_device_type} onChange={(event) => updateFormField("source_device_type", event.target.value)} disabled={formState.scope === "common"} />
-                <span className="field-hint">{caseDocPlaceholderText.sourceDeviceTypeHelp}</span>
-              </label>
+              {formState.scope === "device" ? <label>
+                <RequiredFieldLabel>{caseDocPlaceholderText.deviceType}</RequiredFieldLabel>
+                <input value={formState.device_type} onChange={(event) => updateFormField("device_type", event.target.value)} required />
+              </label> : null}
               <label>
                 <RequiredFieldLabel>{caseDocPlaceholderText.sourceFile}</RequiredFieldLabel>
                 {sourceFileState.status === "available" ? (
                   <select value={formState.source_file} onChange={(event) => updateSourceFile(event.target.value)} required>
                     <option value="">{caseDocPlaceholderText.selectSourceFile}</option>
-                    {sourceFileState.items.map((item) => (
+                    {editorSourceFiles.map((item) => (
                       <option key={item.source_file} value={item.source_file}>{item.source_file}</option>
                     ))}
-                    {formState.source_file && !sourceFileState.items.some((item) => item.source_file === formState.source_file) ? (
+                    {formState.source_file && !editorSourceFiles.some((item) => item.source_file === formState.source_file) ? (
                       <option value={formState.source_file}>{formState.source_file}</option>
                     ) : null}
                   </select>
@@ -12969,7 +14262,7 @@ function CaseDocPlaceholdersPage() {
                 )}
                 <span className="field-hint">{sourceFileState.message}</span>
               </label>
-              <label>
+              {formState.scope !== "unit" ? <label>
                 <RequiredFieldLabel>{caseDocPlaceholderText.keyColumn}</RequiredFieldLabel>
                 {selectedSourceFile ? (
                   <select value={formState.key_column} onChange={(event) => updateFormField("key_column", event.target.value)} required>
@@ -12982,7 +14275,7 @@ function CaseDocPlaceholdersPage() {
                 ) : (
                   <input value={formState.key_column} onChange={(event) => updateFormField("key_column", event.target.value)} required />
                 )}
-              </label>
+              </label> : null}
               <label>
                 <RequiredFieldLabel>{caseDocPlaceholderText.valueColumn}</RequiredFieldLabel>
                 {selectedSourceFile ? (
@@ -12997,33 +14290,98 @@ function CaseDocPlaceholdersPage() {
                   <input value={formState.value_column} onChange={(event) => updateFormField("value_column", event.target.value)} required />
                 )}
               </label>
-              <label>
-                {caseDocPlaceholderText.sourceColumn}
-                <input value={generatedSourceColumn} readOnly />
-                <span className="field-hint">{caseDocPlaceholderText.sourceColumnAutoHelp}</span>
-              </label>
-              <label>
-                {caseDocPlaceholderText.keyValue}
-                <input value={formState.key_value} onChange={(event) => updateFormField("key_value", event.target.value)} />
-              </label>
+              {formState.scope === "common" ? <label>
+                <RequiredFieldLabel>{caseDocPlaceholderText.keyValue}</RequiredFieldLabel>
+                <input value={formState.key_value} onChange={(event) => updateFormField("key_value", event.target.value)} required />
+              </label> : null}
               <label className="wide">
                 {caseDocPlaceholderText.descriptionColumn}
                 <textarea value={formState.description} onChange={(event) => updateFormField("description", event.target.value)} rows={3} />
               </label>
-              <div className="placeholder-editor-feedback wide">
+              </div>
+              </section>
+              <details className="placeholder-editor-advanced">
+                <summary>詳細設定</summary>
+                <div className="placeholder-editor-grid">
+                  <label>
+                    {caseDocPlaceholderText.sourceColumn}
+                    <input value={generatedSourceColumn} readOnly />
+                    <span className="field-hint">{caseDocPlaceholderText.sourceColumnAutoHelp}</span>
+                  </label>
+                  {formState.scope === "device" ? <label>
+                    {caseDocPlaceholderText.sourceDeviceType}
+                    <input value={formState.source_device_type} onChange={(event) => updateFormField("source_device_type", event.target.value)} />
+                    <span className="field-hint">{caseDocPlaceholderText.sourceDeviceTypeHelp}</span>
+                  </label> : null}
+                </div>
+              </details>
+              {dataSources.source?.generation_mode !== "uni" ? <section className="placeholder-editor-section placeholder-sample" aria-labelledby="placeholder-sample-title">
+                <h3 id="placeholder-sample-title">置換確認</h3>
+                <div className="placeholder-editor-grid">
+                  <label className={formState.scope === "device" ? "" : "wide"}>
+                    確認するユニット
+                    <select value={sampleUnitId} disabled={sampleOptions.status !== "available"}
+                      onChange={(event) => { invalidateSample(); setSampleUnitId(event.target.value); setSampleSlotKey(""); }}>
+                      <option value="">ユニットを選択してください</option>
+                      {sampleOptions.items.map(({ unit_config: unit }) => <option key={unit.unit_config_id} value={unit.unit_config_id}>
+                        {unit.fs_cluster_name} / {unit.block} / {unit.prefecture} / {unit.building}
+                      </option>)}
+                    </select>
+                  </label>
+                  {formState.scope === "device" ? <label>
+                    確認する対象装置
+                    <select value={sampleSlotKey} disabled={!selectedSampleUnit}
+                      onChange={(event) => { invalidateSample(); setSampleSlotKey(event.target.value); }}>
+                      <option value="">対象装置を選択してください</option>
+                      {selectedSampleUnit?.devices.map((device) => <option key={device.slot_key} value={device.slot_key}>
+                        {device.column_name ?? device.slot_key} / {device.host_name}
+                      </option>)}
+                    </select>
+                  </label> : null}
+                </div>
+                {sampleOptions.status === "loading" ? <p role="status">確認用データを取得しています…</p> : null}
+                {sampleOptions.status === "error" ? <FormFeedback tone="error" compact message="確認用データを取得できませんでした。参照データと接続を確認し、画面を開き直してください。" /> : null}
+                {sampleOptions.status === "available" && sampleOptions.items.length === 0 ? <p role="status">確認できるユニットがありません。</p> : null}
+                <div className="placeholder-sample-actions">
+                  <button className="secondary" type="button" onClick={(event) => void handlePlaceholderSample(event)}
+                    disabled={sampleState.status === "loading" || !selectedSampleUnit || (formState.scope === "device" && !sampleSlotKey)}>
+                    <span aria-hidden="true">✓</span> {sampleState.status === "loading" ? "確認中…" : "置換を確認"}
+                  </button>
+                </div>
+                {sampleState.status === "error" ? <FormFeedback tone="error" compact message={sampleState.message} /> : null}
+                {sampleState.status === "loading" ? <p role="status">{sampleState.message}</p> : null}
+                {sampleState.data ? <div className={`placeholder-sample-result ${sampleState.data.status === "resolved" ? "is-resolved" : "is-unresolved"}`} role="status" aria-live="polite">
+                  <strong>{sampleState.message}</strong>
+                  <dl className="placeholder-sample-values">
+                    <div><dt>置換前</dt><dd><code>{sampleState.data.before}</code></dd></div>
+                    <div><dt>置換後</dt><dd>{sampleState.data.after}</dd></div>
+                  </dl>
+                  <dl className="placeholder-sample-trace">
+                    <div><dt>参照先</dt><dd>{sampleState.data.source_file
+                      ? [sampleState.data.source_file, sampleState.data.sheet_name, sampleState.data.row_number ? `${sampleState.data.row_number}行` : null].filter(Boolean).join(" / ")
+                      : "—"}</dd></div>
+                    {sampleState.data.lookup_value ? <div><dt>照合値</dt><dd>{sampleState.data.key_column ? `${sampleState.data.key_column} = ` : ""}{sampleState.data.lookup_value}</dd></div> : null}
+                    {sampleState.data.value_column ? <div><dt>値列</dt><dd>{sampleState.data.value_column}</dd></div> : null}
+                    {sampleState.data.uses_default ? <div><dt>値の出典</dt><dd>システムの既定値</dd></div> : null}
+                  </dl>
+                </div> : null}
+              </section> : <p className="form-feedback form-feedback-neutral">UNIの置換確認には、案件化画面でtargetごとの対象工事を指定してください。</p>}
+              </fieldset>
+              <footer className="placeholder-editor-footer">
+              <div className="placeholder-editor-feedback">
                 <FormFeedback message={mutationState.status === "error" ? mutationState.message : ""} tone="error" compact />
               </div>
-              <div className="modal-actions wide">
-                <button className="secondary" type="button" onClick={closeEditor}>
+              <div className="modal-actions">
+                <button className="secondary" type="button" onClick={closeEditor} disabled={mutationState.status === "submitting"}>
                   {caseDocPlaceholderText.cancel}
                 </button>
                 <button className="primary" type="submit" disabled={mutationState.status === "submitting"}>
-                  {caseDocPlaceholderText.save}
+                  {mutationState.status === "submitting" ? caseDocPlaceholderText.saving : caseDocPlaceholderText.save}
                 </button>
               </div>
+              </footer>
             </form>
-          </section>
-        </div>
+          </dialog>
       ) : null}
     </Page>
   );
@@ -13031,6 +14389,7 @@ function CaseDocPlaceholdersPage() {
 
 function ModuleApprovalStatusPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const showOperationNotice = useOperationNotice();
   const [moduleListState, setModuleListState] = useState<ModuleListState>({
     status: "loading",
@@ -13052,9 +14411,19 @@ function ModuleApprovalStatusPage() {
   const currentRoleLabel = currentUser ? getAuthRoleLabel(currentUser.role) : "未ログイン";
   const currentRoleDescription = currentUser ? getAuthRoleDescription(currentUser.role) : "ログインしてください。";
   const [approvalComment, setApprovalComment] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | ModuleApiStatus>("all");
+  const statusFilter = (searchParams.get("status") ?? "all") as "all" | ModuleApiStatus;
+  const includeArchived = searchParams.get("include_archived") === "true";
   const [reloadTick, setReloadTick] = useState(0);
   const [isContentPreviewOpen, setIsContentPreviewOpen] = useState(false);
+  const filteredModuleItems = filterApprovalItems(moduleListState.items, statusFilter, includeArchived);
+
+  useEffect(() => {
+    if (moduleListState.status !== "available") return;
+    const items = filterApprovalItems(moduleListState.items, statusFilter, includeArchived);
+    setSelectedModuleVersionId((current) => items.some((item) => item.module_version_id === current)
+      ? current
+      : items[0]?.module_version_id ?? null);
+  }, [moduleListState.status, moduleListState.items, statusFilter, includeArchived]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -13088,15 +14457,6 @@ function ModuleApprovalStatusPage() {
           message: responseBody.message || "モジュール一覧を取得しました。",
         });
 
-        setSelectedModuleVersionId((current) => {
-          if (items.length === 0) {
-            return null;
-          }
-          if (current !== null && items.some((item) => item.module_version_id === current)) {
-            return current;
-          }
-          return items[0].module_version_id;
-        });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -13117,7 +14477,7 @@ function ModuleApprovalStatusPage() {
   }, [reloadTick]);
 
   const selectedSummary =
-    moduleListState.items.find((item) => item.module_version_id === selectedModuleVersionId) ?? null;
+    filteredModuleItems.find((item) => item.module_version_id === selectedModuleVersionId) ?? null;
   const moduleContentState = useModuleDetailState(
     selectedSummary ? String(selectedSummary.module_id) : undefined,
     selectedSummary ? String(selectedSummary.version_no) : null,
@@ -13192,32 +14552,39 @@ function ModuleApprovalStatusPage() {
     setIsContentPreviewOpen(false);
   }, [selectedModuleVersionId]);
 
-  const selectedItem = approvalDetailState.item;
+  const selectedItem = selectedSummary
+    && approvalDetailState.item?.target_id === selectedSummary.module_id
+    && approvalDetailState.item.version_no === selectedSummary.version_no
+    ? approvalDetailState.item : null;
   const selectedExecutableTransitions = selectedItem?.allowed_transitions.filter((transition) =>
     canRunApprovalTransition(currentUser?.role, selectedItem.status, transition.to_status)
   ) ?? [];
   const canCommentOnSelectedApproval = selectedExecutableTransitions.length > 0;
   const selectedLatestReturnHistory = getLatestReturnHistory(selectedItem?.history);
   const statusFilterOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
-    { value: "all", label: "0. 全件表示" },
+    { value: "all", label: includeArchived ? "0. 全件表示" : "0. 通常表示" },
     { value: "draft", label: "1. 作成中" },
     { value: "review_requested", label: "2. 承認依頼中" },
     { value: "returned", label: "3. 差戻し" },
     { value: "published", label: "4. 承認済み" },
     { value: "archived", label: "5. 保管済み" },
   ];
-  const filteredModuleItems = moduleListState.items.filter((item) =>
-    statusFilter === "all" ? true : item.status === statusFilter,
-  );
-
   function handleStatusFilterChange(nextFilter: "all" | ModuleApiStatus): void {
-    setStatusFilter(nextFilter);
-    const nextItems = moduleListState.items.filter((item) =>
-      nextFilter === "all" ? true : item.status === nextFilter,
-    );
-    if (nextItems.length > 0) {
-      setSelectedModuleVersionId(nextItems[0].module_version_id);
-    }
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (nextFilter === "all") params.delete("status");
+      else params.set("status", nextFilter);
+      return params;
+    });
+  }
+
+  function handleIncludeArchivedChange(nextIncludeArchived: boolean): void {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (nextIncludeArchived) params.set("include_archived", "true");
+      else params.delete("include_archived");
+      return params;
+    });
   }
 
   async function handleApplyTransition(toStatus: ModuleApiStatus): Promise<void> {
@@ -13354,6 +14721,7 @@ function ModuleApprovalStatusPage() {
             {option.label}
           </button>
         ))}
+        <ArchivedItemsToggle status={statusFilter} includeArchived={includeArchived} onChange={handleIncludeArchivedChange} />
       </section>
 
       <section className={`list-status list-status-${moduleListState.status}`} aria-live="polite">
@@ -13568,6 +14936,7 @@ function ModuleApprovalStatusPage() {
 
 function ApprovalPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const showOperationNotice = useOperationNotice();
   const [approvalListState, setApprovalListState] = useState<ApprovalStatusListState>({
     status: "loading",
@@ -13589,9 +14958,20 @@ function ApprovalPage() {
   const currentRoleLabel = currentUser ? getAuthRoleLabel(currentUser.role) : "未ログイン";
   const currentRoleDescription = currentUser ? getAuthRoleDescription(currentUser.role) : "ログインしてください。";
   const [approvalComment, setApprovalComment] = useState("");
-  const [approvalStatusFilter, setApprovalStatusFilter] = useState<"all" | ModuleApiStatus>("all");
+  const approvalStatusFilter = (searchParams.get("status") ?? "all") as "all" | ModuleApiStatus;
+  const includeArchived = searchParams.get("include_archived") === "true";
   const [reloadTick, setReloadTick] = useState(0);
   const [isContentPreviewOpen, setIsContentPreviewOpen] = useState(false);
+  const filteredApprovalItems = filterApprovalItems(approvalListState.items, approvalStatusFilter, includeArchived);
+  const selectedSummary = filteredApprovalItems.find((item) => item.target_id === selectedTargetId) ?? null;
+
+  useEffect(() => {
+    if (approvalListState.status !== "available") return;
+    const items = filterApprovalItems(approvalListState.items, approvalStatusFilter, includeArchived);
+    setSelectedTargetId((current) => items.some((item) => item.target_id === current)
+      ? current
+      : items[0]?.target_id ?? null);
+  }, [approvalListState.status, approvalListState.items, approvalStatusFilter, includeArchived]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -13626,15 +15006,6 @@ function ApprovalPage() {
           message: responseBody.message || "承認状態一覧を取得しました。",
         });
 
-        setSelectedTargetId((current) => {
-          if (items.length === 0) {
-            return null;
-          }
-          if (current !== null && items.some((item) => item.target_id === current)) {
-            return current;
-          }
-          return items[0].target_id;
-        });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -13724,11 +15095,12 @@ function ApprovalPage() {
     setIsContentPreviewOpen(false);
   }, [selectedTargetId]);
 
-  const selectedItem = approvalDetailState.item;
-  const selectedSummary =
-    approvalListState.items.find((item) => item.target_id === selectedTargetId) ?? null;
+  const selectedItem = selectedSummary
+    && approvalDetailState.item?.target_id === selectedSummary.target_id
+    && approvalDetailState.item.version_no === selectedSummary.version_no
+    ? approvalDetailState.item : null;
   const sourceDocContentState = useSourceDocDetailState(
-    selectedTargetId === null ? undefined : String(selectedTargetId),
+    selectedSummary ? String(selectedSummary.target_id) : undefined,
   );
   const selectedExecutableTransitions = selectedItem?.allowed_transitions.filter((transition) =>
     canRunApprovalTransition(currentUser?.role, selectedItem.status, transition.to_status)
@@ -13736,25 +15108,29 @@ function ApprovalPage() {
   const canCommentOnSelectedApproval = selectedExecutableTransitions.length > 0;
   const selectedLatestReturnHistory = getLatestReturnHistory(selectedItem?.history);
   const approvalStatusFilterOptions: { value: "all" | ModuleApiStatus; label: string }[] = [
-    { value: "all", label: "0. 全件表示" },
+    { value: "all", label: includeArchived ? "0. 全件表示" : "0. 通常表示" },
     { value: "draft", label: "1. 作成中" },
     { value: "review_requested", label: "2. 承認依頼中" },
     { value: "returned", label: "3. 差戻し" },
     { value: "published", label: "4. 承認済み" },
     { value: "archived", label: "5. 保管済み" },
   ];
-  const filteredApprovalItems = approvalListState.items.filter((item) =>
-    approvalStatusFilter === "all" ? true : item.status === approvalStatusFilter,
-  );
-
   function handleApprovalStatusFilterChange(nextFilter: "all" | ModuleApiStatus): void {
-    setApprovalStatusFilter(nextFilter);
-    const nextItems = approvalListState.items.filter((item) =>
-      nextFilter === "all" ? true : item.status === nextFilter,
-    );
-    if (nextItems.length > 0) {
-      setSelectedTargetId(nextItems[0].target_id);
-    }
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (nextFilter === "all") params.delete("status");
+      else params.set("status", nextFilter);
+      return params;
+    });
+  }
+
+  function handleIncludeArchivedChange(nextIncludeArchived: boolean): void {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (nextIncludeArchived) params.set("include_archived", "true");
+      else params.delete("include_archived");
+      return params;
+    });
   }
 
   async function handleApplyTransition(toStatus: ModuleApiStatus): Promise<void> {
@@ -13873,6 +15249,7 @@ function ApprovalPage() {
             {option.label}
           </button>
         ))}
+        <ArchivedItemsToggle status={approvalStatusFilter} includeArchived={includeArchived} onChange={handleIncludeArchivedChange} />
       </section>
 
       <section className={`list-status list-status-${approvalListState.status}`} aria-live="polite">
@@ -14134,7 +15511,7 @@ function WorkflowStageCard({
 }: {
   step: string;
   title: string;
-  count: number;
+  count?: number | null;
   unit: string;
   to: string;
   action: string;
@@ -14144,19 +15521,25 @@ function WorkflowStageCard({
       <span className="workflow-stage-number">{step}</span>
       <div>
         <h2>{title}</h2>
-        <p><strong>{count}</strong>{unit}</p>
+        <p>{count === undefined ? null : <strong aria-label={count === null ? "件数未取得" : undefined}>{count ?? "—"}</strong>}{unit}</p>
       </div>
       <NavLink to={to} className="workflow-stage-link">{action}<span aria-hidden="true">→</span></NavLink>
     </article>
   );
 }
 
-function WorkQueueCard({ title, count, to, action }: { title: string; count: number; to: string; action: string }) {
+function WorkQueueCard({ title, count, to, action, actionable = false }: {
+  title: string;
+  count: number | null;
+  to: string;
+  action: string;
+  actionable?: boolean;
+}) {
   return (
-    <article className="work-queue-card">
+    <article className={`work-queue-card${actionable && count !== null && count > 0 ? " work-queue-card-actionable" : ""}`}>
       <div>
-        <span>{title}</span>
-        <strong>{count}<small>件</small></strong>
+        <h3>{title}</h3>
+        <strong aria-label={count === null ? "件数未取得" : undefined}>{count ?? "—"}<small>件</small></strong>
       </div>
       <NavLink to={to} className="text-button">{action}<span aria-hidden="true">→</span></NavLink>
     </article>
@@ -14615,6 +15998,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 function routeTitle(path: string) {
+  if (path.startsWith("/case-docs/executions/comments/")) return "案件CSのコメント確認";
+  if (path === "/case-docs/executions/comments") return "案件CSコメント検索";
   const map: Record<string, string> = {
     "/home": "HOME画面",
     "/modules/search": "モジュール一覧",
@@ -14626,6 +16011,7 @@ function routeTitle(path: string) {
     "/case-docs": "新規案件化",
     "/case-docs/executions": "案件CS実行管理",
     "/case-docs/placeholders": "プレースホルダ設定",
+    "/case-docs/data-sources": "参照元DB管理",
     "/admin/users": "ユーザー管理",
     "/approval": "原本承認管理",
   };

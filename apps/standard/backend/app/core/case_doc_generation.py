@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import copy
 from datetime import datetime
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 import re
@@ -11,15 +12,17 @@ from typing import Any
 from zoneinfo import ZoneInfo
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.core.responses import (
+    CaseDocGenerationPreviewData,
     CaseDocHostAssignmentData,
     CaseDocInstanceDetailData,
+    CaseDocPreviewCellData,
     CaseDocResolveContextData,
     ModuleRowData,
     SourceDocDetailData,
@@ -380,18 +383,38 @@ def _find_target_device_header_row(sheet: Worksheet) -> int | None:
     return None
 
 
-def _write_target_device_headers(sheet: Worksheet, target_assignments: list[CaseDocHostAssignmentData]) -> None:
+def _context_target_groups(context: CaseDocResolveContextData) -> list[list[CaseDocHostAssignmentData]]:
+    return context.target_groups or [[assignment] for assignment in context.target_assignments]
+
+
+def _write_target_device_headers(
+    sheet: Worksheet,
+    target_assignments: list[CaseDocHostAssignmentData],
+    target_groups: list[list[CaseDocHostAssignmentData]] | None = None,
+) -> None:
     target_header_row = _find_target_device_header_row(sheet)
     if target_header_row is None:
         return
 
     excel_no_row = target_header_row + 1
     host_name_row = target_header_row + 3
-    for block_index, assignment in enumerate(target_assignments[: max(1, len(target_assignments))]):
+    groups = target_groups or [[assignment] for assignment in target_assignments]
+    for block_index, group in enumerate(groups):
         target_no_column = _target_block_start_column(block_index) + 1
         target_column = _target_block_start_column(block_index) + TARGET_BLOCK_WIDTH - 1
         sheet.cell(row=excel_no_row, column=target_no_column, value=block_index + 1)
-        sheet.cell(row=host_name_row, column=target_column, value=assignment.host_name)
+        if len(group) == 1:
+            sheet.cell(row=host_name_row, column=target_column, value=group[0].host_name)
+            continue
+        names = [assignment.host_name for assignment in group]
+        for offset in range(3):
+            row_index = excel_no_row + offset
+            row_names = names[offset:offset + 1] if offset < 2 else names[offset:]
+            cell = sheet.cell(row=row_index, column=target_column, value="\n".join(row_names) or None)
+            cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            sheet.row_dimensions[row_index].height = max(
+                sheet.row_dimensions[row_index].height or 18, 18 * max(1, len(row_names))
+            )
 
 
 def _device_entry_value(module_row: ModuleRowData, slot_no: int, field_name: str) -> str | None:
@@ -439,6 +462,7 @@ def _write_source_doc_body_sheet(
     workbook,
     source_doc: SourceDocDetailData,
     target_assignments: list[CaseDocHostAssignmentData],
+    target_groups: list[list[CaseDocHostAssignmentData]] | None = None,
 ) -> None:
     body_sheet = _find_case_doc_body_sheet(workbook)
     if body_sheet is None:
@@ -462,7 +486,7 @@ def _write_source_doc_body_sheet(
     _copy_target_device_blocks(body_sheet, target_assignments)
     _write_case_doc_title(body_sheet)
     _ensure_work_content_width(body_sheet)
-    _write_target_device_headers(body_sheet, target_assignments)
+    _write_target_device_headers(body_sheet, target_assignments, target_groups)
     _unmerge_ranges_from_row(body_sheet, start_row)
     _delete_rows_from(body_sheet, start_row)
 
@@ -559,6 +583,10 @@ def _build_placeholder_values_for_assignment(
 ) -> dict[str, str]:
     values = {item.key: item.value for item in context.common_values}
     values["TARGET_DEVICE_HOSTNAME"] = target_assignment.host_name
+    work = next((item for item in context.target_contexts if target_assignment.slot_key in item.slot_keys), None)
+    if work is not None:
+        values.update({"TARGET_BLOCK": work.block, "TARGET_BUILDING": work.building,
+            "TARGET_PREFECTURE": work.prefecture, "TARGET_CLUSTER_NO": str(work.cluster_no), "TARGET_AREA": work.area})
 
     target_command_floating_ip = _value_for_host(context, "SBC_COMMAND_FLOATING_IP", target_assignment.host_name)
     if target_command_floating_ip:
@@ -570,6 +598,33 @@ def _build_placeholder_values_for_assignment(
 
     _add_legacy_placeholder_aliases(values)
     return values
+
+
+def _build_placeholder_values_for_group(
+    context: CaseDocResolveContextData,
+    group: list[CaseDocHostAssignmentData],
+) -> tuple[dict[str, str], set[str]]:
+    values = {item.key: item.value for item in context.common_values}
+    values["TARGET_DEVICE_HOSTNAME"] = "\n".join(assignment.host_name for assignment in group)
+    candidates: dict[str, set[str]] = {}
+    for assignment in group:
+        for name, value in _build_placeholder_values_for_assignment(context, assignment).items():
+            if name != "TARGET_DEVICE_HOSTNAME" and name not in values:
+                candidates.setdefault(name, set()).add(value)
+            if re.fullmatch(r"[A-Z0-9_]+", assignment.slot_key):
+                values[name + "__" + assignment.slot_key] = value
+        values["TARGET_DEVICE_HOSTNAME__" + assignment.slot_key] = assignment.host_name
+    ambiguous = {name for name, candidates_for_name in candidates.items() if len(candidates_for_name) > 1}
+    for name, candidates_for_name in candidates.items():
+        if len(candidates_for_name) == 1:
+            values[name] = next(iter(candidates_for_name))
+    _add_legacy_placeholder_aliases(values)
+    for legacy_name, formal_name in TEMPLATE_PLACEHOLDER_ALIASES.items():
+        if formal_name in ambiguous:
+            ambiguous.add(legacy_name)
+        elif formal_name in values:
+            ambiguous.discard(legacy_name)
+    return values, ambiguous
 
 
 def _replace_placeholders(sheet: Worksheet, values: dict[str, str]) -> None:
@@ -597,9 +652,19 @@ def _replace_placeholders_in_columns(sheet: Worksheet, values: dict[str, str], m
 
 
 def _replace_target_device_block_placeholders(sheet: Worksheet, context: CaseDocResolveContextData) -> None:
-    for block_index, target_assignment in enumerate(context.target_assignments or [context.target_assignment]):
+    for block_index, group in enumerate(_context_target_groups(context)):
         start_column = _target_block_start_column(block_index)
-        values = _build_placeholder_values_for_assignment(context, target_assignment)
+        values, ambiguous = _build_placeholder_values_for_group(context, group)
+        for row in sheet.iter_rows(min_col=start_column, max_col=start_column + TARGET_BLOCK_WIDTH - 1):
+            for cell in row:
+                text = _cell_text(cell.value)
+                for name in ambiguous:
+                    if "{{" + name + "}}" in text:
+                        raise ValueError(
+                            _u(r"\u8907\u6570\u306e\u5bfe\u8c61\u3067\u5024\u304c\u7570\u306a\u308b\u305f\u3081\u3001\u88c5\u7f6e\u3092\u6307\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044: ")
+                            + f"target {block_index + 1} / {name} "
+                            + "({{" + name + "__" + group[0].slot_key + "}})"
+                        )
         _replace_placeholders_in_columns(sheet, values, start_column, start_column + TARGET_BLOCK_WIDTH - 1)
 
 
@@ -619,15 +684,20 @@ def _write_resolved_values_sheet(sheet: Worksheet, context: CaseDocResolveContex
     rows: list[list[object]] = [
         [_u("\\u6848\\u4ef6CS \\u751f\\u6210\\u7d50\\u679c")],
         [_u("\\u539f\\u672cID"), context.source_doc_id],
-        [_u("\\u30e6\\u30cb\\u30c3\\u30c8\\u69cb\\u6210ID"), context.unit_config.unit_config_id],
-        [_u("FS\\u30af\\u30e9\\u30b9\\u30bf"), context.unit_config.fs_cluster_name],
-        [_u("\\u30d6\\u30ed\\u30c3\\u30af"), context.unit_config.block],
-        [_u("\\u90fd\\u9053\\u5e9c\\u770c"), context.unit_config.prefecture],
-        [_u("\\u30d3\\u30eb"), context.unit_config.building],
+        [_u("\\u30e6\\u30cb\\u30c3\\u30c8\\u69cb\\u6210ID"), context.work_summary["unit_config_id"]],
+        ["クラスタ番号" if context.generation_mode == "uni" else _u("FS\\u30af\\u30e9\\u30b9\\u30bf"), context.work_summary["fs_cluster_name"]],
+        [_u("\\u30d6\\u30ed\\u30c3\\u30af"), context.work_summary["block"]],
+        [_u("\\u90fd\\u9053\\u5e9c\\u770c"), context.work_summary["prefecture"]],
+        [_u("\\u30d3\\u30eb"), context.work_summary["building"]],
         [],
         [host_assignment_title],
         host_header,
     ]
+    if context.target_contexts:
+        rows = rows[:-3] + [[], ["targetごとの対象工事"], ["target", "ブロック", "府県", "ビル", "クラスタ番号", "収容エリア", "ホスト名接頭辞"]]
+        rows.extend([item.target_no, item.block, item.prefecture, item.building, item.cluster_no, item.area, item.hostname_prefix]
+            for item in context.target_contexts)
+        rows.extend([[], [host_assignment_title], host_header])
     rows.extend(
         [assignment.slot_key, assignment.device_type, assignment.system or "-", assignment.host_name]
         for assignment in context.host_assignments
@@ -665,6 +735,12 @@ def _write_resolved_values_sheet(sheet: Worksheet, context: CaseDocResolveContex
 
     for row_index, values in enumerate(rows, start=1):
         _write_row(sheet, row_index, values)
+        for column_index, value in enumerate(values, start=1):
+            if isinstance(value, str) and "\n" in value:
+                sheet.cell(row=row_index, column=column_index).alignment = Alignment(wrap_text=True, vertical="top")
+                sheet.row_dimensions[row_index].height = max(
+                    sheet.row_dimensions[row_index].height or 15, 15 * len(value.splitlines())
+                )
         if values and len(values) == 1:
             sheet.cell(row=row_index, column=1).font = Font(bold=True, size=14)
         if values in (host_header, target_device_slot_header, common_header, resolved_header):
@@ -819,26 +895,35 @@ def _sanitize_cd_creator_package(workbook_bytes: bytes) -> bytes:
     return output.getvalue()
 
 
-def build_case_doc_workbook_bytes(
+def _build_case_doc_workbook(
     context: CaseDocResolveContextData,
     source_doc: SourceDocDetailData | None = None,
-) -> bytes:
-    """Build an xlsm workbook by copying the configured template."""
+) -> tuple[Workbook, dict[str, str]]:
+    """Render the workbook and retain original placeholder cells for review."""
 
     if not TEMPLATE_PATH.exists():
         raise FileNotFoundError(f"case document template was not found: {TEMPLATE_PATH}")
 
     workbook = load_workbook(TEMPLATE_PATH, keep_vba=True)
     if source_doc is not None:
-        _write_source_doc_body_sheet(workbook, source_doc, context.target_assignments)
+        _write_source_doc_body_sheet(workbook, source_doc, context.target_assignments, _context_target_groups(context))
 
     placeholder_values = _build_placeholder_values(context)
     body_sheet = _find_case_doc_body_sheet(workbook)
+    original_cells = {
+        cell.coordinate: cell.value
+        for row in body_sheet.iter_rows()
+        for cell in row
+        if isinstance(cell.value, str) and "{{" in cell.value
+    } if body_sheet is not None else {}
     if body_sheet is not None:
         _replace_target_device_block_placeholders(body_sheet, context)
     for sheet in workbook.worksheets:
         if sheet.title != RESOLVED_VALUES_SHEET_NAME:
-            _replace_placeholders(sheet, placeholder_values)
+            if sheet is body_sheet:
+                _replace_placeholders_in_columns(sheet, placeholder_values, 1, TARGET_BLOCK_START_COLUMN - 1)
+            else:
+                _replace_placeholders(sheet, placeholder_values)
 
     if RESOLVED_VALUES_SHEET_NAME in workbook.sheetnames:
         resolved_sheet = workbook[RESOLVED_VALUES_SHEET_NAME]
@@ -855,9 +940,59 @@ def build_case_doc_workbook_bytes(
         _replace_placeholders(source_doc_sheet, placeholder_values)
         source_doc_sheet.sheet_state = "hidden"
 
-    output = BytesIO()
-    workbook.save(output)
-    return _sanitize_cd_creator_package(output.getvalue())
+    return workbook, original_cells
+
+
+def build_case_doc_workbook_bytes(
+    context: CaseDocResolveContextData,
+    source_doc: SourceDocDetailData | None = None,
+) -> bytes:
+    """Build an xlsm workbook by copying the configured template."""
+
+    workbook, _ = _build_case_doc_workbook(context, source_doc)
+    try:
+        output = BytesIO()
+        workbook.save(output)
+        return _sanitize_cd_creator_package(output.getvalue())
+    finally:
+        workbook.close()
+
+
+def preview_case_doc_workbook(
+    context: CaseDocResolveContextData,
+    source_doc: SourceDocDetailData,
+) -> CaseDocGenerationPreviewData:
+    """Inspect actual body substitutions without saving a workbook or instance."""
+
+    workbook, original_cells = _build_case_doc_workbook(context, source_doc)
+    try:
+        sheet = _find_case_doc_body_sheet(workbook)
+        if sheet is None:
+            raise ValueError("Case document body sheet was not found.")
+        cells = []
+        target_end_column = TARGET_BLOCK_START_COLUMN + TARGET_BLOCK_WIDTH * len(_context_target_groups(context))
+        for coordinate, original_text in original_cells.items():
+            cell = sheet[coordinate]
+            resolved_text = str(cell.value) if cell.value is not None else ""
+            target_no = (
+                (cell.column - TARGET_BLOCK_START_COLUMN) // TARGET_BLOCK_WIDTH + 1
+                if TARGET_BLOCK_START_COLUMN <= cell.column < target_end_column else None
+            )
+            cells.append(CaseDocPreviewCellData(
+                sheet_name=sheet.title,
+                cell=coordinate,
+                target_no=target_no,
+                template_text=original_text,
+                resolved_text=resolved_text,
+                unresolved_placeholders=list(dict.fromkeys(re.findall(r"\{\{[^{}]+\}\}", resolved_text))),
+            ))
+        return CaseDocGenerationPreviewData(
+            context=context,
+            cells=cells,
+            unresolved_count=sum(len(cell.unresolved_placeholders) for cell in cells),
+        )
+    finally:
+        workbook.close()
 
 
 def _is_actionable_execution_row(module_row: ModuleRowData) -> bool:
@@ -912,7 +1047,7 @@ def build_case_doc_execution_item_snapshots(
         generated_tech_doc_text = _cell_text(
             body_sheet.cell(row=excel_row, column=body_columns["tech_doc_text"]).value
         )
-        for block_index, assignment in enumerate(context.target_assignments):
+        for block_index, group in enumerate(_context_target_groups(context)):
             target_no = block_index + 1
             time_column = _target_block_start_column(block_index)
             generated_window_text = _cell_text(body_sheet.cell(row=excel_row, column=time_column + 1).value)
@@ -929,14 +1064,47 @@ def build_case_doc_execution_item_snapshots(
                     "minor_no": source_row.minor_no,
                     "tech_doc_text": generated_tech_doc_text or source_row.tech_doc_text,
                     "work_text": generated_work_text or source_row.work_text,
+                    "indent_level": min(3, _work_text_column_for_indent(body_columns, source_row) - body_columns["work_text"]),
                     "check_text": generated_check_text or source_row.expected_result,
                     "window_text": generated_window_text or None,
                     "p_text": generated_p_text or None,
                     "command_text": generated_command_text or None,
-                    "host_name": assignment.host_name,
+                    "host_name": "\n".join(assignment.host_name for assignment in group),
                 }
             )
     return snapshots
+
+
+def read_case_doc_execution_indents(workbook_path: Path) -> dict[int, int]:
+    """Recover legacy display metadata from the case's immutable workbook."""
+
+    path = workbook_path.resolve()
+    stat = path.stat()
+    return dict(_read_case_doc_execution_indents(str(path), stat.st_mtime_ns, stat.st_size))
+
+
+@lru_cache(maxsize=32)
+def _read_case_doc_execution_indents(path: str, modified_ns: int, size: int) -> tuple[tuple[int, int], ...]:
+    # Execution updates repeatedly read details; invalidate when the original changes.
+    del modified_ns, size
+    workbook = load_workbook(path, keep_vba=False, keep_links=False, data_only=False)
+    try:
+        sheet = _find_case_doc_body_sheet(workbook)
+        if sheet is None:
+            raise ValueError("The saved case workbook has no procedure sheet.")
+        header_row = _find_body_header_row(sheet)
+        columns = _detect_body_columns(sheet, header_row)
+        first_column = columns["work_text"]
+        last_column = columns["expected_result"] - 1
+        levels = []
+        for row in sheet.iter_rows(min_row=header_row + 1, min_col=first_column, max_col=last_column):
+            first_text = next((cell for cell in row if _cell_text(cell.value)), None)
+            if first_text is not None:
+                level = first_text.column - first_column + int(first_text.alignment.indent or 0)
+                levels.append((first_text.row, max(0, min(3, level))))
+        return tuple(levels)
+    finally:
+        workbook.close()
 
 
 def _format_evidence_time(value: str | None, *, include_date: bool) -> str:
@@ -991,6 +1159,9 @@ def _write_case_doc_evidence_sheet(workbook, detail: CaseDocInstanceDetailData) 
                 item.skip_reason or "",
             ]
         )
+        if "\n" in item.host_name:
+            sheet.cell(row=sheet.max_row, column=3).alignment = Alignment(wrap_text=True, vertical="top")
+            sheet.row_dimensions[sheet.max_row].height = 15 * len(item.host_name.splitlines())
         if item.status == "skipped":
             for cell in sheet[sheet.max_row]:
                 cell.fill = PatternFill(fill_type="solid", fgColor="D9D9D9")

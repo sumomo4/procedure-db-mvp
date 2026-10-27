@@ -1,6 +1,9 @@
 """Case document generation routes for Sprint 4."""
 
 from typing import Annotated
+from zipfile import BadZipFile
+
+from openpyxl.utils.exceptions import InvalidFileException
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
@@ -12,13 +15,19 @@ from app.core.case_doc_generation import (
     build_case_doc_evidence_workbook_bytes,
     build_case_doc_execution_item_snapshots,
     build_case_doc_workbook_bytes,
+    preview_case_doc_workbook,
 )
 from app.core.responses import (
     ApiResponse,
+    CaseDocDataSourceData,
+    CaseDocDataSourceListData,
+    CaseDocDataSourceRequest,
+    CaseDocCommentSearchData,
     CaseDocExecutionBulkUpdateRequest,
     CaseDocExecutionCommentUpdateRequest,
     CaseDocExecutionUpdateRequest,
     CaseDocGenerateRequest,
+    CaseDocGenerationPreviewData,
     CaseDocInstanceCompleteRequest,
     CaseDocInstanceCreateRequest,
     CaseDocInstanceDetailData,
@@ -31,9 +40,14 @@ from app.core.responses import (
     CaseDocPlaceholderMappingUpsertRequest,
     CaseDocPlaceholderSourceFileListData,
     CaseDocPlaceholderSourcePreviewData,
+    CaseDocPlaceholderSampleData,
+    CaseDocPlaceholderSampleOptionsData,
+    CaseDocPlaceholderSampleRequest,
     CaseDocResolveContextData,
     CaseDocResolveContextRequest,
     CaseDocUnitConfigListData,
+    CaseDocUniWorkSelection,
+    CaseDocUniCandidatesData,
     RouterEndpointData,
     RouterFoundationData,
     success_response,
@@ -41,6 +55,8 @@ from app.core.responses import (
 from app.db.case_docs import (
     create_case_doc_placeholder_mapping,
     get_case_doc_placeholder_source_preview,
+    get_case_doc_master_repository,
+    list_case_doc_blocks,
     list_case_doc_buildings,
     list_case_doc_placeholder_mappings,
     list_case_doc_placeholder_source_files,
@@ -56,6 +72,7 @@ from app.db.case_doc_instances import (
     create_case_doc_instance,
     get_case_doc_instance_detail,
     list_case_doc_instances,
+    search_case_doc_comments,
     read_case_doc_original_workbook,
     update_case_doc_preparation,
     update_case_doc_execution_comment,
@@ -63,11 +80,75 @@ from app.db.case_doc_instances import (
     update_case_doc_execution_items,
 )
 from app.db.source_docs import get_source_doc_detail
+from app.db.case_doc_data_sources import list_data_sources, save_data_source, select_data_source
+from app.db.case_doc_placeholder_samples import list_placeholder_sample_options, preview_placeholder_sample
 from app.routers.health import get_app_settings
 from app.core.security import AdminUser, CurrentUser
 
 
 router = APIRouter(prefix="/case-docs", tags=["case-docs"])
+
+
+def get_data_source_settings(
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    data_source_id: Annotated[str | None, Query(max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")] = None,
+) -> AppSettings:
+    try:
+        return select_data_source(settings, data_source_id)[0]
+    except ValueError as exception:
+        raise HTTPException(status_code=400, detail=str(exception)) from exception
+    except (OSError, DatabaseConnectionError) as exception:
+        raise HTTPException(status_code=503, detail="参照元DBの設定を読み込めませんでした。") from exception
+
+
+@router.get("/data-sources", response_model=ApiResponse[CaseDocDataSourceListData])
+def read_data_sources(
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    include_disabled: bool = False,
+) -> ApiResponse[CaseDocDataSourceListData]:
+    if include_disabled and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="この操作を実行する権限がありません。")
+    try:
+        data = list_data_sources(settings, include_disabled)
+        if current_user.role != "admin":
+            data = data.model_copy(update={"items": [item.model_copy(update={"export_directory": ""}) for item in data.items]})
+        return success_response(data, "参照元DB一覧を取得しました。")
+    except (OSError, ValueError, DatabaseConnectionError) as exception:
+        raise HTTPException(status_code=503, detail="参照元DB一覧を取得できませんでした。") from exception
+
+
+@router.post("/data-sources", response_model=ApiResponse[CaseDocDataSourceData], status_code=201)
+def create_data_source(
+    payload: CaseDocDataSourceRequest,
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocDataSourceData]:
+    del admin_user
+    try:
+        return success_response(save_data_source(settings, payload, create=True), "参照元DBを登録しました。")
+    except ValueError as exception:
+        raise HTTPException(status_code=400, detail=str(exception)) from exception
+    except (OSError, DatabaseConnectionError) as exception:
+        raise HTTPException(status_code=503, detail="参照元DBを登録できませんでした。") from exception
+
+
+@router.put("/data-sources/{source_id}", response_model=ApiResponse[CaseDocDataSourceData])
+def edit_data_source(
+    source_id: str,
+    payload: CaseDocDataSourceRequest,
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocDataSourceData]:
+    del admin_user
+    if source_id != payload.source_id:
+        raise HTTPException(status_code=400, detail="参照元DBの識別子は変更できません。")
+    try:
+        return success_response(save_data_source(settings, payload, create=False), "参照元DBを更新しました。")
+    except ValueError as exception:
+        raise HTTPException(status_code=400, detail=str(exception)) from exception
+    except (OSError, DatabaseConnectionError) as exception:
+        raise HTTPException(status_code=503, detail="参照元DBを更新できませんでした。") from exception
 
 
 @router.get("/foundation", response_model=ApiResponse[RouterFoundationData])
@@ -79,6 +160,11 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
         sprint="Sprint 4",
         status="foundation-ready",
         planned_endpoints=[
+            RouterEndpointData(
+                method="GET",
+                path="/api/v1/case-docs/master/blocks",
+                purpose="Case document block master options.",
+            ),
             RouterEndpointData(
                 method="GET",
                 path="/api/v1/case-docs/master/prefectures",
@@ -108,6 +194,14 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
                 method="GET",
                 path="/api/v1/case-docs/placeholders/source-preview",
                 purpose="Filtered source rows for the visual placeholder editor.",
+            ),
+            RouterEndpointData(
+                method="GET", path="/api/v1/case-docs/placeholders/sample-options",
+                purpose="Sample units and devices for the placeholder editor.",
+            ),
+            RouterEndpointData(
+                method="POST", path="/api/v1/case-docs/placeholders/sample",
+                purpose="Resolve an unsaved definition without writing configuration or case data.",
             ),
             RouterEndpointData(
                 method="POST",
@@ -141,8 +235,17 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
             ),
             RouterEndpointData(
                 method="POST",
+                path="/api/v1/case-docs/preview",
+                purpose="Review actual placeholder substitutions without creating an instance.",
+            ),
+            RouterEndpointData(
+                method="POST",
                 path="/api/v1/case-docs/instances",
                 purpose="Create a persistent executable case document instance.",
+            ),
+            RouterEndpointData(
+                method="GET", path="/api/v1/case-docs/comments",
+                purpose="Search saved comments across case documents without updating them.",
             ),
         ],
     )
@@ -151,45 +254,106 @@ def read_case_doc_router_foundation() -> ApiResponse[RouterFoundationData]:
 
 @router.get("/master/prefectures", response_model=ApiResponse[CaseDocMasterOptionsData])
 def read_case_doc_prefectures(
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
 ) -> ApiResponse[CaseDocMasterOptionsData]:
     """Return selectable prefectures for case document generation."""
 
-    data = list_case_doc_prefectures(settings)
+    try:
+        data = list_case_doc_prefectures(settings)
+    except (OSError, ValueError) as exception:
+        raise HTTPException(status_code=400, detail="選択した参照元DBのユニット構成を読み込めませんでした。") from exception
     return success_response(data, "Case document prefectures were retrieved.")
+
+
+@router.get("/master/blocks", response_model=ApiResponse[CaseDocMasterOptionsData])
+def read_case_doc_blocks(
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
+) -> ApiResponse[CaseDocMasterOptionsData]:
+    """Return selectable blocks for case document generation."""
+
+    try:
+        data = list_case_doc_blocks(settings)
+    except (OSError, ValueError) as exception:
+        raise HTTPException(status_code=400, detail="選択した参照元DBのユニット構成を読み込めませんでした。") from exception
+    return success_response(data, "ブロック一覧を取得しました。")
 
 
 @router.get("/master/buildings", response_model=ApiResponse[CaseDocMasterOptionsData])
 def read_case_doc_buildings(
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
-    prefecture: Annotated[str, Query(min_length=1)],
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
+    prefecture: Annotated[str | None, Query(min_length=1)] = None,
+    block: Annotated[str | None, Query(min_length=1)] = None,
 ) -> ApiResponse[CaseDocMasterOptionsData]:
-    """Return selectable buildings for selected prefecture."""
+    """Return selectable buildings for a block or legacy prefecture selection."""
 
-    data = list_case_doc_buildings(settings, prefecture)
+    if prefecture is None and block is None:
+        raise HTTPException(status_code=400, detail="ブロックまたは都道府県を指定してください。")
+    try:
+        data = list_case_doc_buildings(settings, prefecture, block=block)
+    except (OSError, ValueError) as exception:
+        raise HTTPException(status_code=400, detail="選択した参照元DBのユニット構成を読み込めませんでした。") from exception
     return success_response(data, "Case document buildings were retrieved.")
 
 
 @router.get("/master/unit-config", response_model=ApiResponse[CaseDocUnitConfigListData])
 def read_case_doc_unit_configs(
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
-    prefecture: Annotated[str, Query(min_length=1)],
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
     building: Annotated[str, Query(min_length=1)],
+    prefecture: Annotated[str | None, Query(min_length=1)] = None,
+    block: Annotated[str | None, Query(min_length=1)] = None,
 ) -> ApiResponse[CaseDocUnitConfigListData]:
     """Return unit configuration candidates for selected location."""
 
-    data = list_case_doc_unit_configs(settings, prefecture, building)
+    if prefecture is None and block is None:
+        raise HTTPException(status_code=400, detail="ブロックまたは都道府県を指定してください。")
+    try:
+        data = list_case_doc_unit_configs(settings, prefecture, building, block=block)
+    except (OSError, ValueError) as exception:
+        raise HTTPException(status_code=400, detail="選択した参照元DBのユニット構成を読み込めませんでした。") from exception
     return success_response(data, "Case document unit configurations were retrieved.")
+
+
+@router.get("/uni/clusters", response_model=ApiResponse[CaseDocMasterOptionsData])
+def read_uni_clusters(
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
+    block: Annotated[str, Query(min_length=1)],
+    building: Annotated[str, Query(min_length=1)],
+) -> ApiResponse[CaseDocMasterOptionsData]:
+    del current_user
+    if settings.case_doc_generation_mode != "uni":
+        raise HTTPException(status_code=400, detail="選択した参照元DBはUNI方式ではありません。")
+    try:
+        data = get_case_doc_master_repository(settings).list_clusters(block, building)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return success_response(data, "UNIのクラスタ番号を取得しました。")
+
+
+@router.post("/uni/target-candidates", response_model=ApiResponse[CaseDocUniCandidatesData])
+def read_uni_target_candidates(
+    payload: CaseDocUniWorkSelection,
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
+) -> ApiResponse[CaseDocUniCandidatesData]:
+    del current_user
+    if settings.case_doc_generation_mode != "uni":
+        raise HTTPException(status_code=400, detail="選択した参照元DBはUNI方式ではありません。")
+    try:
+        data = get_case_doc_master_repository(settings).target_candidates(payload)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return success_response(data, "UNIのホスト名を生成し、抽出ファイルと照合しました。")
 
 
 @router.get("/placeholders", response_model=ApiResponse[CaseDocPlaceholderMappingListData])
 def read_case_doc_placeholder_mappings(
-    admin_user: AdminUser,
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingListData]:
     """Return placeholder mappings used for case document generation."""
 
-    del admin_user
+    del current_user
     try:
         data = list_case_doc_placeholder_mappings(settings)
     except ValueError as exception:
@@ -202,12 +366,12 @@ def read_case_doc_placeholder_mappings(
 
 @router.get("/placeholders/sources", response_model=ApiResponse[CaseDocPlaceholderSourceFileListData])
 def read_case_doc_placeholder_source_files(
-    admin_user: AdminUser,
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
 ) -> ApiResponse[CaseDocPlaceholderSourceFileListData]:
     """Return selectable export files and their column names."""
 
-    del admin_user
+    del current_user
     try:
         data = list_case_doc_placeholder_source_files(settings)
     except (OSError, ValueError) as exception:
@@ -217,8 +381,8 @@ def read_case_doc_placeholder_source_files(
 
 @router.get("/placeholders/source-preview", response_model=ApiResponse[CaseDocPlaceholderSourcePreviewData])
 def read_case_doc_placeholder_source_preview(
-    admin_user: AdminUser,
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
     source_file: Annotated[str, Query(min_length=1)],
     fs_cluster_name: Annotated[str | None, Query()] = None,
     block: Annotated[str | None, Query()] = None,
@@ -228,7 +392,7 @@ def read_case_doc_placeholder_source_preview(
 ) -> ApiResponse[CaseDocPlaceholderSourcePreviewData]:
     """Return one export table filtered through unit configuration data."""
 
-    del admin_user
+    del current_user
     try:
         data = get_case_doc_placeholder_source_preview(
             settings,
@@ -244,11 +408,38 @@ def read_case_doc_placeholder_source_preview(
     return success_response(data, "Case document placeholder source preview was retrieved.")
 
 
+@router.get("/placeholders/sample-options", response_model=ApiResponse[CaseDocPlaceholderSampleOptionsData])
+def read_placeholder_sample_options(
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
+) -> ApiResponse[CaseDocPlaceholderSampleOptionsData]:
+    del admin_user
+    try:
+        data = list_placeholder_sample_options(settings)
+    except (OSError, ValueError, InvalidFileException, BadZipFile) as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    return success_response(data, "Placeholder sample units were retrieved.")
+
+
+@router.post("/placeholders/sample", response_model=ApiResponse[CaseDocPlaceholderSampleData])
+def read_placeholder_sample(
+    payload: CaseDocPlaceholderSampleRequest,
+    admin_user: AdminUser,
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
+) -> ApiResponse[CaseDocPlaceholderSampleData]:
+    del admin_user
+    try:
+        data = preview_placeholder_sample(settings, payload)
+    except (OSError, ValueError, InvalidFileException, BadZipFile) as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    return success_response(data, "Unsaved placeholder sample was evaluated without saving.")
+
+
 @router.post("/placeholders/validate", response_model=ApiResponse[CaseDocPlaceholderMappingItemData])
 def validate_case_doc_placeholder_mapping_payload(
     payload: CaseDocPlaceholderMappingUpsertRequest,
     admin_user: AdminUser,
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Validate a placeholder mapping without saving it."""
 
@@ -271,7 +462,7 @@ def validate_case_doc_placeholder_mapping_payload(
 def create_case_doc_placeholder_mapping_payload(
     payload: CaseDocPlaceholderMappingUpsertRequest,
     admin_user: AdminUser,
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Create a placeholder mapping used for case document generation."""
 
@@ -291,7 +482,7 @@ def update_case_doc_placeholder_mapping_payload(
     name: str,
     payload: CaseDocPlaceholderMappingUpsertRequest,
     admin_user: AdminUser,
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Update a placeholder mapping used for case document generation."""
 
@@ -311,7 +502,7 @@ def set_case_doc_placeholder_mapping_enabled_payload(
     name: str,
     payload: CaseDocPlaceholderMappingEnabledRequest,
     admin_user: AdminUser,
-    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    settings: Annotated[AppSettings, Depends(get_data_source_settings)],
 ) -> ApiResponse[CaseDocPlaceholderMappingItemData]:
     """Enable or disable a placeholder mapping used for case document generation."""
 
@@ -344,6 +535,32 @@ def resolve_case_doc_generation_context(
     return success_response(data, "Case document context was resolved.")
 
 
+@router.post("/preview", response_model=ApiResponse[CaseDocGenerationPreviewData])
+def preview_case_doc_generation(
+    payload: CaseDocGenerateRequest,
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ApiResponse[CaseDocGenerationPreviewData]:
+    """Preview the selected targets using the Excel renderer without DB writes."""
+
+    del current_user
+    if not payload.target_slot_groups and not payload.uni_targets:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="各targetの対象装置を選択してください。")
+    try:
+        context = resolve_case_doc_context(settings, payload)
+        source_doc = get_source_doc_detail(settings, payload.source_doc_id)
+        if source_doc is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="原本が見つかりませんでした。")
+        data = preview_case_doc_workbook(context, source_doc)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    except OSError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="置換結果の確認に必要なファイルを読み込めませんでした。") from exception
+    return success_response(data, "置換結果を確認しました。")
+
+
 @router.post("/generate")
 def generate_case_doc(
     payload: CaseDocGenerateRequest,
@@ -373,8 +590,12 @@ def generate_case_doc(
             detail="source document was not found.",
         )
 
-    workbook_bytes = build_case_doc_workbook_bytes(context, source_doc)
-    filename = f"case-doc-{payload.source_doc_id}-{context.unit_config.unit_config_id}.xlsm"
+    try:
+        workbook_bytes = build_case_doc_workbook_bytes(context, source_doc)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    suffix = context.unit_config.unit_config_id if context.unit_config else context.data_source_id
+    filename = f"case-doc-{payload.source_doc_id}-{suffix}.xlsm"
     return Response(
         content=workbook_bytes,
         media_type=XLSM_MEDIA_TYPE,
@@ -445,6 +666,26 @@ def read_case_doc_instances(
     except DatabaseConnectionError as exception:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
     return success_response(data, "案件CS実行一覧を取得しました。")
+
+
+@router.get("/comments", response_model=ApiResponse[CaseDocCommentSearchData])
+def read_case_doc_comments(
+    current_user: CurrentUser,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+    keyword: Annotated[str | None, Query(max_length=200)] = None,
+    case_keyword: Annotated[str | None, Query(max_length=200)] = None,
+    execution_status: Annotated[str | None, Query(pattern=r"^(all|active|not_started|in_progress|completed)$")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ApiResponse[CaseDocCommentSearchData]:
+    del current_user
+    try:
+        data = search_case_doc_comments(settings, keyword, case_keyword, execution_status, page, page_size)
+    except ValueError as exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exception)) from exception
+    except DatabaseConnectionError as exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exception)) from exception
+    return success_response(data, "Case document comments were retrieved.")
 
 
 @router.get("/instances/{case_document_id}", response_model=ApiResponse[CaseDocInstanceDetailData])

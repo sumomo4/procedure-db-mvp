@@ -1,7 +1,7 @@
-﻿"""Common API response models and helpers."""
+"""Common API response models and helpers."""
 
 from datetime import date
-from typing import Generic, Literal, TypeVar
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -759,6 +759,26 @@ class ApprovalStatusUpdateRequest(BaseModel):
     note: str | None = None
 
 
+class CaseDocDataSourceRequest(BaseModel):
+    source_id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")
+    name: str = Field(min_length=1, max_length=80)
+    enabled: bool = True
+    description: str = Field(default="", max_length=500)
+
+
+class CaseDocDataSourceData(CaseDocDataSourceRequest):
+    file_count: int = 0
+    export_directory: str = ""
+    files_updated_at: str | None = None
+    generation_ready: bool = False
+    generation_mode: Literal["unit_config", "uni"] = "unit_config"
+    generation_message: str = ""
+
+
+class CaseDocDataSourceListData(BaseModel):
+    items: list[CaseDocDataSourceData]
+
+
 class CaseDocMasterOptionData(BaseModel):
     """Selectable master option used by the case document workflow."""
 
@@ -788,17 +808,33 @@ class CaseDocUnitConfigListData(BaseModel):
     items: list[CaseDocUnitConfigItemData]
 
 
+class CaseDocUniWorkSelection(BaseModel):
+    block: str = Field(min_length=1, max_length=100)
+    building: str = Field(min_length=1, max_length=100)
+    cluster_no: int = Field(ge=1, le=36, strict=True)
+
+
+class CaseDocUniTargetSelection(CaseDocUniWorkSelection):
+    device_keys: list[str] = Field(min_length=1, max_length=32)
+
+
 class CaseDocResolveContextRequest(BaseModel):
     """Request payload for resolving case document generation context."""
 
+    data_source_id: str | None = Field(default=None, max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")
+    expected_data_source_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     source_doc_id: int = Field(gt=0)
-    prefecture: str = Field(min_length=1)
-    building: str = Field(min_length=1)
+    prefecture: str | None = Field(default=None, min_length=1)
+    building: str | None = Field(default=None, min_length=1)
+    uni_targets: list[CaseDocUniTargetSelection] | None = Field(default=None, min_length=1, max_length=20)
     fs_cluster_name: str | None = None
     block: str | None = None
     unit_config_id: str | None = None
     target_slot_key: str | None = None
     target_slot_keys: list[str] | None = None
+    target_slot_groups: list[Annotated[list[str], Field(min_length=1, max_length=256)]] | None = Field(
+        default=None, min_length=1, max_length=20
+    )
 
 
 class CaseDocHostAssignmentData(BaseModel):
@@ -808,6 +844,29 @@ class CaseDocHostAssignmentData(BaseModel):
     device_type: str
     system: str | None = None
     host_name: str
+    column_name: str | None = None
+
+
+class CaseDocUniWorkContextData(CaseDocUniWorkSelection):
+    prefecture: str
+    area: str
+    hostname_prefix: str
+    pair_building: str = ""
+
+
+class CaseDocUniTargetContextData(CaseDocUniWorkContextData):
+    target_no: int = Field(ge=1, le=20)
+    slot_keys: list[str] = Field(default_factory=list)
+
+
+class CaseDocUniCandidateDeviceData(CaseDocHostAssignmentData):
+    available: bool
+    message: str = ""
+
+
+class CaseDocUniCandidatesData(BaseModel):
+    work: CaseDocUniWorkContextData
+    devices: list[CaseDocUniCandidateDeviceData]
 
 
 class CaseDocTargetDeviceSlotData(BaseModel):
@@ -845,9 +904,9 @@ class CaseDocPlaceholderMappingItemData(BaseModel):
 
     name: str = Field(min_length=1)
     enabled: bool
-    scope: Literal["device", "common"]
+    scope: Literal["device", "common", "unit"]
     source_file: str = Field(min_length=1)
-    key_column: str = Field(min_length=1)
+    key_column: str = ""
     value_column: str = Field(min_length=1)
     source_column: str = Field(min_length=1)
     device_type: str | None = None
@@ -861,9 +920,9 @@ class CaseDocPlaceholderMappingUpsertRequest(BaseModel):
 
     name: str = Field(min_length=1, pattern=r"^[A-Z0-9_]+$")
     enabled: bool
-    scope: Literal["device", "common"]
+    scope: Literal["device", "common", "unit"]
     source_file: str = Field(min_length=1)
-    key_column: str = Field(min_length=1)
+    key_column: str = ""
     value_column: str = Field(min_length=1)
     source_column: str = Field(min_length=1)
     device_type: str | None = None
@@ -876,6 +935,43 @@ class CaseDocPlaceholderMappingEnabledRequest(BaseModel):
     """Request payload for enabling or disabling a placeholder mapping."""
 
     enabled: bool
+
+
+class CaseDocPlaceholderSampleUnitData(BaseModel):
+    """One unit and its devices available for a read-only sample."""
+
+    unit_config: CaseDocUnitConfigItemData
+    devices: list[CaseDocHostAssignmentData]
+
+
+class CaseDocPlaceholderSampleOptionsData(BaseModel):
+    items: list[CaseDocPlaceholderSampleUnitData]
+
+
+class CaseDocPlaceholderSampleRequest(BaseModel):
+    """Unsaved definition and explicit sample selection, never persisted."""
+
+    mapping: CaseDocPlaceholderMappingUpsertRequest
+    prefecture: str = Field(min_length=1)
+    building: str = Field(min_length=1)
+    unit_config_id: str = Field(min_length=1)
+    target_slot_key: str | None = None
+
+
+class CaseDocPlaceholderSampleData(BaseModel):
+    status: Literal[
+        "resolved", "disabled", "not_applicable", "reference_missing",
+        "lookup_mismatch", "empty_value", "missing_column", "source_error", "unresolved",
+    ]
+    before: str
+    after: str
+    source_file: str | None = None
+    sheet_name: str | None = None
+    row_number: int | None = None
+    lookup_value: str | None = None
+    key_column: str | None = None
+    value_column: str | None = None
+    uses_default: bool = False
 
 
 class CaseDocPlaceholderMappingListData(BaseModel):
@@ -940,18 +1036,52 @@ class CaseDocPlaceholderSourcePreviewData(BaseModel):
 class CaseDocResolveContextData(BaseModel):
     """Resolved context used to generate a case document."""
 
+    data_source_id: str = "ssc"
+    data_source_name: str = "SSC"
+    data_source_revision: str | None = None
     source_doc_id: int
-    unit_config: CaseDocUnitConfigItemData
+    generation_mode: Literal["unit_config", "uni"] = "unit_config"
+    unit_config: CaseDocUnitConfigItemData | None = None
+    target_contexts: list[CaseDocUniTargetContextData] = Field(default_factory=list)
     target_assignment: CaseDocHostAssignmentData
     target_assignments: list[CaseDocHostAssignmentData]
+    target_groups: list[list[CaseDocHostAssignmentData]] = Field(default_factory=list)
     target_device_slots: list[CaseDocTargetDeviceSlotData]
     host_assignments: list[CaseDocHostAssignmentData]
     common_values: list[CaseDocCommonValueData]
     resolved_placeholders: list[CaseDocResolvedPlaceholderData]
 
+    @property
+    def work_summary(self) -> dict[str, str]:
+        if self.unit_config is not None:
+            return self.unit_config.model_dump()
+        def joined(field):
+            return " / ".join(dict.fromkeys(str(getattr(item, field)) for item in self.target_contexts))
+        return {"unit_config_id": "", "fs_cluster_name": " / ".join(dict.fromkeys(f"CL{item.cluster_no}" for item in self.target_contexts)),
+            "prefecture": joined("prefecture"), "building": joined("building"), "block": joined("block")}
+
 
 class CaseDocGenerateRequest(CaseDocResolveContextRequest):
     """Request payload for case document generation."""
+
+
+class CaseDocPreviewCellData(BaseModel):
+    """One placeholder-bearing cell before and after workbook substitution."""
+
+    sheet_name: str
+    cell: str
+    target_no: int | None = None
+    template_text: str
+    resolved_text: str
+    unresolved_placeholders: list[str]
+
+
+class CaseDocGenerationPreviewData(BaseModel):
+    """Read-only preview produced by the same renderer as the Excel download."""
+
+    context: CaseDocResolveContextData
+    cells: list[CaseDocPreviewCellData]
+    unresolved_count: int
 
 
 class CaseDocInstanceCreateRequest(CaseDocResolveContextRequest):
@@ -1006,6 +1136,31 @@ class CaseDocExecutionCommentData(BaseModel):
     lock_version: int = Field(ge=0)
 
 
+class CaseDocCommentSearchItemData(BaseModel):
+    """One saved nonempty comment with its case and durable minor-group address."""
+
+    execution_comment_id: int
+    case_document_id: int
+    case_document_key: str
+    case_name: str
+    source_doc_key: str
+    source_doc_name: str
+    execution_status: Literal["not_started", "in_progress", "completed"]
+    group_start_row_order: int = Field(ge=1)
+    item_label: str
+    comment_text: str
+    updated_by: str | None = None
+    updated_at: str
+
+
+class CaseDocCommentSearchData(BaseModel):
+    items: list[CaseDocCommentSearchItemData]
+    total_count: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+    total_pages: int = Field(ge=0)
+
+
 class CaseDocExecutionItemData(BaseModel):
     """One actionable time cell in a generated case document."""
 
@@ -1020,6 +1175,7 @@ class CaseDocExecutionItemData(BaseModel):
     minor_no: str | None = None
     tech_doc_text: str | None = None
     work_text: str | None = None
+    indent_level: int = Field(default=0, ge=0, le=3)
     check_text: str | None = None
     window_text: str | None = None
     p_text: str | None = None
@@ -1036,6 +1192,10 @@ class CaseDocExecutionItemData(BaseModel):
 class CaseDocInstanceListItemData(BaseModel):
     """Summary of one persistent case document instance."""
 
+    generation_mode: Literal["unit_config", "uni"] = "unit_config"
+    data_source_id: str = "ssc"
+    data_source_name: str = "SSC"
+    data_source_revision: str | None = None
     case_document_id: int
     case_document_key: str
     case_name: str = ""
@@ -1065,6 +1225,7 @@ class CaseDocInstanceListData(BaseModel):
 class CaseDocInstanceDetailData(CaseDocInstanceListItemData):
     """Persistent case document instance with targets and execution items."""
 
+    target_contexts: list[CaseDocUniTargetContextData] = Field(default_factory=list)
     prefecture: str
     building: str
     preparation: CaseDocPreparationData = Field(default_factory=CaseDocPreparationData)

@@ -3,13 +3,18 @@
 from collections.abc import Sequence
 from datetime import datetime
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from openpyxl.utils.cell import coordinate_from_string
+
 from app.core.config import AppSettings
 from app.core.exceptions import DatabaseConnectionError
 from app.core.responses import (
+    CaseDocCommentSearchData,
+    CaseDocCommentSearchItemData,
     CaseDocExecutionCommentData,
     CaseDocExecutionCommentUpdateRequest,
     CaseDocExecutionHistoryData,
@@ -91,6 +96,7 @@ CREATE TABLE IF NOT EXISTS proc.case_document_execution_items (
     minor_no text,
     tech_doc_text text,
     work_text text,
+    indent_level integer CHECK (indent_level BETWEEN 0 AND 3),
     check_text text,
     window_text text,
     p_text text,
@@ -111,6 +117,8 @@ ALTER TABLE proc.case_document_execution_items
     ADD COLUMN IF NOT EXISTS window_text text;
 ALTER TABLE proc.case_document_execution_items
     ADD COLUMN IF NOT EXISTS p_text text;
+ALTER TABLE proc.case_document_execution_items
+    ADD COLUMN IF NOT EXISTS indent_level integer CHECK (indent_level BETWEEN 0 AND 3);
 
 CREATE INDEX IF NOT EXISTS idx_case_document_execution_items_case_document
     ON proc.case_document_execution_items (case_document_id, row_order, target_no);
@@ -224,7 +232,20 @@ def _write_original_workbook(settings: AppSettings, case_document_key: str, work
 
 
 def _summary_from_row(row: dict[str, Any]) -> CaseDocInstanceListItemData:
+    from app.db.case_doc_data_sources import canonical_data_source_id
+
+    context = row.get("context_json") or {}
+    if not isinstance(context, dict):
+        context = {}
+    source_id = canonical_data_source_id(context.get("data_source_id"))
+    source_name = context.get("data_source_name") or "SSC"
+    if context.get("data_source_id") in (None, "", "sbc") and source_name == "SBC":
+        source_name = "SSC"
     return CaseDocInstanceListItemData(
+        generation_mode="uni" if context.get("generation_mode") == "uni" else "unit_config",
+        data_source_id=source_id,
+        data_source_name=source_name,
+        data_source_revision=context.get("data_source_revision"),
         case_document_id=row["case_document_id"],
         case_document_key=row["case_document_key"],
         case_name=str(row.get("case_name") or row.get("source_doc_name") or "").strip(),
@@ -533,17 +554,17 @@ def create_case_doc_instance(
                         "source_doc_version_id": source_doc.source_doc_version_id,
                         "source_doc_key": source_doc.source_doc_key,
                         "source_doc_name": source_doc.source_doc_name,
-                        "unit_config_id": context.unit_config.unit_config_id,
-                        "prefecture": context.unit_config.prefecture,
-                        "building": context.unit_config.building,
+                        "unit_config_id": context.work_summary["unit_config_id"],
+                        "prefecture": context.work_summary["prefecture"],
+                        "building": context.work_summary["building"],
                         "context_json": json.dumps(context.model_dump(mode="json"), ensure_ascii=False),
                         "preparation_json": json.dumps(
                             {
                                 "construction_name": "",
                                 "construction_date": None,
                                 "construction_executor": "",
-                                "block": context.unit_config.block,
-                                "target_fs": context.unit_config.fs_cluster_name,
+                                "block": context.work_summary["block"],
+                                "target_fs": context.work_summary["fs_cluster_name"],
                                 "updated_by": None,
                                 "updated_at": None,
                             },
@@ -610,6 +631,7 @@ def create_case_doc_instance(
                             minor_no,
                             tech_doc_text,
                             work_text,
+                            indent_level,
                             check_text,
                             window_text,
                             p_text,
@@ -625,13 +647,14 @@ def create_case_doc_instance(
                             %(minor_no)s,
                             %(tech_doc_text)s,
                             %(work_text)s,
+                            %(indent_level)s,
                             %(check_text)s,
                             %(window_text)s,
                             %(p_text)s,
                             %(command_text)s
                         );
                         """,
-                        {"case_document_id": case_document_id, **item},
+                        {"indent_level": None, "case_document_id": case_document_id, **item},
                     )
     except Exception as exception:
         if workbook_path is not None:
@@ -687,6 +710,75 @@ def list_case_doc_instances(
     return CaseDocInstanceListData(items=[_summary_from_row(row) for row in rows], tags=tags)
 
 
+def search_case_doc_comments(
+    settings: AppSettings,
+    keyword: str | None = None,
+    case_keyword: str | None = None,
+    execution_status: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> CaseDocCommentSearchData:
+    """Search saved comments using SELECT only, without loading every case detail."""
+
+    if page < 1 or not 1 <= page_size <= 100:
+        raise ValueError("Invalid comment search pagination.")
+    if any(len(value or "") > 200 for value in (keyword, case_keyword)):
+        raise ValueError("Comment search keywords must be at most 200 characters.")
+    where_clause, parameters = _build_case_doc_list_filter(case_keyword, None, execution_status)
+
+    def pattern(value: str) -> str:
+        return "%" + value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+    if (case_keyword or "").strip():
+        parameters["keyword"] = pattern(case_keyword)
+    conditions = ["c.comment_text ~ '[^[:space:]]'"]
+    if (keyword or "").strip():
+        conditions.append("c.comment_text ILIKE %(comment_keyword)s")
+        parameters["comment_keyword"] = pattern(keyword)
+    where_clause += (" AND " if where_clause else "WHERE ") + " AND ".join(conditions)
+    from_clause = """
+        FROM proc.case_document_execution_comments c
+        JOIN proc.case_documents cd ON cd.case_document_id = c.case_document_id
+    """
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(settings.database_url, connect_timeout=settings.db_connect_timeout_seconds) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(f"SELECT COUNT(*) AS total_count {from_clause} {where_clause}", parameters)
+                total_count = int(cursor.fetchone()["total_count"])
+                total_pages = (total_count + page_size - 1) // page_size
+                effective_page = min(page, max(1, total_pages))
+                cursor.execute(
+                    f"""
+                    SELECT c.execution_comment_id, cd.case_document_id, cd.case_document_key,
+                        COALESCE(cd.case_name, '') AS case_name, cd.source_doc_key, cd.source_doc_name,
+                        CASE WHEN cd.status = 'completed' THEN 'completed'
+                            WHEN EXISTS (
+                                SELECT 1 FROM proc.case_document_execution_items progress
+                                WHERE progress.case_document_id = cd.case_document_id
+                                  AND progress.status IN ('checked', 'skipped')
+                            ) THEN 'in_progress' ELSE 'not_started' END AS execution_status,
+                        c.group_start_row_order, c.item_label, c.comment_text, c.updated_by, c.updated_at
+                    {from_clause} {where_clause}
+                    ORDER BY c.updated_at DESC, c.execution_comment_id DESC
+                    LIMIT %(limit)s OFFSET %(offset)s
+                    """,
+                    {**parameters, "limit": page_size, "offset": (effective_page - 1) * page_size},
+                )
+                rows = cursor.fetchall()
+    except Exception as exception:
+        raise DatabaseConnectionError("Failed to search case document comments.") from exception
+
+    return CaseDocCommentSearchData(
+        items=[CaseDocCommentSearchItemData(**{
+            **row, "updated_at": row["updated_at"].isoformat(),
+        }) for row in rows],
+        total_count=total_count, page=effective_page, page_size=page_size, total_pages=total_pages,
+    )
+
+
 def get_case_doc_instance_detail(
     settings: AppSettings,
     case_document_id: int,
@@ -737,6 +829,7 @@ def get_case_doc_instance_detail(
                         cei.minor_no,
                         cei.tech_doc_text,
                         cei.work_text,
+                        cei.indent_level,
                         cei.check_text,
                         cei.window_text,
                         cei.p_text,
@@ -865,6 +958,15 @@ def get_case_doc_instance_detail(
         )
         for row in target_rows
     ]
+    legacy_indents: dict[int, int] = {}
+    if any(row.get("indent_level") is None for row in item_rows):
+        from app.core.case_doc_generation import read_case_doc_execution_indents
+
+        try:
+            legacy_indents = read_case_doc_execution_indents(Path(summary_row["workbook_path"]))
+        except Exception:
+            logging.getLogger(__name__).warning("Could not recover legacy case indentation: case_document_id=%s", case_document_id)
+
     execution_items = [
         CaseDocExecutionItemData(
             execution_item_id=row["execution_item_id"],
@@ -878,6 +980,10 @@ def get_case_doc_instance_detail(
             minor_no=row["minor_no"],
             tech_doc_text=row["tech_doc_text"],
             work_text=row["work_text"],
+            indent_level=(
+                row["indent_level"] if row.get("indent_level") is not None
+                else legacy_indents.get(coordinate_from_string(row["excel_cell"])[1], 0)
+            ),
             check_text=row["check_text"],
             window_text=row["window_text"],
             p_text=row["p_text"],
@@ -909,6 +1015,7 @@ def get_case_doc_instance_detail(
     ]
     return CaseDocInstanceDetailData(
         **summary.model_dump(),
+        target_contexts=(summary_row.get("context_json") or {}).get("target_contexts", []),
         prefecture=summary_row["prefecture"],
         building=summary_row["building"],
         preparation=_preparation_from_row(summary_row),

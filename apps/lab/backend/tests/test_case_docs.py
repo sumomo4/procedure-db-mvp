@@ -253,6 +253,8 @@ def _write_placeholder_mapping(path: Path) -> None:
 
 
 def _write_placeholder_preview_exports(export_dir: Path, mapping_path: Path) -> None:
+    export_dir = export_dir / "ssc"
+    export_dir.mkdir()
     unit_config_workbook = Workbook()
     unit_config_sheet = unit_config_workbook.active
     unit_config_sheet.append(
@@ -422,7 +424,8 @@ def test_read_case_doc_placeholder_sources_reads_export_workbook_columns(
     workbook = Workbook()
     workbook.active.append(["ホスト名", "TTS-Host", "TTS-IP"])
     workbook.active.append(["hss-test-0", "tts-test", "192.0.2.10"])
-    workbook.save(tmp_path / "HSS.xlsx")
+    (tmp_path / "ssc").mkdir()
+    workbook.save(tmp_path / "ssc" / "HSS.xlsx")
     test_settings.case_doc_master_source = "export_file"
     test_settings.case_doc_access_export_dir = str(tmp_path)
 
@@ -541,7 +544,8 @@ def test_read_case_doc_placeholder_source_preview_rejects_filters_for_common_val
     common_workbook = Workbook()
     common_workbook.active.append(["key", "value"])
     common_workbook.active.append(["LOGIN_USER", "operator"])
-    common_workbook.save(tmp_path / "case_common_values.xlsx")
+    (tmp_path / "ssc").mkdir()
+    common_workbook.save(tmp_path / "ssc" / "case_common_values.xlsx")
     mapping_path = tmp_path / "placeholder_mapping.yml"
     _write_placeholder_mapping(mapping_path)
     test_settings.case_doc_master_source = "export_file"
@@ -819,8 +823,8 @@ def test_resolve_case_doc_context_rejects_unknown_unit(client: TestClient) -> No
     assert response.json()["result"] == "error"
 
 
-def test_resolve_case_doc_context_rejects_non_sbc_target_slot(client: TestClient) -> None:
-    """Resolve context API should reject a non-SBC target slot."""
+def test_resolve_case_doc_context_accepts_non_sbc_target_slot(client: TestClient) -> None:
+    """Resolve context API should accept another unit configuration device type."""
 
     response = client.post(
         "/api/v1/case-docs/resolve-context",
@@ -833,10 +837,10 @@ def test_resolve_case_doc_context_rejects_non_sbc_target_slot(client: TestClient
         },
     )
 
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.status_code == status.HTTP_200_OK
     body = response.json()
-    assert body["result"] == "error"
-    assert body["message"] == "target SBC slot was not found."
+    assert body["result"] == "success"
+    assert body["data"]["target_assignment"]["slot_key"] == "GUI_0"
 
 
 def test_generate_case_doc_returns_xlsm_download(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

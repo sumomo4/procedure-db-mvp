@@ -226,8 +226,17 @@ def _load_placeholder_mapping_payload(mapping_path: str) -> dict[str, object]:
 
 
 def _validate_placeholder_mapping_item(item: CaseDocPlaceholderMappingItemData) -> None:
+    if not item.source_file or any(character in item.source_file for character in "/\\:") or Path(item.source_file).name != item.source_file:
+        raise ValueError("参照ファイルには、選択した参照元DB内のファイル名を指定してください。")
     if not PLACEHOLDER_NAME_PATTERN.fullmatch(item.name):
         raise ValueError(f"placeholder mapping name is invalid: {item.name}")
+    if item.scope != "unit" and not item.key_column.strip():
+        raise ValueError(f"placeholder requires key_column: {item.name}")
+    if item.scope == "unit":
+        if item.source_file.casefold() not in {name.casefold() for name in UNIT_CONFIG_FILE_NAMES}:
+            raise ValueError(f"「ユニット構成の値」の参照ファイルにはユニット構成を指定してください: {item.name}")
+        if item.source_device_type or item.key_value:
+            raise ValueError(f"「ユニット構成の値」では参照装置種別・共通キーを指定できません: {item.name}")
     if item.scope == "device" and not item.device_type:
         raise ValueError(f"device placeholder requires device_type: {item.name}")
     if item.scope == "common" and not item.key_value:
@@ -388,6 +397,46 @@ def _enabled_common_mappings(
     return [mapping for mapping in mappings if mapping.enabled and mapping.scope == "common"]
 
 
+def _resolve_unit_placeholders(
+    unit_config: dict[str, object],
+    mappings: Iterable[CaseDocPlaceholderMappingItemData],
+) -> list[CaseDocResolvedPlaceholderData]:
+    """Read only the selected unit row; these values are shared across all targets."""
+
+    source_values = unit_config.get("source_values")
+    if not isinstance(source_values, dict):
+        source_values = {
+            _normalize_key(alias): str(unit_config[field])
+            for field, aliases in UNIT_CONFIG_COLUMN_ALIASES.items()
+            if field in unit_config
+            for alias in aliases
+        }
+        hosts = unit_config.get("hosts", {})
+        if isinstance(hosts, dict):
+            for slot_key, host in hosts.items():
+                if isinstance(host, dict):
+                    column = str(host.get("column_name") or f"{slot_key}{DEVICE_SLOT_SUFFIX}")
+                    source_values[_normalize_key(column)] = str(host.get("host_name") or "")
+
+    resolved: list[CaseDocResolvedPlaceholderData] = []
+    for mapping in mappings:
+        if not mapping.enabled or mapping.scope != "unit":
+            continue
+        column = _normalize_key(mapping.value_column)
+        if column not in source_values:
+            raise ValueError(f"ユニット構成に値列「{mapping.value_column}」がありません: {mapping.name}")
+        value = str(source_values[column]).strip()
+        if value:
+            resolved.append(CaseDocResolvedPlaceholderData(
+                placeholder=mapping.name,
+                value=value,
+                source_table=_source_table_from_mapping(mapping),
+                source_column=mapping.source_column,
+                host_name=None,
+            ))
+    return resolved
+
+
 def _source_table_from_mapping(mapping: CaseDocPlaceholderMappingItemData) -> str:
     return Path(mapping.source_file).stem
 
@@ -400,6 +449,8 @@ def _resolve_export_file_path(export_dir: Path, file_names: Iterable[str]) -> Pa
     for file_name in file_names:
         path = export_dir / file_name
         if path.exists():
+            if path.resolve().parent != export_dir.resolve():
+                raise ValueError("参照ファイルが選択した参照元DBの配置先外を指しています。")
             return path
     expected = ", ".join(file_names)
     raise ValueError(f"case document export file was not found: {expected}")
@@ -561,7 +612,7 @@ def _placeholder_sources_from_mappings(
     for mapping in mappings:
         columns = columns_by_file.setdefault(mapping.source_file, [])
         for column in (mapping.key_column, mapping.value_column):
-            if column not in columns:
+            if column and column not in columns:
                 columns.append(column)
     return CaseDocPlaceholderSourceFileListData(
         items=[
@@ -770,7 +821,7 @@ def _select_target_host_assignments(
     if requested_slot_keys:
         selected_assignments: list[CaseDocHostAssignmentData] = []
         seen_slot_keys: set[str] = set()
-        assignments_by_slot_key = {assignment.slot_key: assignment for assignment in sbc_assignments}
+        assignments_by_slot_key = {assignment.slot_key: assignment for assignment in host_assignments}
         for slot_key in requested_slot_keys:
             if slot_key in seen_slot_keys:
                 continue
@@ -783,20 +834,48 @@ def _select_target_host_assignments(
             return selected_assignments
 
     if not sbc_assignments:
+        if host_assignments:
+            return [host_assignments[0]]
         raise ValueError("target SBC slot was not found.")
     return [sbc_assignments[0]]
 
 
-def _to_target_device_slots(target_assignments: list[CaseDocHostAssignmentData]) -> list[CaseDocTargetDeviceSlotData]:
+def _select_target_host_groups(
+    host_assignments: list[CaseDocHostAssignmentData],
+    payload: CaseDocResolveContextRequest,
+) -> list[list[CaseDocHostAssignmentData]]:
+    if payload.target_slot_groups is None:
+        return [[assignment] for assignment in _select_target_host_assignments(
+            host_assignments, payload.target_slot_key, payload.target_slot_keys
+        )]
+    assignments_by_slot_key = {assignment.slot_key: assignment for assignment in host_assignments}
+    groups: list[list[CaseDocHostAssignmentData]] = []
+    for target_no, slot_keys in enumerate(payload.target_slot_groups, start=1):
+        group: list[CaseDocHostAssignmentData] = []
+        for slot_key in _unique_ordered(slot_keys):
+            assignment = assignments_by_slot_key.get(slot_key)
+            if assignment is None:
+                raise ValueError(_u(r"target\u306b\u9078\u629e\u3057\u305f\u5bfe\u8c61\u304c\u30e6\u30cb\u30c3\u30c8\u69cb\u6210\u306b\u3042\u308a\u307e\u305b\u3093: ") + slot_key)
+            group.append(assignment)
+        if not group:
+            raise ValueError(f"target {target_no}: " + _u(r"\u5bfe\u8c61\u30921\u3064\u4ee5\u4e0a\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002"))
+        groups.append(group)
+    return groups
+
+
+def _to_target_device_slots(
+    target_assignments: list[CaseDocHostAssignmentData],
+    target_groups: list[list[CaseDocHostAssignmentData]] | None = None,
+) -> list[CaseDocTargetDeviceSlotData]:
     return [
         CaseDocTargetDeviceSlotData(
             excel_no=index,
-            slot_key=assignment.slot_key,
-            device_type=assignment.device_type,
-            system=assignment.system,
-            host_name=assignment.host_name,
+            slot_key=" / ".join(assignment.slot_key for assignment in group),
+            device_type=" / ".join(_unique_ordered(assignment.device_type for assignment in group)),
+            system=" / ".join(_unique_ordered(assignment.system for assignment in group if assignment.system)) or None,
+            host_name="\n".join(assignment.host_name for assignment in group),
         )
-        for index, assignment in enumerate(target_assignments, start=1)
+        for index, group in enumerate(target_groups or [[assignment] for assignment in target_assignments], start=1)
     ]
 
 
@@ -805,8 +884,9 @@ def _to_host_assignments(hosts: dict[str, object]) -> list[CaseDocHostAssignment
         CaseDocHostAssignmentData(
             slot_key=slot_key,
             device_type=str(host["device_type"]),
-            system=str(host["system"]),
+            system=str(host["system"]) if host.get("system") is not None else None,
             host_name=str(host["host_name"]),
+            column_name=host.get("column_name"),
         )
         for slot_key, host in hosts.items()
         if isinstance(host, dict)
@@ -897,10 +977,13 @@ class CaseDocMasterRepository(Protocol):
     def list_prefectures(self) -> CaseDocMasterOptionsData:
         """Return prefectures available for case document generation."""
 
-    def list_buildings(self, prefecture: str) -> CaseDocMasterOptionsData:
-        """Return buildings filtered by prefecture."""
+    def list_blocks(self) -> CaseDocMasterOptionsData:
+        """Return blocks available for case document generation."""
 
-    def list_unit_configs(self, prefecture: str, building: str) -> CaseDocUnitConfigListData:
+    def list_buildings(self, prefecture: str | None = None, *, block: str | None = None) -> CaseDocMasterOptionsData:
+        """Return buildings filtered by block and/or prefecture."""
+
+    def list_unit_configs(self, prefecture: str | None, building: str, *, block: str | None = None) -> CaseDocUnitConfigListData:
         """Return unit configuration candidates for selected location."""
 
     def resolve_context(self, payload: CaseDocResolveContextRequest) -> CaseDocResolveContextData:
@@ -1009,19 +1092,26 @@ class SeedCaseDocMasterRepository:
         values = _unique_ordered(str(row["prefecture"]) for row in _UNIT_CONFIGS)
         return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
 
-    def list_buildings(self, prefecture: str) -> CaseDocMasterOptionsData:
+    def list_blocks(self) -> CaseDocMasterOptionsData:
+        values = sorted(_unique_ordered(str(row["block"]) for row in _UNIT_CONFIGS))
+        return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
+
+    def list_buildings(self, prefecture: str | None = None, *, block: str | None = None) -> CaseDocMasterOptionsData:
         values = _unique_ordered(
             str(row["building"])
             for row in _UNIT_CONFIGS
-            if row["prefecture"] == prefecture
+            if (prefecture is None or row["prefecture"] == prefecture)
+            and (block is None or row["block"] == block)
         )
         return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
 
-    def list_unit_configs(self, prefecture: str, building: str) -> CaseDocUnitConfigListData:
+    def list_unit_configs(self, prefecture: str | None, building: str, *, block: str | None = None) -> CaseDocUnitConfigListData:
         items = [
             _to_unit_config_item(row)
             for row in _UNIT_CONFIGS
-            if row["prefecture"] == prefecture and row["building"] == building
+            if (prefecture is None or row["prefecture"] == prefecture)
+            and (block is None or row["block"] == block)
+            and row["building"] == building
         ]
         return CaseDocUnitConfigListData(items=items)
 
@@ -1032,11 +1122,13 @@ class SeedCaseDocMasterRepository:
             raise ValueError("unit configuration hosts are invalid.")
 
         host_assignments = _to_host_assignments(hosts)
-        target_assignments = _select_target_host_assignments(host_assignments, payload.target_slot_key, payload.target_slot_keys)
+        target_groups = _select_target_host_groups(host_assignments, payload)
+        target_assignments = [group[0] for group in target_groups]
         mappings = self._load_placeholder_mappings()
         common_values = _list_common_values(mappings)
         resolved_placeholders = [
             *_resolve_sbc_placeholders_by_host_name(host_assignments, mappings),
+            *_resolve_unit_placeholders(unit_config, mappings),
             *_resolve_common_placeholders(common_values),
         ]
 
@@ -1045,7 +1137,8 @@ class SeedCaseDocMasterRepository:
             unit_config=_to_unit_config_item(unit_config),
             target_assignment=target_assignments[0],
             target_assignments=target_assignments,
-            target_device_slots=_to_target_device_slots(target_assignments),
+            target_groups=target_groups,
+            target_device_slots=_to_target_device_slots(target_assignments, target_groups),
             host_assignments=host_assignments,
             common_values=common_values,
             resolved_placeholders=resolved_placeholders,
@@ -1071,6 +1164,7 @@ class ExportFileCaseDocMasterRepository:
                 path
                 for path in self.export_dir.iterdir()
                 if path.is_file()
+                and not path.is_symlink()
                 and not path.name.startswith("~$")
                 and path.suffix.lower() in {".xlsx", ".xlsm", ".csv"}
             ),
@@ -1260,21 +1354,28 @@ class ExportFileCaseDocMasterRepository:
         values = sorted(_unique_ordered(str(row["prefecture"]) for row in self._load_unit_configs()))
         return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
 
-    def list_buildings(self, prefecture: str) -> CaseDocMasterOptionsData:
+    def list_blocks(self) -> CaseDocMasterOptionsData:
+        values = sorted(_unique_ordered(str(row["block"]) for row in self._load_unit_configs()))
+        return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
+
+    def list_buildings(self, prefecture: str | None = None, *, block: str | None = None) -> CaseDocMasterOptionsData:
         values = sorted(
             _unique_ordered(
                 str(row["building"])
                 for row in self._load_unit_configs()
-                if row["prefecture"] == prefecture
+                if (prefecture is None or row["prefecture"] == prefecture)
+                and (block is None or row["block"] == block)
             )
         )
         return CaseDocMasterOptionsData(items=[_as_option(value) for value in values])
 
-    def list_unit_configs(self, prefecture: str, building: str) -> CaseDocUnitConfigListData:
+    def list_unit_configs(self, prefecture: str | None, building: str, *, block: str | None = None) -> CaseDocUnitConfigListData:
         items = [
             _to_unit_config_item(row)
             for row in _sort_unit_configs(self._load_unit_configs())
-            if row["prefecture"] == prefecture and row["building"] == building
+            if (prefecture is None or row["prefecture"] == prefecture)
+            and (block is None or row["block"] == block)
+            and row["building"] == building
         ]
         return CaseDocUnitConfigListData(items=items)
 
@@ -1285,11 +1386,13 @@ class ExportFileCaseDocMasterRepository:
             raise ValueError("unit configuration hosts are invalid.")
 
         host_assignments = _to_host_assignments(hosts)
-        target_assignments = _select_target_host_assignments(host_assignments, payload.target_slot_key, payload.target_slot_keys)
+        target_groups = _select_target_host_groups(host_assignments, payload)
+        target_assignments = [group[0] for group in target_groups]
         mappings = self._load_placeholder_mappings()
         common_values = self._load_common_values(mappings)
         resolved_placeholders = [
             *self._resolve_device_placeholders_by_host_name(host_assignments, mappings),
+            *_resolve_unit_placeholders(unit_config, mappings),
             *_resolve_common_placeholders(common_values),
         ]
 
@@ -1298,7 +1401,8 @@ class ExportFileCaseDocMasterRepository:
             unit_config=_to_unit_config_item(unit_config),
             target_assignment=target_assignments[0],
             target_assignments=target_assignments,
-            target_device_slots=_to_target_device_slots(target_assignments),
+            target_groups=target_groups,
+            target_device_slots=_to_target_device_slots(target_assignments, target_groups),
             host_assignments=host_assignments,
             common_values=common_values,
             resolved_placeholders=resolved_placeholders,
@@ -1323,9 +1427,15 @@ class ExportFileCaseDocMasterRepository:
         return candidates[0]
 
     def _load_unit_configs(self) -> list[dict[str, object]]:
-        rows = _read_xlsx_rows(_resolve_export_file_path(self.export_dir, UNIT_CONFIG_FILE_NAMES))
+        table = _read_xlsx_source_table(_resolve_export_file_path(self.export_dir, UNIT_CONFIG_FILE_NAMES))
         unit_configs: list[dict[str, object]] = []
-        for index, row in enumerate(rows, start=1):
+        excluded_columns = {
+            _normalize_key(alias)
+            for field in ("unit_config_id", "block", "prefecture", "building")
+            for alias in UNIT_CONFIG_COLUMN_ALIASES[field]
+        }
+        for index, table_row in enumerate(table.rows, start=1):
+            row = table_row.lookup
             fs_cluster_name = _value_from_aliases(row, UNIT_CONFIG_COLUMN_ALIASES["fs_cluster_name"], "fs_cluster_name")
             block = _value_from_aliases(row, UNIT_CONFIG_COLUMN_ALIASES["block"], "block")
             unit_config_id = _optional_value_from_aliases(row, UNIT_CONFIG_COLUMN_ALIASES["unit_config_id"])
@@ -1337,9 +1447,11 @@ class ExportFileCaseDocMasterRepository:
                     "device_type": slot_key.split("_", 1)[0],
                     "system": slot_key.rsplit("_", 1)[-1] if "_" in slot_key else None,
                     "host_name": host_name,
+                    "column_name": column_name,
                 }
-                for column_name, host_name in row.items()
-                if (slot_key := _slot_key_from_column_name(column_name)) is not None
+                for column_name, host_name in zip(table.columns, table_row.values, strict=True)
+                if _normalize_key(column_name) not in excluded_columns
+                if (slot_key := _slot_key_from_column_name(_normalize_key(column_name)) or _normalize_key(column_name).upper())
                 if host_name
             }
 
@@ -1351,6 +1463,7 @@ class ExportFileCaseDocMasterRepository:
                     "prefecture": _value_from_aliases(row, UNIT_CONFIG_COLUMN_ALIASES["prefecture"], "prefecture"),
                     "building": _value_from_aliases(row, UNIT_CONFIG_COLUMN_ALIASES["building"], "building"),
                     "hosts": hosts,
+                    "source_values": row,
                 }
             )
         return unit_configs
@@ -1360,21 +1473,28 @@ class ExportFileCaseDocMasterRepository:
         mappings: list[CaseDocPlaceholderMappingItemData],
         device_type: str,
     ) -> dict[str, dict[str, str]]:
+        """Index placeholder values by host using each definition's configured key."""
+
         values_by_host_name: dict[str, dict[str, str]] = {}
         device_mappings = _enabled_device_mappings(mappings, device_type)
+        host_aliases = SBC_COLUMN_ALIASES["host_name"]
+        host_columns = {_normalize_key(alias) for alias in host_aliases}
         source_files = _unique_ordered(mapping.source_file for mapping in device_mappings)
         for source_file in source_files:
             source_mappings = [mapping for mapping in device_mappings if mapping.source_file == source_file]
-            rows = _read_xlsx_rows(self.export_dir / source_file)
+            rows = _read_xlsx_rows(_resolve_export_file_path(self.export_dir, (source_file,)))
             for row in rows:
-                host_aliases = ["host_name", _u(r"\u30db\u30b9\u30c8\u540d")]
-                host_aliases.extend(mapping.key_column for mapping in source_mappings)
-                host_name = _value_from_aliases(row, host_aliases, "host_name")
-                device_values = values_by_host_name.setdefault(host_name, {})
                 for mapping in source_mappings:
+                    key_column = _normalize_key(mapping.key_column)
+                    host_name = row.get(key_column, "").strip()
+                    # Accept equivalent host headers only when the configured column is absent.
+                    if key_column not in row and key_column in host_columns:
+                        host_name = _optional_value_from_aliases(row, host_aliases)
+                    if not host_name:
+                        continue
                     value = _optional_value_from_aliases(row, (mapping.value_column, mapping.source_column))
                     if value:
-                        device_values[mapping.source_column] = value
+                        values_by_host_name.setdefault(host_name, {})[mapping.name] = value
         return values_by_host_name
 
     def _load_common_values(
@@ -1384,9 +1504,9 @@ class ExportFileCaseDocMasterRepository:
         xlsx_path = self.export_dir / COMMON_VALUES_XLSX_FILE_NAME
         csv_path = self.export_dir / COMMON_VALUES_CSV_FILE_NAME
         if xlsx_path.exists():
-            rows = _read_xlsx_rows(xlsx_path)
+            rows = _read_xlsx_rows(_resolve_export_file_path(self.export_dir, (xlsx_path.name,)))
         elif csv_path.exists():
-            rows = _read_csv_rows(csv_path)
+            rows = _read_csv_rows(_resolve_export_file_path(self.export_dir, (csv_path.name,)))
         else:
             return _list_common_values(mappings)
 
@@ -1463,7 +1583,7 @@ class ExportFileCaseDocMasterRepository:
                     source_values = device_values_by_host_name.get(source_assignment.host_name)
                     if source_values is None:
                         continue
-                    value = source_values.get(mapping.source_column)
+                    value = source_values.get(mapping.name)
                     if not value:
                         continue
                     resolved_placeholders.append(
