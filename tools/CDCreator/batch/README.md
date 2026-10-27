@@ -78,13 +78,21 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass `
 
 ## ログ
 
-実行ログは次へ保存します。
+実行ログは通常、バッチと同じ場所の `logs` フォルダへ保存します。
 
 ```text
-tools\CDCreator\batch\logs\case_doc_cdcreator_yyyyMMdd_HHmmss.log
+tools\CDCreator\batch\logs\case_doc_cdcreator_yyyyMMdd_HHmmss_PID.log
 ```
 
 ログには入力ファイル、採番対象シート、生成されたCD用Excel、エラー内容を記録します。案件固有のコマンド内容は記録しません。
+
+共有フォルダの権限などで上記へ保存できない場合は、作業PCの次の場所へ保存します。実際のログ保存先は終了時に画面へ表示します。
+
+```text
+%LOCALAPPDATA%\ProcedureDB\CDCreator\logs\
+```
+
+どちらにも保存できない場合、または実行途中でログの書き込みに失敗した場合は、警告を表示して画面への出力を続けます。ログの失敗で元のエラーや終了コードを上書きしません。
 
 ## 主なエラー
 
@@ -93,6 +101,16 @@ tools\CDCreator\batch\logs\case_doc_cdcreator_yyyyMMdd_HHmmss.log
 - Excelで同じ案件CSを開いていないか確認する
 - 読み取り専用になっていないか確認する
 - 同じ案件CSのバッチを複数起動していないか確認する
+- 共有フォルダへ接続でき、対象ファイルに読み書き権限があるか確認する
+- エラーに表示される「原因」を確認する
+
+### 共有フォルダからの実行
+
+`\\サーバー\共有名\...` 形式のパスも処理します。PowerShell固有の `Microsoft.PowerShell.Core\FileSystem::` 接頭辞は、Excelや.NETへ渡す前に除いています。
+
+起動直後の「UNC パスはサポートされません。Windows ディレクトリを既定で使用します」はCMDの作業フォルダに関する警告です。絶対パスで指定した案件CSを処理するため、この警告だけで失敗と判断する必要はありません。
+
+共有フォルダで失敗する場合は、バッチと案件CSのコピーを `C:\ProcedureDB\case_docs\` などの書き込み可能なローカルフォルダへ置いて再確認できます。CD用Excelもコピーした案件CSと同じフォルダへ生成されます。
 
 ### マクロを実行できない
 
@@ -113,6 +131,16 @@ tools\CDCreator\batch\logs\case_doc_cdcreator_yyyyMMdd_HHmmss.log
 | `0` | 成功 |
 | `1` | エラー |
 | `2` | キャンセルまたは同一フォルダへの出力なし |
+
+## 回帰テスト
+
+Excelやマクロを起動せず、入力パスとログのエラー処理を確認できます。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\test_case_doc_cdcreator.ps1
+```
+
+テストデータは一時フォルダに作成します。共有フォルダそのものの権限・接続・Excelでのマクロ実行は、利用するPCで別途確認してください。
 
 ## 制約
 

@@ -13,13 +13,29 @@ $script:LogPath = $null
 $script:ExitCode = 1
 
 function Initialize-RunLog {
-    $logDirectory = Join-Path $PSScriptRoot "logs"
-    if (-not (Test-Path -LiteralPath $logDirectory)) {
-        New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+    param(
+        [string]$LogDirectory = (Join-Path $PSScriptRoot "logs"),
+
+        [string]$FallbackLogDirectory = (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "ProcedureDB\CDCreator\logs")
+    )
+
+    $script:LogPath = $null
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $fileName = "case_doc_cdcreator_${timestamp}_$PID.log"
+    foreach ($directory in @($LogDirectory, $FallbackLogDirectory)) {
+        try {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            $nativeDirectory = (Resolve-Path -LiteralPath $directory).ProviderPath
+            $logPath = [System.IO.Path]::Combine($nativeDirectory, $fileName)
+            [System.IO.File]::AppendAllText($logPath, "", (New-Object System.Text.UTF8Encoding($true)))
+            $script:LogPath = $logPath
+            return
+        } catch {
+            Write-Host "[WARN] ログ保存先を使用できません: $directory / $($_.Exception.GetBaseException().Message)" -ForegroundColor Yellow
+        }
     }
 
-    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-    $script:LogPath = Join-Path $logDirectory "case_doc_cdcreator_$timestamp.log"
+    Write-Host "[WARN] ファイルへのログ保存を行わず、画面に実行結果を表示します。" -ForegroundColor Yellow
 }
 
 function Write-RunLog {
@@ -42,7 +58,16 @@ function Write-RunLog {
     }
 
     if ($null -ne $script:LogPath) {
-        Add-Content -LiteralPath $script:LogPath -Value $line -Encoding UTF8
+        try {
+            [System.IO.File]::AppendAllText(
+                $script:LogPath,
+                ($line + [Environment]::NewLine),
+                (New-Object System.Text.UTF8Encoding($true))
+            )
+        } catch {
+            Write-Host "[WARN] ログを書き込めません。以降は画面のみへ出力します: $($script:LogPath) / $($_.Exception.GetBaseException().Message)" -ForegroundColor Yellow
+            $script:LogPath = $null
+        }
     }
 }
 
@@ -96,7 +121,8 @@ function Test-CaseDocFile {
         throw "案件CSが見つかりません: $Path"
     }
 
-    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    # .NETとExcelにはPowerShellのプロバイダー接頭辞を含まないパスを渡す。
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).ProviderPath
     $file = Get-Item -LiteralPath $resolvedPath
 
     if ($file.Extension -ine ".xlsm") {
@@ -120,7 +146,7 @@ function Test-CaseDocFile {
             [System.IO.FileShare]::None
         )
     } catch {
-        throw "案件CSを開けません。Excelで開いている場合は閉じてください: $resolvedPath"
+        throw "案件CSを開けません。Excelでの使用状況、ファイルのアクセス権、共有フォルダへの接続を確認してください: $resolvedPath / 原因: $($_.Exception.GetBaseException().Message)"
     } finally {
         if ($null -ne $stream) {
             $stream.Dispose()
