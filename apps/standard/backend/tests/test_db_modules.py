@@ -386,6 +386,27 @@ def test_list_modules_returns_module_list(monkeypatch: pytest.MonkeyPatch) -> No
     assert result.items[0].updated_at == "2026-04-22"
 
 
+@pytest.mark.parametrize("column", ["tech_doc_text", "check_text_default", "command_template_default"])
+def test_module_keyword_query_uses_persisted_row_column_names(column: str) -> None:
+    """Search must use DB names rather than API response field names."""
+
+    query, parameters = module_db._build_module_list_query("プレース", None, None, None, None, None, None, None)
+
+    assert f"COALESCE(rx.{column}, '') ILIKE %(keyword)s" in query
+    assert parameters == {"keyword": "%プレース%"}
+    assert "rx.technical_doc," not in query
+    assert "rx.check_text," not in query
+    assert "rx.command_text," not in query
+
+
+def test_module_keyword_query_keeps_keyword_as_a_bound_parameter() -> None:
+    keyword = "プレース'_%"
+    query, parameters = module_db._build_module_list_query(keyword, None, None, None, None, None, None, None)
+
+    assert keyword not in query
+    assert parameters["keyword"] == f"%{keyword}%"
+
+
 def test_list_modules_raises_for_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Connection failures should raise DatabaseConnectionError."""
 

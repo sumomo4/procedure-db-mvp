@@ -322,10 +322,10 @@ def _build_module_list_query(
                     FROM proc.module_rows rx
                     WHERE rx.module_version_id = mv.module_version_id
                       AND (
-                          COALESCE(rx.technical_doc, '') ILIKE %(keyword)s
+                          COALESCE(rx.tech_doc_text, '') ILIKE %(keyword)s
                           OR COALESCE(rx.work_text, '') ILIKE %(keyword)s
-                          OR COALESCE(rx.check_text, '') ILIKE %(keyword)s
-                          OR COALESCE(rx.command_text, '') ILIKE %(keyword)s
+                          OR COALESCE(rx.check_text_default, '') ILIKE %(keyword)s
+                          OR COALESCE(rx.command_template_default, '') ILIKE %(keyword)s
                       )
                 )
             )
