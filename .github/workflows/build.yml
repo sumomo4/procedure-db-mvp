@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.23.4"
 
       - name: Install dependencies
         run: npm ci
@@ -50,8 +50,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Update system CA certificates
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --only-upgrade ca-certificates
+
+      - name: Update pip with verified security release
+        run: python -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt
+
+      - name: Verify TLS trust stores
+        run: python ../../../tools/security/verify_tls_runtime.py
 
       - name: Run tests
         run: python -m pytest
